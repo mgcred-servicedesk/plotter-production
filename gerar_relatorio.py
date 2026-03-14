@@ -631,12 +631,14 @@ def criar_aba_resumo_geral(wb, df, df_metas, mes, ano, dia_atual=None):
     
     row_atual += 2
     
-    ws.cell(row=row_atual, column=1, value="TOP 10 LOJAS").font = Font(bold=True, size=12)
+    # ========== TOP 10 LOJAS ==========
+    
+    ws.cell(row=row_atual, column=1, value="TOP 10 LOJAS - POR PONTOS").font = Font(bold=True, size=12)
     row_atual += 1
     
     if not resumo['top_lojas'].empty:
-        headers_lojas = list(resumo['top_lojas'].columns)
-        for col_idx, header in enumerate(headers_lojas, 1):
+        headers = list(resumo['top_lojas'].columns)
+        for col_idx, header in enumerate(headers, 1):
             cell = ws.cell(row=row_atual, column=col_idx, value=header)
             cell.font = Font(bold=True, color="FFFFFF")
             cell.fill = PatternFill(start_color="366092", end_color="366092", fill_type="solid")
@@ -646,7 +648,6 @@ def criar_aba_resumo_geral(wb, df, df_metas, mes, ano, dia_atual=None):
         for _, row_data in resumo['top_lojas'].iterrows():
             for col_idx, value in enumerate(row_data, 1):
                 cell = ws.cell(row=row_atual, column=col_idx, value=value)
-                
                 if col_idx == 1:
                     cell.number_format = '0'
                 elif col_idx == 3:
@@ -661,12 +662,147 @@ def criar_aba_resumo_geral(wb, df, df_metas, mes, ano, dia_atual=None):
     
     row_atual += 2
     
-    ws.cell(row=row_atual, column=1, value="TOP 10 CONSULTORES").font = Font(bold=True, size=12)
+    ws.cell(row=row_atual, column=1, value="TOP 10 LOJAS - POR TICKET MÉDIO").font = Font(bold=True, size=12)
+    row_atual += 1
+    
+    if not resumo['top_lojas_ticket_medio'].empty:
+        headers = list(resumo['top_lojas_ticket_medio'].columns)
+        for col_idx, header in enumerate(headers, 1):
+            cell = ws.cell(row=row_atual, column=col_idx, value=header)
+            cell.font = Font(bold=True, color="FFFFFF")
+            cell.fill = PatternFill(start_color="366092", end_color="366092", fill_type="solid")
+            cell.alignment = Alignment(horizontal="center")
+        row_atual += 1
+        
+        for _, row_data in resumo['top_lojas_ticket_medio'].iterrows():
+            for col_idx, value in enumerate(row_data, 1):
+                cell = ws.cell(row=row_atual, column=col_idx, value=value)
+                if col_idx == 1:
+                    cell.number_format = '0'
+                elif col_idx == 3:
+                    cell.number_format = '#,##0'
+                elif col_idx == 4:
+                    cell.number_format = 'R$ #,##0.00'
+                elif col_idx == 5:
+                    cell.number_format = '#,##0'
+                elif col_idx == 6:
+                    cell.number_format = 'R$ #,##0.00'
+            row_atual += 1
+    
+    row_atual += 2
+    
+    ws.cell(row=row_atual, column=1, value="TOP 10 LOJAS - POR MÉDIA DU").font = Font(bold=True, size=12)
+    row_atual += 1
+    
+    if not resumo['top_lojas_media_du'].empty:
+        headers = list(resumo['top_lojas_media_du'].columns)
+        for col_idx, header in enumerate(headers, 1):
+            cell = ws.cell(row=row_atual, column=col_idx, value=header)
+            cell.font = Font(bold=True, color="FFFFFF")
+            cell.fill = PatternFill(start_color="366092", end_color="366092", fill_type="solid")
+            cell.alignment = Alignment(horizontal="center")
+        row_atual += 1
+        
+        for _, row_data in resumo['top_lojas_media_du'].iterrows():
+            for col_idx, value in enumerate(row_data, 1):
+                cell = ws.cell(row=row_atual, column=col_idx, value=value)
+                if col_idx == 1:
+                    cell.number_format = '0'
+                elif col_idx == 3:
+                    cell.number_format = '#,##0'
+                elif col_idx == 4:
+                    cell.number_format = 'R$ #,##0.00'
+                elif col_idx == 5:
+                    cell.number_format = '#,##0'
+                elif col_idx == 6:
+                    cell.number_format = '#,##0.00'
+                elif col_idx == 7:
+                    cell.number_format = 'R$ #,##0.00'
+            row_atual += 1
+    
+    row_atual += 2
+    
+    ws.cell(row=row_atual, column=1, value="TOP 10 LOJAS - POR PRODUTO").font = Font(bold=True, size=12)
+    row_atual += 1
+    
+    for produto, ranking in resumo['top_lojas_por_produto'].items():
+        if ranking.empty:
+            continue
+        
+        ws.cell(row=row_atual, column=1, value=f"{produto}").font = Font(bold=True, size=11, color="FFFFFF")
+        ws.cell(row=row_atual, column=1).fill = PatternFill(start_color="4472C4", end_color="4472C4", fill_type="solid")
+        row_atual += 1
+        
+        headers = list(ranking.columns)
+        for col_idx, header in enumerate(headers, 1):
+            cell = ws.cell(row=row_atual, column=col_idx, value=header)
+            cell.font = Font(bold=True, color="FFFFFF")
+            cell.fill = PatternFill(start_color="366092", end_color="366092", fill_type="solid")
+            cell.alignment = Alignment(horizontal="center")
+        row_atual += 1
+        
+        for _, row_data in ranking.iterrows():
+            for col_idx, value in enumerate(row_data, 1):
+                cell = ws.cell(row=row_atual, column=col_idx, value=value)
+                if col_idx == 1:
+                    cell.number_format = '0'
+                elif col_idx == 3:
+                    cell.number_format = '#,##0'
+                elif col_idx == 4:
+                    cell.number_format = 'R$ #,##0.00'
+                elif col_idx == 5:
+                    cell.number_format = '#,##0'
+                elif col_idx == 6:
+                    cell.number_format = 'R$ #,##0.00'
+                elif col_idx == 7:
+                    cell.number_format = '#,##0.00'
+            row_atual += 1
+        
+        row_atual += 1
+    
+    row_atual += 1
+    
+    ws.cell(row=row_atual, column=1, value="TOP 10 LOJAS - POR ATINGIMENTO META PRATA").font = Font(bold=True, size=12)
+    row_atual += 1
+    
+    if not resumo['top_lojas_atingimento'].empty:
+        headers = list(resumo['top_lojas_atingimento'].columns)
+        for col_idx, header in enumerate(headers, 1):
+            cell = ws.cell(row=row_atual, column=col_idx, value=header)
+            cell.font = Font(bold=True, color="FFFFFF")
+            cell.fill = PatternFill(start_color="366092", end_color="366092", fill_type="solid")
+            cell.alignment = Alignment(horizontal="center")
+        row_atual += 1
+        
+        for _, row_data in resumo['top_lojas_atingimento'].iterrows():
+            for col_idx, value in enumerate(row_data, 1):
+                cell = ws.cell(row=row_atual, column=col_idx, value=value)
+                if col_idx == 1:
+                    cell.number_format = '0'
+                elif col_idx == 3:
+                    cell.number_format = '#,##0'
+                elif col_idx == 4:
+                    cell.number_format = 'R$ #,##0.00'
+                elif col_idx == 5:
+                    cell.number_format = '#,##0'
+                elif col_idx == 6:
+                    cell.number_format = '#,##0'
+                elif col_idx == 7:
+                    cell.number_format = '0.00"%"'
+                elif col_idx == 8:
+                    cell.number_format = 'R$ #,##0.00'
+            row_atual += 1
+    
+    row_atual += 2
+    
+    # ========== TOP 10 CONSULTORES ==========
+    
+    ws.cell(row=row_atual, column=1, value="TOP 10 CONSULTORES - POR PONTOS").font = Font(bold=True, size=12)
     row_atual += 1
     
     if not resumo['top_consultores'].empty:
-        headers_consultores = list(resumo['top_consultores'].columns)
-        for col_idx, header in enumerate(headers_consultores, 1):
+        headers = list(resumo['top_consultores'].columns)
+        for col_idx, header in enumerate(headers, 1):
             cell = ws.cell(row=row_atual, column=col_idx, value=header)
             cell.font = Font(bold=True, color="FFFFFF")
             cell.fill = PatternFill(start_color="366092", end_color="366092", fill_type="solid")
@@ -676,7 +812,170 @@ def criar_aba_resumo_geral(wb, df, df_metas, mes, ano, dia_atual=None):
         for _, row_data in resumo['top_consultores'].iterrows():
             for col_idx, value in enumerate(row_data, 1):
                 cell = ws.cell(row=row_atual, column=col_idx, value=value)
-                
+                if col_idx == 1:
+                    cell.number_format = '0'
+                elif col_idx == 4:
+                    cell.number_format = '#,##0'
+                elif col_idx == 5:
+                    cell.number_format = 'R$ #,##0.00'
+                elif col_idx == 6:
+                    cell.number_format = '#,##0'
+                elif col_idx == 7:
+                    cell.number_format = 'R$ #,##0.00'
+            row_atual += 1
+    
+    row_atual += 2
+    
+    ws.cell(row=row_atual, column=1, value="TOP 10 CONSULTORES - POR TICKET MÉDIO").font = Font(bold=True, size=12)
+    row_atual += 1
+    
+    if not resumo['top_consultores_ticket_medio'].empty:
+        headers = list(resumo['top_consultores_ticket_medio'].columns)
+        for col_idx, header in enumerate(headers, 1):
+            cell = ws.cell(row=row_atual, column=col_idx, value=header)
+            cell.font = Font(bold=True, color="FFFFFF")
+            cell.fill = PatternFill(start_color="366092", end_color="366092", fill_type="solid")
+            cell.alignment = Alignment(horizontal="center")
+        row_atual += 1
+        
+        for _, row_data in resumo['top_consultores_ticket_medio'].iterrows():
+            for col_idx, value in enumerate(row_data, 1):
+                cell = ws.cell(row=row_atual, column=col_idx, value=value)
+                if col_idx == 1:
+                    cell.number_format = '0'
+                elif col_idx == 4:
+                    cell.number_format = '#,##0'
+                elif col_idx == 5:
+                    cell.number_format = 'R$ #,##0.00'
+                elif col_idx == 6:
+                    cell.number_format = '#,##0'
+                elif col_idx == 7:
+                    cell.number_format = 'R$ #,##0.00'
+            row_atual += 1
+    
+    row_atual += 2
+    
+    ws.cell(row=row_atual, column=1, value="TOP 10 CONSULTORES - POR MÉDIA DU").font = Font(bold=True, size=12)
+    row_atual += 1
+    
+    if not resumo['top_consultores_media_du'].empty:
+        headers = list(resumo['top_consultores_media_du'].columns)
+        for col_idx, header in enumerate(headers, 1):
+            cell = ws.cell(row=row_atual, column=col_idx, value=header)
+            cell.font = Font(bold=True, color="FFFFFF")
+            cell.fill = PatternFill(start_color="366092", end_color="366092", fill_type="solid")
+            cell.alignment = Alignment(horizontal="center")
+        row_atual += 1
+        
+        for _, row_data in resumo['top_consultores_media_du'].iterrows():
+            for col_idx, value in enumerate(row_data, 1):
+                cell = ws.cell(row=row_atual, column=col_idx, value=value)
+                if col_idx == 1:
+                    cell.number_format = '0'
+                elif col_idx == 4:
+                    cell.number_format = '#,##0'
+                elif col_idx == 5:
+                    cell.number_format = 'R$ #,##0.00'
+                elif col_idx == 6:
+                    cell.number_format = '#,##0'
+                elif col_idx == 7:
+                    cell.number_format = '#,##0.00'
+                elif col_idx == 8:
+                    cell.number_format = 'R$ #,##0.00'
+            row_atual += 1
+    
+    row_atual += 2
+    
+    ws.cell(row=row_atual, column=1, value="TOP 10 CONSULTORES - POR PRODUTO").font = Font(bold=True, size=12)
+    row_atual += 1
+    
+    for produto, ranking in resumo['top_consultores_por_produto'].items():
+        if ranking.empty:
+            continue
+        
+        ws.cell(row=row_atual, column=1, value=f"{produto}").font = Font(bold=True, size=11, color="FFFFFF")
+        ws.cell(row=row_atual, column=1).fill = PatternFill(start_color="4472C4", end_color="4472C4", fill_type="solid")
+        row_atual += 1
+        
+        headers = list(ranking.columns)
+        for col_idx, header in enumerate(headers, 1):
+            cell = ws.cell(row=row_atual, column=col_idx, value=header)
+            cell.font = Font(bold=True, color="FFFFFF")
+            cell.fill = PatternFill(start_color="366092", end_color="366092", fill_type="solid")
+            cell.alignment = Alignment(horizontal="center")
+        row_atual += 1
+        
+        for _, row_data in ranking.iterrows():
+            for col_idx, value in enumerate(row_data, 1):
+                cell = ws.cell(row=row_atual, column=col_idx, value=value)
+                if col_idx == 1:
+                    cell.number_format = '0'
+                elif col_idx == 4:
+                    cell.number_format = '#,##0'
+                elif col_idx == 5:
+                    cell.number_format = 'R$ #,##0.00'
+                elif col_idx == 6:
+                    cell.number_format = '#,##0'
+                elif col_idx == 7:
+                    cell.number_format = 'R$ #,##0.00'
+                elif col_idx == 8:
+                    cell.number_format = '#,##0.00'
+            row_atual += 1
+        
+        row_atual += 1
+    
+    row_atual += 1
+    
+    ws.cell(row=row_atual, column=1, value="TOP 10 CONSULTORES - POR ATINGIMENTO META PRATA").font = Font(bold=True, size=12)
+    row_atual += 1
+    
+    if not resumo['top_consultores_atingimento'].empty:
+        headers = list(resumo['top_consultores_atingimento'].columns)
+        for col_idx, header in enumerate(headers, 1):
+            cell = ws.cell(row=row_atual, column=col_idx, value=header)
+            cell.font = Font(bold=True, color="FFFFFF")
+            cell.fill = PatternFill(start_color="366092", end_color="366092", fill_type="solid")
+            cell.alignment = Alignment(horizontal="center")
+        row_atual += 1
+        
+        for _, row_data in resumo['top_consultores_atingimento'].iterrows():
+            for col_idx, value in enumerate(row_data, 1):
+                cell = ws.cell(row=row_atual, column=col_idx, value=value)
+                if col_idx == 1:
+                    cell.number_format = '0'
+                elif col_idx == 4:
+                    cell.number_format = '#,##0'
+                elif col_idx == 5:
+                    cell.number_format = 'R$ #,##0.00'
+                elif col_idx == 6:
+                    cell.number_format = '#,##0'
+                elif col_idx == 7:
+                    cell.number_format = '#,##0'
+                elif col_idx == 8:
+                    cell.number_format = '0.00"%"'
+                elif col_idx == 9:
+                    cell.number_format = 'R$ #,##0.00'
+            row_atual += 1
+    
+    row_atual += 2
+    
+    # ========== RANKING DE REGIÃO ==========
+    
+    ws.cell(row=row_atual, column=1, value="RANKING DE REGIÃO - POR PONTOS").font = Font(bold=True, size=12)
+    row_atual += 1
+    
+    if not resumo['ranking_regiao_pontos'].empty:
+        headers = list(resumo['ranking_regiao_pontos'].columns)
+        for col_idx, header in enumerate(headers, 1):
+            cell = ws.cell(row=row_atual, column=col_idx, value=header)
+            cell.font = Font(bold=True, color="FFFFFF")
+            cell.fill = PatternFill(start_color="366092", end_color="366092", fill_type="solid")
+            cell.alignment = Alignment(horizontal="center")
+        row_atual += 1
+        
+        for _, row_data in resumo['ranking_regiao_pontos'].iterrows():
+            for col_idx, value in enumerate(row_data, 1):
+                cell = ws.cell(row=row_atual, column=col_idx, value=value)
                 if col_idx == 1:
                     cell.number_format = '0'
                 elif col_idx == 3:
@@ -691,37 +990,65 @@ def criar_aba_resumo_geral(wb, df, df_metas, mes, ano, dia_atual=None):
     
     row_atual += 2
     
-    ws.cell(row=row_atual, column=1, value="PRODUTOS MIX").font = Font(bold=True, size=12)
+    ws.cell(row=row_atual, column=1, value="RANKING DE REGIÃO - POR TICKET MÉDIO").font = Font(bold=True, size=12)
     row_atual += 1
     
-    if not resumo['produtos_mix'].empty:
-        headers_mix = list(resumo['produtos_mix'].columns)
-        for col_idx, header in enumerate(headers_mix, 1):
+    if not resumo['ranking_regiao_ticket_medio'].empty:
+        headers = list(resumo['ranking_regiao_ticket_medio'].columns)
+        for col_idx, header in enumerate(headers, 1):
             cell = ws.cell(row=row_atual, column=col_idx, value=header)
             cell.font = Font(bold=True, color="FFFFFF")
             cell.fill = PatternFill(start_color="366092", end_color="366092", fill_type="solid")
             cell.alignment = Alignment(horizontal="center")
         row_atual += 1
         
-        for _, row_data in resumo['produtos_mix'].iterrows():
+        for _, row_data in resumo['ranking_regiao_ticket_medio'].iterrows():
             for col_idx, value in enumerate(row_data, 1):
                 cell = ws.cell(row=row_atual, column=col_idx, value=value)
-                
-                if col_idx == 2:
-                    cell.number_format = '#,##0'
+                if col_idx == 1:
+                    cell.number_format = '0'
                 elif col_idx == 3:
+                    cell.number_format = '#,##0'
+                elif col_idx == 4:
                     cell.number_format = 'R$ #,##0.00'
-                elif col_idx in [4, 5]:
+                elif col_idx == 5:
                     cell.number_format = '#,##0'
                 elif col_idx == 6:
-                    cell.number_format = '0.00"%"'
-                elif col_idx in [7, 8]:
+                    cell.number_format = 'R$ #,##0.00'
+            row_atual += 1
+    
+    row_atual += 2
+    
+    ws.cell(row=row_atual, column=1, value="RANKING DE REGIÃO - POR MÉDIA DU").font = Font(bold=True, size=12)
+    row_atual += 1
+    
+    if not resumo['ranking_regiao_media_du'].empty:
+        headers = list(resumo['ranking_regiao_media_du'].columns)
+        for col_idx, header in enumerate(headers, 1):
+            cell = ws.cell(row=row_atual, column=col_idx, value=header)
+            cell.font = Font(bold=True, color="FFFFFF")
+            cell.fill = PatternFill(start_color="366092", end_color="366092", fill_type="solid")
+            cell.alignment = Alignment(horizontal="center")
+        row_atual += 1
+        
+        for _, row_data in resumo['ranking_regiao_media_du'].iterrows():
+            for col_idx, value in enumerate(row_data, 1):
+                cell = ws.cell(row=row_atual, column=col_idx, value=value)
+                if col_idx == 1:
+                    cell.number_format = '0'
+                elif col_idx == 3:
+                    cell.number_format = '#,##0'
+                elif col_idx == 4:
+                    cell.number_format = 'R$ #,##0.00'
+                elif col_idx == 5:
+                    cell.number_format = '#,##0'
+                elif col_idx in [6, 7]:
                     cell.number_format = '#,##0.00'
             row_atual += 1
     
     row_atual += 2
     
-    ws.cell(row=row_atual, column=1, value="RANKING DE REGIÃO POR PRODUTO").font = Font(bold=True, size=12)
+    ws.cell(row=row_atual, column=1, value="RANKING DE REGIÃO - POR PRODUTO").font = Font(bold=True, size=12)
     row_atual += 1
     
     for produto, ranking in resumo['ranking_regiao_por_produto'].items():
@@ -743,7 +1070,6 @@ def criar_aba_resumo_geral(wb, df, df_metas, mes, ano, dia_atual=None):
         for _, row_data in ranking.iterrows():
             for col_idx, value in enumerate(row_data, 1):
                 cell = ws.cell(row=row_atual, column=col_idx, value=value)
-                
                 if col_idx == 1:
                     cell.number_format = '0'
                 elif col_idx == 3:
@@ -760,11 +1086,11 @@ def criar_aba_resumo_geral(wb, df, df_metas, mes, ano, dia_atual=None):
     
     row_atual += 1
     
-    ws.cell(row=row_atual, column=1, value="RANKING DE REGIÃO POR MÉDIA DU").font = Font(bold=True, size=12)
+    ws.cell(row=row_atual, column=1, value="RANKING DE REGIÃO - POR ATINGIMENTO META PRATA").font = Font(bold=True, size=12)
     row_atual += 1
     
-    if not resumo['ranking_regiao_media_du'].empty:
-        headers = list(resumo['ranking_regiao_media_du'].columns)
+    if not resumo['ranking_regiao_atingimento'].empty:
+        headers = list(resumo['ranking_regiao_atingimento'].columns)
         for col_idx, header in enumerate(headers, 1):
             cell = ws.cell(row=row_atual, column=col_idx, value=header)
             cell.font = Font(bold=True, color="FFFFFF")
@@ -772,40 +1098,9 @@ def criar_aba_resumo_geral(wb, df, df_metas, mes, ano, dia_atual=None):
             cell.alignment = Alignment(horizontal="center")
         row_atual += 1
         
-        for _, row_data in resumo['ranking_regiao_media_du'].iterrows():
+        for _, row_data in resumo['ranking_regiao_atingimento'].iterrows():
             for col_idx, value in enumerate(row_data, 1):
                 cell = ws.cell(row=row_atual, column=col_idx, value=value)
-                
-                if col_idx == 1:
-                    cell.number_format = '0'
-                elif col_idx == 3:
-                    cell.number_format = '#,##0'
-                elif col_idx == 4:
-                    cell.number_format = 'R$ #,##0.00'
-                elif col_idx == 5:
-                    cell.number_format = '#,##0'
-                elif col_idx in [6, 7]:
-                    cell.number_format = '#,##0.00'
-            row_atual += 1
-    
-    row_atual += 2
-    
-    ws.cell(row=row_atual, column=1, value="RANKING DE REGIÃO POR TICKET MÉDIO").font = Font(bold=True, size=12)
-    row_atual += 1
-    
-    if not resumo['ranking_regiao_ticket_medio'].empty:
-        headers = list(resumo['ranking_regiao_ticket_medio'].columns)
-        for col_idx, header in enumerate(headers, 1):
-            cell = ws.cell(row=row_atual, column=col_idx, value=header)
-            cell.font = Font(bold=True, color="FFFFFF")
-            cell.fill = PatternFill(start_color="366092", end_color="366092", fill_type="solid")
-            cell.alignment = Alignment(horizontal="center")
-        row_atual += 1
-        
-        for _, row_data in resumo['ranking_regiao_ticket_medio'].iterrows():
-            for col_idx, value in enumerate(row_data, 1):
-                cell = ws.cell(row=row_atual, column=col_idx, value=value)
-                
                 if col_idx == 1:
                     cell.number_format = '0'
                 elif col_idx == 3:
@@ -815,8 +1110,14 @@ def criar_aba_resumo_geral(wb, df, df_metas, mes, ano, dia_atual=None):
                 elif col_idx == 5:
                     cell.number_format = '#,##0'
                 elif col_idx == 6:
+                    cell.number_format = '#,##0'
+                elif col_idx == 7:
+                    cell.number_format = '0.00"%"'
+                elif col_idx == 8:
                     cell.number_format = 'R$ #,##0.00'
             row_atual += 1
+    
+    row_atual += 2
     
     ajustar_largura_colunas(ws)
     
