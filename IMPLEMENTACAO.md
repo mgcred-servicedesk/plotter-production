@@ -50,6 +50,17 @@
   - Resumo executivo do período
 
 #### 3. Relatórios (`src/reports/`)
+- ✅ **formatters.py**: Formatação centralizada
+  - `formatar_moeda()`, `formatar_moeda_compacta()`
+  - `formatar_numero()`, `formatar_percentual()`
+  - Reutilizado por todos os módulos de relatório
+
+- ✅ **pdf_styles.py**: Estilos PDF centralizados
+  - Paleta de cores padrão (`CORES`)
+  - Estilos de tabela (moderno, com total, KPI)
+  - Estilos de parágrafo (título, subtítulo, seção, região)
+  - Rodapé com número de página e data
+
 - ✅ **product_tables.py**: Tabelas por produto
   - Tabela individual por produto (8 colunas)
   - Agrupamento por região/loja
@@ -66,12 +77,17 @@
   - Evolução mensal
   - Concentração de vendas (Curva ABC)
 
-- ✅ **excel_generator.py**: Gerador de relatórios Excel
-  - Múltiplas abas (Resumo, Rankings, Comparações)
-  - Formatação automática (moeda, percentual)
-  - Formatação condicional (metas)
-  - Estilos profissionais
-  - Ajuste automático de colunas
+- ✅ **pdf_executivo.py**: Relatório PDF executivo com KPIs e gráficos
+- ✅ **pdf_completo.py**: Relatório PDF com todos os rankings
+- ✅ **pdf_regional.py**: Relatórios PDF por região
+- ✅ **pdf_produto.py**: Relatórios PDF por produto individual
+- ✅ **pdf_produtos_loja.py**: Relatório PDF consolidado
+- ✅ **pdf_charts.py**: Gráficos Matplotlib para PDFs
+
+- ❌ **excel_generator.py**: Removido (substituído por `gerar_relatorio.py`)
+- ❌ **pdf_generator.py**: Removido (substituído por módulos específicos)
+- ❌ **pdf_detalhado.py**: Removido (funcionalidade absorvida por `pdf_completo.py`)
+- ❌ **pdf_resumo.py**: Removido (funcionalidade absorvida por `pdf_executivo.py`)
 
 #### 4. Análises (`src/analysis/`)
 - ✅ **regional_analysis.py**: Análise por região
@@ -112,13 +128,30 @@
   - Exemplo completo de uso do sistema
   - Demonstra todas as funcionalidades principais
 
-## 🚧 Fase 2 - Relatórios (EM PROGRESSO)
+## ✅ Fase 2 - Relatórios (COMPLETA)
 
-### Implementado
-- ✅ Gerador de relatórios Excel
+### Relatórios Excel
+- ✅ `gerar_relatorio.py`: Script principal de geração Excel
+  - Resumo Geral consolidado com rankings (lojas, consultores, regiões)
+  - Resumo Executivo com KPIs
+  - Produtos por Loja (horizontal, agrupado por região)
+  - Produto Individual (CNC, SAQUE, CLT, CONSIGNADO, PACK)
+  - Relatório MIX
 
-### Pendente
-- ⏳ Gerador de relatórios PDF (executivo e detalhado)
+### Relatórios PDF (13 arquivos)
+- ✅ `gerar_relatorio_pdf.py`: Script principal de geração PDF
+- ✅ `pdf_executivo.py`: KPIs, gráficos gauge, evolução diária, TOP 10
+- ✅ `pdf_completo.py`: Todos os rankings detalhados
+- ✅ `pdf_regional.py`: Um PDF por região (capa, resumo, lojas, consultores, produtos)
+- ✅ `pdf_produto.py`: Um PDF por produto (KPIs, distribuição, ranking, detalhamento)
+- ✅ `pdf_produtos_loja.py`: Visão consolidada em landscape
+- ✅ `pdf_charts.py`: Gráficos Matplotlib (gauge, barras, pizza, evolução)
+
+### Módulos Centralizados (Refatoração 16/03/2026)
+- ✅ `formatters.py`: Funções de formatação únicas (moeda, número, percentual)
+- ✅ `pdf_styles.py`: Estilos PDF centralizados (cores, tabelas, rodapé)
+- ✅ `loader.py`: Pipeline unificado `carregar_e_processar_dados()`
+- ✅ `settings.py`: Constantes de negócio (MAPEAMENTO_PRODUTOS, MAPEAMENTO_COLUNAS_META, LISTA_PRODUTOS)
 
 ## ⏳ Fase 3 - Dashboard (PENDENTE)
 
@@ -169,6 +202,9 @@
 - ✅ Excel automatizado com múltiplas abas
 - ✅ Formatação profissional
 - ✅ Formatação condicional para metas
+- ✅ 13 relatórios PDF (executivo, completo, regionais, por produto, consolidado)
+- ✅ Gráficos Matplotlib embarcados nos PDFs
+- ✅ Rodapé padronizado com número de página e data
 
 ## 📊 Como Usar
 
@@ -190,21 +226,27 @@ python exemplo_uso.py
 
 ### 4. Gerar Relatório Excel
 ```bash
-python src/reports/excel_generator.py
+python gerar_relatorio.py
 ```
 
-### 5. Executar Dashboard
+### 5. Gerar Relatórios PDF
+```bash
+python gerar_relatorio_pdf.py
+```
+
+### 6. Executar Dashboard
 ```bash
 streamlit run src/dashboard/app.py
 ```
 
 ## 🔄 Próximos Passos
 
-1. **Implementar gerador de PDF** (Fase 2)
+1. ✅ ~~Implementar gerador de PDF~~ (Fase 2 - COMPLETA)
 2. **Criar páginas do dashboard** (Fase 3)
 3. **Implementar componentes reutilizáveis** (Fase 3)
 4. **Criar notebooks de análise** (Fase 4)
 5. **Implementar testes** (Fase 4)
+6. **Implementar análises comentadas com IA nos relatórios** (Futuro)
 
 ## 📝 Notas Importantes
 
@@ -220,11 +262,11 @@ streamlit run src/dashboard/app.py
 ```
 Numeros_venda/
 ├── src/
-│   ├── data_processing/     ✅ COMPLETO
-│   ├── reports/             ✅ COMPLETO (Excel)
+│   ├── data_processing/     ✅ COMPLETO (loader unificado)
+│   ├── reports/             ✅ COMPLETO (Excel + 13 PDFs)
 │   ├── dashboard/           🚧 EM PROGRESSO
 │   ├── analysis/            ✅ COMPLETO
-│   └── config/              ✅ COMPLETO
+│   └── config/              ✅ COMPLETO (constantes centralizadas)
 ├── outputs/                 ✅ CRIADO
 ├── notebooks/               📁 CRIADO
 ├── tests/                   📁 CRIADO

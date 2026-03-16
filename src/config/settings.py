@@ -75,3 +75,30 @@ MESES_PT = {
     11: 'Novembro',
     12: 'Dezembro'
 }
+
+MESES_ARQUIVO = {
+    1: 'janeiro', 2: 'fevereiro', 3: 'marco', 4: 'abril',
+    5: 'maio', 6: 'junho', 7: 'julho', 8: 'agosto',
+    9: 'setembro', 10: 'outubro', 11: 'novembro',
+    12: 'dezembro'
+}
+
+MAPEAMENTO_PRODUTOS = {
+    'CNC': ['CNC'],
+    'SAQUE': ['SAQUE', 'SAQUE BENEFICIO'],
+    'CLT': ['CONSIG PRIV'],
+    'CONSIGNADO': ['CONSIG', 'Portabilidade'],
+    'PACK': ['FGTS', 'CNC 13º']
+}
+
+MAPEAMENTO_COLUNAS_META = {
+    'CNC': 'CNC LOJA',
+    'SAQUE': 'SAQUE LOJA',
+    'CLT': 'CLT',
+    'CONSIGNADO': 'CONSIGNADO',
+    'PACK': 'META  LOJA FGTS & ANT. BEN.13º'
+}
+
+PRODUTOS_EMISSAO = ['EMISSAO', 'EMISSAO CC', 'EMISSAO CB']
+
+LISTA_PRODUTOS = ['CNC', 'SAQUE', 'CLT', 'CONSIGNADO', 'PACK']

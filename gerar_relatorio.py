@@ -7,137 +7,46 @@ from datetime import datetime
 
 sys.path.insert(0, str(Path(__file__).parent))
 
-import pandas as pd
 import openpyxl
 from openpyxl.styles import Font, PatternFill, Alignment
 
-from src.data_processing.column_mapper import (
-    mapear_digitacao,
-    mapear_tabelas,
-    mapear_metas,
-    mapear_loja_regiao,
-    mapear_supervisores,
-    adicionar_coluna_subtipo_via_merge,
-    aplicar_regras_exclusao_valor_pontos
+from src.config.settings import MESES_PT, LISTA_PRODUTOS
+from src.data_processing.loader import (
+    carregar_e_processar_dados,
 )
-from src.reports.tabela_produtos_horizontal import criar_tabela_produtos_horizontal
-from src.reports.tabela_produto_individual import criar_tabela_produto_individual
+from src.reports.tabela_produtos_horizontal import (
+    criar_tabela_produtos_horizontal,
+)
+from src.reports.tabela_produto_individual import (
+    criar_tabela_produto_individual,
+)
 from src.reports.relatorio_mix import criar_relatorio_mix
 from src.reports.resumo_geral import criar_resumo_geral
 
 
 def ajustar_largura_colunas(ws):
     """Ajusta largura das colunas automaticamente."""
-    for col_letter in ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H']:
+    from openpyxl.cell.cell import MergedCell
+    for column in ws.columns:
         max_length = 0
-        try:
-            for cell in ws[col_letter]:
-                try:
-                    if cell.value and len(str(cell.value)) > max_length:
-                        max_length = len(str(cell.value))
-                except:
-                    pass
-            adjusted_width = min(max_length + 2, 50)
-            ws.column_dimensions[col_letter].width = adjusted_width
-        except:
-            pass
-
-
-def calcular_d_menos_1(df):
-    """
-    Calcula D-1 baseado na última data registrada nos dados.
-    
-    Args:
-        df: DataFrame com coluna DATA.
-    
-    Returns:
-        Data da última ocorrência nos dados.
-    """
-    if 'DATA' not in df.columns:
-        return None
-    
-    ultima_data = pd.to_datetime(df['DATA']).max()
-    
-    return ultima_data.date()
-
-
-def carregar_e_processar_dados(mes, ano):
-    """Carrega e processa todos os dados necessários."""
-    print(f"\n{'='*80}")
-    print(f"CARREGANDO DADOS - {mes:02d}/{ano}")
-    print(f"{'='*80}")
-    
-    mes_nome = {
-        1: 'janeiro', 2: 'fevereiro', 3: 'marco', 4: 'abril',
-        5: 'maio', 6: 'junho', 7: 'julho', 8: 'agosto',
-        9: 'setembro', 10: 'outubro', 11: 'novembro', 12: 'dezembro'
-    }[mes]
-    
-    print(f"\n1. Carregando digitação...")
-    df_digitacao = pd.read_excel(f'digitacao/{mes_nome}_{ano}.xlsx')
-    print(f"   ✓ {len(df_digitacao)} registros carregados")
-    
-    print(f"\n2. Carregando tabelas de produtos...")
-    df_tabelas = pd.read_excel(f'tabelas/Tabelas_{mes_nome}_{ano}.xlsx')
-    print(f"   ✓ {len(df_tabelas)} produtos carregados")
-    
-    print(f"\n3. Carregando metas...")
-    df_metas = pd.read_excel(f'metas/metas_{mes_nome}.xlsx')
-    print(f"   ✓ {len(df_metas)} lojas com metas")
-    
-    print(f"\n4. Carregando configuração loja-região...")
-    df_loja_regiao = pd.read_excel('configuracao/loja_regiao.xlsx')
-    print(f"   ✓ {len(df_loja_regiao)} lojas mapeadas")
-    
-    print(f"\n5. Carregando supervisores...")
-    df_supervisores = pd.read_excel('configuracao/Supervisores.xlsx')
-    print(f"   ✓ {len(df_supervisores)} supervisores carregados")
-    
-    print(f"\n6. Aplicando mapeamentos...")
-    df_digitacao = mapear_digitacao(df_digitacao)
-    df_tabelas = mapear_tabelas(df_tabelas)
-    df_metas = mapear_metas(df_metas)
-    df_loja_regiao = mapear_loja_regiao(df_loja_regiao)
-    df_supervisores = mapear_supervisores(df_supervisores)
-    print(f"   ✓ Colunas mapeadas")
-    
-    print(f"\n7. Identificando última data registrada nos dados...")
-    df_digitacao['DATA'] = pd.to_datetime(df_digitacao['DATA'])
-    d_menos_1 = calcular_d_menos_1(df_digitacao)
-    dia_atual_para_du = d_menos_1.day
-    print(f"   ✓ Última data registrada: {d_menos_1.strftime('%d/%m/%Y')}")
-    print(f"   ✓ Análise baseada em {dia_atual_para_du} dias do mês")
-    print(f"   ✓ {len(df_digitacao)} registros processados")
-    
-    print(f"\n8. Fazendo JOIN com tabelas...")
-    df_consolidado = adicionar_coluna_subtipo_via_merge(df_digitacao, df_tabelas)
-    print(f"   ✓ JOIN realizado: {len(df_consolidado)} registros")
-    
-    print(f"\n7. Calculando pontuação...")
-    df_consolidado['pontos'] = df_consolidado['VALOR'] * df_consolidado['PTS']
-    print(f"   ✓ Total de pontos: {df_consolidado['pontos'].sum():,.0f}")
-    
-    print(f"\n8. Aplicando regras de exclusão...")
-    df_consolidado = aplicar_regras_exclusao_valor_pontos(df_consolidado)
-    emissoes = df_consolidado['is_emissao_cartao'].sum()
-    print(f"   ✓ {emissoes} produtos de emissão excluídos de valores/pontos")
-    
-    print(f"\n9. Adicionando região...")
-    df_consolidado = df_consolidado.merge(
-        df_loja_regiao[['LOJA', 'REGIAO']],
-        on='LOJA',
-        how='left'
-    )
-    print(f"   ✓ Região adicionada")
-    
-    print(f"\n10. Totais finais:")
-    print(f"   - Valor total: R$ {df_consolidado['VALOR'].sum():,.2f}")
-    print(f"   - Pontos totais: {df_consolidado['pontos'].sum():,.0f}")
-    
-    num_supervisores = len(df_supervisores)
-    print(f"   - Supervisores (excluídos de análises de consultores): {num_supervisores}")
-    
-    return df_consolidado, df_metas, df_supervisores, dia_atual_para_du
+        col_letter = None
+        for cell in column:
+            if isinstance(cell, MergedCell):
+                continue
+            if col_letter is None:
+                col_letter = cell.column_letter
+            try:
+                if (
+                    cell.value
+                    and len(str(cell.value)) > max_length
+                ):
+                    max_length = len(str(cell.value))
+            except (TypeError, AttributeError):
+                continue
+        if col_letter is None:
+            continue
+        adjusted_width = min(max_length + 2, 50)
+        ws.column_dimensions[col_letter].width = adjusted_width
 
 
 def criar_aba_resumo(wb, df, mes, ano):
@@ -146,11 +55,7 @@ def criar_aba_resumo(wb, df, mes, ano):
     
     ws = wb.create_sheet("Resumo Executivo", 0)
     
-    mes_nome_pt = {
-        1: 'Janeiro', 2: 'Fevereiro', 3: 'Março', 4: 'Abril',
-        5: 'Maio', 6: 'Junho', 7: 'Julho', 8: 'Agosto',
-        9: 'Setembro', 10: 'Outubro', 11: 'Novembro', 12: 'Dezembro'
-    }[mes]
+    mes_nome_pt = MESES_PT[mes]
     
     ws['A1'] = f"RELATÓRIO DE VENDAS - {mes_nome_pt.upper()}/{ano}"
     ws['A1'].font = Font(size=16, bold=True, color="FFFFFF")
@@ -564,13 +469,13 @@ def criar_aba_relatorio_mix(wb, df, df_metas, mes, ano, dia_atual=None):
     print(f"   ✓ Relatório MIX criado ({len(tabela)-1} produtos)")
 
 
-def criar_aba_resumo_geral(wb, df, df_metas, mes, ano, dia_atual=None):
+def criar_aba_resumo_geral(wb, df, df_metas, mes, ano, dia_atual=None, df_supervisores=None):
     """Cria aba com resumo geral consolidado."""
     print(f"\nCriando aba: Resumo Geral...")
     
     ws = wb.create_sheet("Resumo Geral", 0)
     
-    resumo = criar_resumo_geral(df, df_metas, ano, mes, dia_atual)
+    resumo = criar_resumo_geral(df, df_metas, ano, mes, dia_atual, df_supervisores)
     
     row_atual = 1
     
@@ -1145,15 +1050,15 @@ def gerar_relatorio(mes=3, ano=2026):
     wb = openpyxl.Workbook()
     wb.remove(wb.active)
     
-    criar_aba_resumo_geral(wb, df, df_metas, mes, ano, dia_atual_para_du)
+    criar_aba_resumo_geral(wb, df, df_metas, mes, ano, dia_atual_para_du, df_supervisores)
     criar_aba_resumo(wb, df, mes, ano)
     criar_aba_tabela_produtos(wb, df, df_metas, mes, ano, dia_atual_para_du)
     
-    criar_aba_produto_individual(wb, df, df_metas, 'CNC', ano, mes, dia_atual_para_du)
-    criar_aba_produto_individual(wb, df, df_metas, 'SAQUE', ano, mes, dia_atual_para_du)
-    criar_aba_produto_individual(wb, df, df_metas, 'CLT', ano, mes, dia_atual_para_du)
-    criar_aba_produto_individual(wb, df, df_metas, 'CONSIGNADO', ano, mes, dia_atual_para_du)
-    criar_aba_produto_individual(wb, df, df_metas, 'PACK', ano, mes, dia_atual_para_du)
+    for produto in LISTA_PRODUTOS:
+        criar_aba_produto_individual(
+            wb, df, df_metas, produto,
+            ano, mes, dia_atual_para_du
+        )
     
     criar_aba_relatorio_mix(wb, df, df_metas, mes, ano, dia_atual_para_du)
     

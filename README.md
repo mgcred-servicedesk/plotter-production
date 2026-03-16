@@ -16,21 +16,44 @@ Sistema completo para análise de vendas com dashboard interativo, geração de 
 
 ```
 Numeros_venda/
-├── digitacao/              # Dados de vendas mensais
-├── metas/                  # Metas por loja e consultor
-├── tabelas/                # Tabelas de produtos com pontuação
-├── configuracao/           # Configurações (HC, loja-região)
+├── digitacao/                  # Dados de vendas mensais
+├── metas/                      # Metas por loja e consultor
+├── tabelas/                    # Tabelas de produtos com pontuação
+├── configuracao/               # Configurações (HC, loja-região, supervisores)
+├── assets/                     # Logotipo e recursos visuais
 ├── src/
-│   ├── data_processing/    # Processamento de dados
-│   ├── reports/            # Geração de relatórios
-│   ├── dashboard/          # Dashboard Streamlit
-│   ├── analysis/           # Análises comparativas
-│   └── config/             # Configurações
+│   ├── config/
+│   │   └── settings.py         # Configurações centralizadas e constantes
+│   ├── data_processing/
+│   │   ├── column_mapper.py    # Mapeamento de colunas dos arquivos
+│   │   ├── loader.py           # Carregamento e pipeline unificado de dados
+│   │   ├── business_rules.py   # Regras de negócio
+│   │   ├── consolidator.py     # Consolidação de dados
+│   │   ├── points_calculator.py# Sistema de pontuação
+│   │   └── transformer.py      # Transformação de dados
+│   ├── reports/
+│   │   ├── formatters.py       # Formatação centralizada (moeda, número, %)
+│   │   ├── pdf_styles.py       # Estilos PDF centralizados (cores, tabelas, rodapé)
+│   │   ├── pdf_executivo.py    # Relatório PDF executivo (KPIs e gráficos)
+│   │   ├── pdf_completo.py     # Relatório PDF completo (todos os rankings)
+│   │   ├── pdf_regional.py     # Relatórios PDF por região
+│   │   ├── pdf_produto.py      # Relatórios PDF por produto individual
+│   │   ├── pdf_produtos_loja.py# Relatório PDF consolidado produtos x lojas
+│   │   ├── pdf_charts.py       # Gráficos Matplotlib para PDFs
+│   │   ├── resumo_geral.py     # Dados de resumo consolidado
+│   │   ├── relatorio_mix.py    # Relatório MIX de produtos
+│   │   ├── tabela_produtos.py  # Tabelas por produto com métricas
+│   │   ├── tabela_produtos_horizontal.py
+│   │   └── tabela_produto_individual.py
+│   ├── dashboard/              # Dashboard Streamlit
+│   └── analysis/               # Análises comparativas
 ├── outputs/
-│   ├── relatorios_excel/   # Relatórios Excel gerados
-│   └── relatorios_pdf/     # Relatórios PDF gerados
-├── notebooks/              # Análises exploratórias
-└── tests/                  # Testes automatizados
+│   ├── relatorios_excel/       # Relatórios Excel gerados
+│   └── relatorios_pdf/         # Relatórios PDF gerados
+├── gerar_relatorio.py          # Script para gerar relatório Excel
+├── gerar_relatorio_pdf.py      # Script para gerar relatórios PDF
+├── notebooks/                  # Análises exploratórias
+└── tests/                      # Testes automatizados
 ```
 
 ## 🚀 Instalação
@@ -75,26 +98,42 @@ streamlit run src/dashboard/app.py
 
 O dashboard estará disponível em `http://localhost:8501`
 
-### Gerar Relatórios Excel
+### Gerar Relatório Excel
 
+Gera um arquivo Excel completo com múltiplas abas (Resumo Geral, Produtos por Loja, Rankings, MIX, etc.):
+
+```bash
+python gerar_relatorio.py
+```
+
+Ou via importação:
 ```python
-from src.reports.excel_generator import gerar_relatorio_excel
+from gerar_relatorio import gerar_relatorio
 
-# Gerar relatório do mês atual
-gerar_relatorio_excel(mes=3, ano=2026)
+gerar_relatorio(mes=3, ano=2026)
 ```
 
 ### Gerar Relatórios PDF
 
-```python
-from src.reports.pdf_generator import gerar_pdf_executivo, gerar_pdf_detalhado
+Gera 13 arquivos PDF (Executivo, Completo, Regionais, por Produto, Produtos por Loja):
 
-# Gerar PDF executivo
-gerar_pdf_executivo(mes=3, ano=2026)
-
-# Gerar PDF detalhado
-gerar_pdf_detalhado(mes=3, ano=2026)
+```bash
+python gerar_relatorio_pdf.py
 ```
+
+Ou via importação:
+```python
+from gerar_relatorio_pdf import main
+
+main(mes=3, ano=2026)
+```
+
+**Tipos de relatórios PDF gerados:**
+- **Executivo**: KPIs, gráficos de atingimento, evolução diária, TOP 10 lojas/consultores (6-8 páginas)
+- **Completo**: Todos os rankings detalhados de lojas, consultores e regiões (15-20 páginas)
+- **Regional**: Um PDF por região com análise específica (4-6 páginas cada)
+- **Por Produto**: Um PDF para cada produto (CNC, SAQUE, CLT, CONSIGNADO, PACK)
+- **Produtos por Loja**: Visão consolidada em formato landscape
 
 ## 🎯 Regras de Negócio
 
@@ -179,6 +218,7 @@ Localização: `tabelas/`
 Localização: `configuracao/`
 - `HC_Colaboradores.xlsx`: Headcount de colaboradores
 - `loja_regiao.xlsx`: Mapeamento loja-região
+- `Supervisores.xlsx`: Lista de supervisores (excluídos de análises de consultores)
 
 ## 🛠️ Tecnologias Utilizadas
 
@@ -186,10 +226,38 @@ Localização: `configuracao/`
 - **Pandas 2.2+**: Manipulação de dados
 - **NumPy 1.26+**: Cálculos numéricos
 - **Plotly 5.20+**: Gráficos interativos
+- **Matplotlib 3.8+**: Gráficos para relatórios PDF
 - **Streamlit 1.35+**: Dashboard web
 - **openpyxl**: Leitura/escrita de Excel
 - **ReportLab**: Geração de PDF
+- **python-dotenv**: Variáveis de ambiente
 - **pytest**: Testes automatizados
+
+## 🏗️ Arquitetura dos Módulos Centralizados
+
+### Formatação (`src/reports/formatters.py`)
+Funções únicas de formatação reutilizadas por todos os relatórios:
+- `formatar_moeda()` — R$ X.XXX,XX
+- `formatar_moeda_compacta()` — R$ 1,5M / R$ 500K
+- `formatar_numero()` — X.XXX
+- `formatar_percentual()` — XX,XX%
+
+### Estilos PDF (`src/reports/pdf_styles.py`)
+Estilos centralizados para consistência visual em todos os PDFs:
+- Paleta de cores padrão (`CORES`)
+- Estilos de tabela (moderno, com total, KPI)
+- Estilos de parágrafo (título, subtítulo, seção, região)
+- Rodapé padronizado com número de página e data
+
+### Constantes (`src/config/settings.py`)
+Configurações e constantes de negócio centralizadas:
+- `MAPEAMENTO_PRODUTOS` — Mapeamento produto MIX → tipos de produto
+- `MAPEAMENTO_COLUNAS_META` — Mapeamento produto → coluna de meta
+- `MESES_PT` / `MESES_ARQUIVO` — Nomes de meses em português
+- `LISTA_PRODUTOS` — Lista dos 5 produtos MIX
+
+### Pipeline de Dados (`src/data_processing/loader.py`)
+- `carregar_e_processar_dados(mes, ano)` — Pipeline unificado de carga, mapeamento, JOIN, pontuação e regras de exclusão
 
 ## 📄 Licença
 

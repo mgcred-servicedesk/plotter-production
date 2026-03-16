@@ -204,15 +204,102 @@ python teste_mapeamento.py
 
 ---
 
+# ✅ Refatoração de Relatórios PDF e Excel
+
+**Data**: 16/03/2026
+**Status**: ✅ **IMPLEMENTADO**
+
+---
+
+## � Objetivo
+
+Eliminar duplicação massiva de código, centralizar formatação e estilos, padronizar layout dos PDFs e corrigir bugs no gerador Excel.
+
+---
+
+## 📝 Novos Módulos Criados
+
+### 1. `src/reports/formatters.py`
+Funções únicas de formatação brasileira, eliminando ~150 linhas duplicadas de 7 arquivos:
+- `formatar_moeda(valor)` — R$ X.XXX,XX
+- `formatar_moeda_compacta(valor)` — R$ 1,5M / R$ 500K
+- `formatar_numero(valor)` — X.XXX
+- `formatar_percentual(valor, casas)` — XX,XX%
+
+### 2. `src/reports/pdf_styles.py`
+Estilos PDF centralizados para consistência visual:
+- Paleta de cores padrão (`CORES`)
+- Margens padrão e compactas
+- Estilos de parágrafo (título, subtítulo, seção, região)
+- Estilos de tabela (moderno, com total, KPI)
+- `criar_rodape()` — Rodapé com número de página e data
+
+### 3. Constantes em `src/config/settings.py`
+- `MESES_ARQUIVO` — Nomes de meses minúsculos para arquivos
+- `MAPEAMENTO_PRODUTOS` — Mapeamento produto MIX → tipos
+- `MAPEAMENTO_COLUNAS_META` — Mapeamento produto → coluna de meta
+- `PRODUTOS_EMISSAO` — Lista de tipos de emissão
+- `LISTA_PRODUTOS` — Lista dos 5 produtos MIX
+
+### 4. Função unificada em `src/data_processing/loader.py`
+- `carregar_e_processar_dados(mes, ano)` — Pipeline completo
+- Retorna tupla: `(df_consolidado, df_metas, df_supervisores, dia_atual)`
+
+---
+
+## 🔧 Correções Aplicadas
+
+### `gerar_relatorio.py`
+- **`ajustar_largura_colunas()`**: Agora itera sobre TODAS as colunas (antes: fixo A-H)
+- **`except: pass`** substituído por `except (TypeError, AttributeError): continue`
+- **Numeração de etapas duplicada** (dois "7." e dois "8.") corrigida
+- **Loop de produtos** com `LISTA_PRODUTOS` ao invés de 5 chamadas repetidas
+
+### Todos os PDFs
+- **Rodapé adicionado** a todos os 5 módulos PDF ativos
+- **Dicionários de meses locais** substituídos por `MESES_PT`
+- **Mapeamentos de produtos/metas** substituídos por constantes
+- **Funções de formatação** substituídas por imports de `formatters.py`
+
+---
+
+## ❌ Arquivos Removidos (não utilizados)
+
+| Arquivo | Motivo |
+|---------|--------|
+| `src/reports/pdf_generator.py` | Substituído por `pdf_executivo.py` e `pdf_completo.py` |
+| `src/reports/pdf_detalhado.py` | Absorvido por `pdf_completo.py` |
+| `src/reports/pdf_resumo.py` | Absorvido por `pdf_executivo.py` |
+| `src/reports/excel_generator.py` | Substituído por `gerar_relatorio.py` |
+| `src/reports/resumo_geral.py.backup` | Backup desnecessário |
+
+---
+
+## 📊 Impacto da Refatoração
+
+| Métrica | Antes | Depois |
+|---------|-------|--------|
+| Duplicação de `formatar_moeda/numero/%` | 7 arquivos | 1 (`formatters.py`) |
+| Dicionário de meses | ~9 cópias | 1 constante (`MESES_PT`) |
+| Mapeamentos de produtos | ~12 cópias | 1 constante (`MAPEAMENTO_PRODUTOS`) |
+| Função `carregar_e_processar_dados` | 2 cópias | 1 função (`loader.py`) |
+| PDFs com rodapé | 3 de 8 | 8 de 8 |
+| Arquivos mortos | 5 | 0 |
+
+---
+
 ## 🎉 Conclusão
 
-**Todas as mudanças solicitadas foram implementadas e testadas com sucesso!**
+**Todas as mudanças foram implementadas e testadas com sucesso!**
 
 O sistema agora:
 1. ✅ Usa **VLR BASE** para cálculos de pontuação
 2. ✅ Faz **JOIN automático** entre digitação e tabelas
 3. ✅ **Higieniza** o campo VENDEDOR removendo códigos
 4. ✅ Identifica corretamente **SUPER CONTA** e outros produtos especiais
-5. ✅ Calcula pontuação precisa: **16.261.776 pontos em março/2026**
+5. ✅ Gera **13 relatórios PDF** com layout consistente e rodapé
+6. ✅ **Formatação centralizada** — sem duplicação de código
+7. ✅ **Constantes de negócio** centralizadas em `settings.py`
+8. ✅ **Pipeline unificado** de carga de dados em `loader.py`
 
-**Sistema pronto para gerar relatórios com dados de qualidade!** 🚀
+**Sistema refatorado e pronto para produção!** 🚀
