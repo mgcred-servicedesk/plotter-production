@@ -54,9 +54,11 @@ def calcular_kpis_gerais(
     )
     
     media_du = total_vendas / du_decorridos if du_decorridos > 0 else 0
+    media_du_pontos = total_pontos / du_decorridos if du_decorridos > 0 else 0
     meta_diaria = meta_prata / du_total if du_total > 0 else 0
     projecao = media_du * du_total
-    perc_proj = (projecao / meta_prata * 100) if meta_prata > 0 else 0
+    projecao_pontos = media_du_pontos * du_total
+    perc_proj = (projecao_pontos / meta_prata * 100) if meta_prata > 0 else 0
     
     ticket_medio = total_vendas / total_transacoes if total_transacoes > 0 else 0
     
@@ -70,7 +72,9 @@ def calcular_kpis_gerais(
         'perc_ating_prata': perc_ating_prata,
         'perc_ating_ouro': perc_ating_ouro,
         'media_du': media_du,
+        'media_du_pontos': media_du_pontos,
         'projecao': projecao,
+        'projecao_pontos': projecao_pontos,
         'perc_proj': perc_proj,
         'ticket_medio': ticket_medio,
         'du_total': du_total,
@@ -347,11 +351,16 @@ def calcular_evolucao_diaria(
     if 'DATA' not in df.columns:
         return pd.DataFrame()
     
-    evolucao = df.groupby('DATA').agg({
+    df_temp = df.copy()
+    df_temp['DATA_DIA'] = pd.to_datetime(df_temp['DATA']).dt.date
+    
+    evolucao = df_temp.groupby('DATA_DIA').agg({
         'VALOR': 'sum',
         'pontos': 'sum'
     }).reset_index()
     
+    evolucao = evolucao.rename(columns={'DATA_DIA': 'DATA'})
+    evolucao['DATA'] = pd.to_datetime(evolucao['DATA'])
     evolucao = evolucao.sort_values('DATA')
     
     evolucao['Valor Acumulado'] = evolucao['VALOR'].cumsum()

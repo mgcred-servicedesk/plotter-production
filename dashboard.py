@@ -20,6 +20,9 @@ from src.data_processing.column_mapper import (
     adicionar_coluna_subtipo_via_merge,
     aplicar_regras_exclusao_valor_pontos
 )
+from src.data_processing.pontuacao_loader import (
+    calcular_pontos_com_tabela_mensal
+)
 from src.reports.tabela_produtos import calcular_dias_uteis
 from src.reports.resumo_geral import criar_resumo_geral
 
@@ -52,7 +55,11 @@ def carregar_dados(mes, ano):
     df_loja_regiao = mapear_loja_regiao(df_loja_regiao)
     
     df_consolidado = adicionar_coluna_subtipo_via_merge(df_digitacao, df_tabelas)
-    df_consolidado['pontos'] = df_consolidado['VALOR'] * df_consolidado['PTS']
+    
+    df_consolidado = calcular_pontos_com_tabela_mensal(
+        df_consolidado, mes, ano
+    )
+    
     df_consolidado = aplicar_regras_exclusao_valor_pontos(df_consolidado)
     
     df_consolidado = df_consolidado.merge(

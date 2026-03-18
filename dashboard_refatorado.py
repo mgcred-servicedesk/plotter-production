@@ -18,6 +18,7 @@ from datetime import datetime
 
 sys.path.insert(0, str(Path(__file__).parent))
 
+from src.config.settings import MESES_ARQUIVO
 from src.data_processing.column_mapper import (
     mapear_digitacao,
     mapear_tabelas,
@@ -25,6 +26,10 @@ from src.data_processing.column_mapper import (
     mapear_loja_regiao,
     adicionar_coluna_subtipo_via_merge,
     aplicar_regras_exclusao_valor_pontos
+)
+from src.data_processing.pontuacao_loader import (
+    calcular_pontos_com_tabela_mensal,
+    verificar_produtos_sem_pontuacao
 )
 from src.dashboard.kpi_dashboard import (
     calcular_kpis_gerais,
@@ -51,25 +56,27 @@ def carregar_dados(mes, ano):
         5: 'maio', 6: 'junho', 7: 'julho', 8: 'agosto',
         9: 'setembro', 10: 'outubro', 11: 'novembro', 12: 'dezembro'
     }[mes]
-    
+
     df_digitacao = pd.read_excel(f'digitacao/{mes_nome}_{ano}.xlsx')
     df_tabelas = pd.read_excel(f'tabelas/Tabelas_{mes_nome}_{ano}.xlsx')
     df_metas = pd.read_excel(f'metas/metas_{mes_nome}.xlsx')
     df_loja_regiao = pd.read_excel('configuracao/loja_regiao.xlsx')
-    
+
     df_digitacao = mapear_digitacao(df_digitacao)
     df_tabelas = mapear_tabelas(df_tabelas)
     df_metas = mapear_metas(df_metas)
     df_loja_regiao = mapear_loja_regiao(df_loja_regiao)
-    
+
     df_consolidado = adicionar_coluna_subtipo_via_merge(
         df_digitacao, df_tabelas
     )
-    df_consolidado['pontos'] = (
-        df_consolidado['VALOR'] * df_consolidado['PTS']
-    )
-    df_consolidado = aplicar_regras_exclusao_valor_pontos(df_consolidado)
     
+    df_consolidado = calcular_pontos_com_tabela_mensal(
+        df_consolidado, mes, ano
+    )
+    
+    df_consolidado = aplicar_regras_exclusao_valor_pontos(df_consolidado)
+
     df_consolidado = df_consolidado.merge(
         df_loja_regiao[['LOJA', 'REGIAO']],
         on='LOJA',
@@ -96,11 +103,78 @@ def formatar_percentual(valor):
     return f"{valor:.1f}%"
 
 
-def criar_cards_kpis_principais(kpis):
-    """Cria cards de KPIs principais."""
-    st.markdown("### 📊 Indicadores Principais")
+def carregar_estilos_customizados():
+    """Carrega CSS customizado e Font Awesome."""
+    try:
+        with open('assets/dashboard_style.css') as f:
+            st.markdown(f'<style>{f.read()}</style>', unsafe_allow_html=True)
+    except FileNotFoundError:
+        pass
+
+    font_awesome = '''
+    <link rel="stylesheet"
+          href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    '''
+    st.markdown(font_awesome, unsafe_allow_html=True)
+
+
+def criar_toggle_tema():
+    """Cria toggle de tema com ícones Sol/Lua usando session_state."""
+    if 'tema_escuro' not in st.session_state:
+        st.session_state.tema_escuro = False
     
-    col1, col2, col3, col4, col5 = st.columns(5)
+    col1, col2 = st.columns([3, 1])
+    with col1:
+        st.markdown("**Tema**")
+    with col2:
+        if st.button("🌙" if not st.session_state.tema_escuro else "☀️", 
+                     help="Alternar tema"):
+            st.session_state.tema_escuro = not st.session_state.tema_escuro
+            st.rerun()
+    
+    if st.session_state.tema_escuro:
+        st.caption("🌙 Modo Escuro")
+    else:
+        st.caption("☀️ Modo Claro")
+    
+    aplicar_tema(st.session_state.tema_escuro)
+    
+    return st.session_state.tema_escuro
+
+
+def aplicar_tema(tema_escuro):
+    """Aplica o tema selecionado (claro ou escuro)."""
+    import streamlit.components.v1 as components
+    
+    if tema_escuro:
+        tema_script = """
+        <script>
+            const setTheme = () => {
+                const root = window.parent.document.documentElement;
+                root.setAttribute('data-theme', 'dark');
+            };
+            setTheme();
+        </script>
+        """
+    else:
+        tema_script = """
+        <script>
+            const setTheme = () => {
+                const root = window.parent.document.documentElement;
+                root.removeAttribute('data-theme');
+            };
+            setTheme();
+        </script>
+        """
+    
+    components.html(tema_script, height=0)
+
+
+def criar_cards_kpis_principais(kpis):
+    """Cria cards de KPIs principais com estilização moderna."""
+    st.markdown("### 📊 Indicadores Principais de Performance")
+    
+    col1, col2, col3, col4 = st.columns(4)
     
     with col1:
         delta_color = "normal"
@@ -108,70 +182,92 @@ def criar_cards_kpis_principais(kpis):
             delta_color = "normal"
         elif kpis['perc_ating_prata'] >= 80:
             delta_color = "off"
+        else:
+            delta_color = "inverse"
         
         st.metric(
             "💰 Total de Vendas",
             formatar_moeda(kpis['total_vendas']),
-            f"{formatar_percentual(kpis['perc_ating_prata'])} da meta",
+            f"{formatar_percentual(kpis['perc_ating_prata'])} da meta prata",
             delta_color=delta_color
         )
     
     with col2:
+        delta_color = "normal"
+        if kpis['perc_ating_prata'] >= 100:
+            delta_color = "normal"
+        elif kpis['perc_ating_prata'] >= 80:
+            delta_color = "off"
+        else:
+            delta_color = "inverse"
+        
         st.metric(
-            "🎯 Meta Prata",
-            formatar_numero(kpis['meta_prata']),
-            f"{kpis['du_restantes']} DU restantes"
+            "⭐ Total de Pontos",
+            formatar_numero(kpis['total_pontos']),
+            f"{formatar_percentual(kpis['perc_ating_prata'])} da meta prata",
+            delta_color=delta_color
         )
     
     with col3:
         delta_color = "normal"
         if kpis['perc_proj'] >= 100:
             delta_color = "normal"
+        elif kpis['perc_proj'] >= 90:
+            delta_color = "off"
+        else:
+            delta_color = "inverse"
         
         st.metric(
-            "📈 Projeção",
-            formatar_moeda(kpis['projecao']),
-            f"{formatar_percentual(kpis['perc_proj'])} da meta",
+            "📈 Projeção (Pontos)",
+            formatar_numero(kpis['projecao_pontos']),
+            f"{formatar_percentual(kpis['perc_proj'])} da meta prata",
             delta_color=delta_color
         )
     
     with col4:
         st.metric(
-            "📅 Média por DU",
-            formatar_moeda(kpis['media_du']),
-            f"Meta diária: {formatar_moeda(kpis['meta_diaria'])}"
+            "🎯 Meta Prata",
+            formatar_numero(kpis['meta_prata']),
+            f"{kpis['du_restantes']} DU restantes"
         )
     
-    with col5:
-        st.metric(
-            "⭐ Total de Pontos",
-            formatar_numero(kpis['total_pontos']),
-            f"{kpis['num_lojas']} lojas"
-        )
-    
-    st.markdown("---")
+    st.markdown("")
+    st.markdown("### 📋 Indicadores Operacionais")
     
     col1, col2, col3, col4 = st.columns(4)
     
     with col1:
+        delta_color = "normal"
+        if kpis['perc_ating_ouro'] >= 100:
+            delta_color = "normal"
+        elif kpis['perc_ating_ouro'] >= 80:
+            delta_color = "off"
+        else:
+            delta_color = "inverse"
+        
         st.metric(
             "🏆 Meta Ouro",
             formatar_numero(kpis['meta_ouro']),
-            f"{formatar_percentual(kpis['perc_ating_ouro'])} atingido"
+            f"{formatar_percentual(kpis['perc_ating_ouro'])} atingido",
+            delta_color=delta_color
         )
     
     with col2:
+        diferenca_media = kpis['media_du'] - kpis['meta_diaria']
+        delta_color = "normal" if diferenca_media >= 0 else "inverse"
+        
         st.metric(
-            "🎫 Ticket Médio",
-            formatar_moeda(kpis['ticket_medio']),
-            f"{formatar_numero(kpis['total_transacoes'])} transações"
+            "📅 Média por DU",
+            formatar_moeda(kpis['media_du']),
+            f"Meta diária: {formatar_moeda(kpis['meta_diaria'])}",
+            delta_color=delta_color
         )
     
     with col3:
         st.metric(
-            "👥 Consultores",
-            formatar_numero(kpis['num_consultores']),
-            f"{kpis['num_regioes']} regiões"
+            "🎫 Ticket Médio",
+            formatar_moeda(kpis['ticket_medio']),
+            f"{formatar_numero(kpis['total_transacoes'])} transações"
         )
     
     with col4:
@@ -182,12 +278,32 @@ def criar_cards_kpis_principais(kpis):
         st.metric(
             "📊 Produtividade",
             f"{produtividade:.1f}",
-            "vendas/consultor"
+            f"{formatar_numero(kpis['num_consultores'])} consultores"
         )
 
 
-def criar_grafico_produtos_completo(df_produtos):
+def obter_template_grafico(tema_escuro=False):
+    """Retorna configuração de template para gráficos baseado no tema."""
+    if tema_escuro:
+        return {
+            'template': 'plotly_dark',
+            'paper_bgcolor': '#1A1A1A',
+            'plot_bgcolor': '#2D2D2D',
+            'font_color': '#E8F1F8'
+        }
+    else:
+        return {
+            'template': 'plotly_white',
+            'paper_bgcolor': '#FFFFFF',
+            'plot_bgcolor': '#F8F9FA',
+            'font_color': '#2C3E50'
+        }
+
+
+def criar_grafico_produtos_completo(df_produtos, tema_escuro=False):
     """Cria gráfico completo de produtos."""
+    template_config = obter_template_grafico(tema_escuro)
+    
     fig = make_subplots(
         rows=2, cols=2,
         subplot_titles=(
@@ -312,14 +428,20 @@ def criar_grafico_produtos_completo(df_produtos):
             xanchor="right",
             x=1
         ),
-        title_text="Análise Completa de Produtos"
+        title_text="Análise Completa de Produtos",
+        template=template_config['template'],
+        paper_bgcolor=template_config['paper_bgcolor'],
+        plot_bgcolor=template_config['plot_bgcolor'],
+        font=dict(color=template_config['font_color'])
     )
     
     return fig
 
 
-def criar_grafico_evolucao_diaria(df_evolucao, kpis):
+def criar_grafico_evolucao_diaria(df_evolucao, kpis, tema_escuro=False):
     """Cria gráfico de evolução diária."""
+    template_config = obter_template_grafico(tema_escuro)
+    
     fig = make_subplots(
         rows=2, cols=1,
         subplot_titles=(
@@ -378,14 +500,20 @@ def criar_grafico_evolucao_diaria(df_evolucao, kpis):
     fig.update_layout(
         height=700,
         showlegend=True,
-        hovermode='x unified'
+        hovermode='x unified',
+        template=template_config['template'],
+        paper_bgcolor=template_config['paper_bgcolor'],
+        plot_bgcolor=template_config['plot_bgcolor'],
+        font=dict(color=template_config['font_color'])
     )
     
     return fig
 
 
-def criar_grafico_regional(df_regioes):
+def criar_grafico_regional(df_regioes, tema_escuro=False):
     """Cria gráfico de análise regional."""
+    template_config = obter_template_grafico(tema_escuro)
+    
     fig = make_subplots(
         rows=1, cols=2,
         subplot_titles=(
@@ -428,7 +556,11 @@ def criar_grafico_regional(df_regioes):
     fig.update_layout(
         height=500,
         showlegend=False,
-        title_text="Análise por Região"
+        title_text="Análise por Região",
+        template=template_config['template'],
+        paper_bgcolor=template_config['paper_bgcolor'],
+        plot_bgcolor=template_config['plot_bgcolor'],
+        font=dict(color=template_config['font_color'])
     )
     
     return fig
@@ -436,12 +568,18 @@ def criar_grafico_regional(df_regioes):
 
 def main():
     """Função principal do dashboard."""
+    carregar_estilos_customizados()
+    
     st.title("📊 Dashboard de Vendas - MGCred")
     st.markdown("**Análise Completa de Performance e KPIs**")
     st.markdown("---")
     
     with st.sidebar:
         st.header("⚙️ Configurações")
+        
+        tema_escuro = criar_toggle_tema()
+        
+        st.markdown("---")
         
         ano = st.selectbox("Ano", [2024, 2025, 2026], index=2)
         mes = st.selectbox(
@@ -502,6 +640,38 @@ def main():
             (f" | Região: {filtro_regiao}" if filtro_regiao != 'Todas' else "")
         )
         
+        info_sem_pontuacao = verificar_produtos_sem_pontuacao(df_filtrado)
+        if info_sem_pontuacao['tem_problemas']:
+            with st.expander(
+                f"⚠️ Atenção: {info_sem_pontuacao['total_registros']} "
+                f"registros sem pontuação identificada",
+                expanded=False
+            ):
+                st.warning(
+                    f"**Valor total afetado:** "
+                    f"R$ {info_sem_pontuacao['valor_total']:,.2f}\n\n"
+                    f"Os produtos abaixo não possuem pontuação definida "
+                    f"na tabela de pontuação mensal. "
+                    f"Verifique se precisam ser adicionados à tabela "
+                    f"`pontuacao/pontos_{MESES_ARQUIVO[mes]}.xlsx` "
+                    f"ou ao arquivo `tabelas/Tabelas_{MESES_ARQUIVO[mes]}_{ano}.xlsx`."
+                )
+                
+                df_sem_pontuacao = pd.DataFrame(
+                    info_sem_pontuacao['produtos']
+                )
+                df_sem_pontuacao['VALOR'] = df_sem_pontuacao['VALOR'].apply(
+                    lambda x: f"R$ {x:,.2f}"
+                )
+                df_sem_pontuacao.columns = [
+                    'Produto', 'Valor Total', 'Tipo Produto'
+                ]
+                st.dataframe(
+                    df_sem_pontuacao,
+                    use_container_width=True,
+                    hide_index=True
+                )
+        
         kpis = calcular_kpis_gerais(
             df_filtrado, df_metas_filtrado, ano, mes, dia_atual
         )
@@ -525,8 +695,10 @@ def main():
                 df_filtrado, df_metas_filtrado, ano, mes, dia_atual
             )
             
-            fig_produtos = criar_grafico_produtos_completo(df_produtos)
-            st.plotly_chart(fig_produtos, width='stretch')
+            fig_produtos = criar_grafico_produtos_completo(
+                df_produtos, tema_escuro
+            )
+            st.plotly_chart(fig_produtos, use_container_width=True)
             
             st.markdown("### 📊 Tabela de KPIs por Produto")
             
@@ -572,8 +744,10 @@ def main():
             )
             
             if not df_regioes.empty:
-                fig_regional = criar_grafico_regional(df_regioes)
-                st.plotly_chart(fig_regional, width='stretch')
+                fig_regional = criar_grafico_regional(
+                    df_regioes, tema_escuro
+                )
+                st.plotly_chart(fig_regional, use_container_width=True)
                 
                 st.markdown("### 📊 Tabela de KPIs por Região")
                 
@@ -695,9 +869,9 @@ def main():
             
             if not df_evolucao.empty:
                 fig_evolucao = criar_grafico_evolucao_diaria(
-                    df_evolucao, kpis
+                    df_evolucao, kpis, tema_escuro
                 )
-                st.plotly_chart(fig_evolucao, width='stretch')
+                st.plotly_chart(fig_evolucao, use_container_width=True)
                 
                 col1, col2, col3 = st.columns(3)
                 

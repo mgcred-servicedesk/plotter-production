@@ -21,6 +21,9 @@ from src.data_processing.column_mapper import (
     adicionar_coluna_subtipo_via_merge,
     aplicar_regras_exclusao_valor_pontos,
 )
+from src.data_processing.pontuacao_loader import (
+    calcular_pontos_com_tabela_mensal
+)
 
 
 MESES_NOME_PARA_NUM = {
@@ -384,8 +387,8 @@ def carregar_e_processar_dados(mes, ano):
     )
 
     print("\n9. Calculando pontuação...")
-    df_consolidado['pontos'] = (
-        df_consolidado['VALOR'] * df_consolidado['PTS']
+    df_consolidado = calcular_pontos_com_tabela_mensal(
+        df_consolidado, mes, ano
     )
     print(
         f"   ✓ Total de pontos: "
