@@ -146,3 +146,9 @@ aplicar_tema(tema)
 - [ ] Adicionar tema "Auto" (segue sistema)
 - [ ] Animação de transição entre temas
 - [ ] Temas customizados adicionais
+
+### Atualizações Recentes de Legibilidade (Tema Claro e Escuro)
+- Redução de fadiga visual no Tema Claro, substituindo o branco excessivo (#FFFFFF) por `Slate 100` (#F1F5F9).
+- Suavização de textos, substituindo pretos absolutos por cinzas frios da paleta Slate (#1E293B).
+- Ajuste dos verdes e vermelhos para a paleta Emerald e Red (Tailwind), evitando tons super-saturados que causavam desconforto visual durante longas jornadas de trabalho com os dados.
+- O tema claro agora não é mais um "brilhante absoluto", mas uma plataforma neutra onde os cards brancos saltam de forma mais agradável, no estilo *dashboard analytics moderno*.

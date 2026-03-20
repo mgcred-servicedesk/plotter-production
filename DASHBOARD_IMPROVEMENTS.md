@@ -125,3 +125,103 @@ streamlit run dashboard_refatorado.py
 - **Performance**: CSS carregado uma vez no início
 - **Fallback**: Se o arquivo CSS não existir, o dashboard funciona normalmente com estilos padrão
 - **Compatibilidade**: Testado com Streamlit 1.35+
+# Melhorias de Design do Dashboard (Streamlit)
+
+**Data**: 19/03/2026
+**Status**: ✅ **IMPLEMENTADO E TESTADO**
+
+## 🎨 Resumo das Alterações Visuais
+
+O design do dashboard (via `assets/dashboard_style.css` e `dashboard_refatorado.py`) foi atualizado para uma **Paleta Slate** (Tailwind-inspired), visando maior legibilidade, contraste e redução de fadiga visual, em conformidade com as melhores práticas de Dashboard Design.
+
+### 1. Novo Contraste e Paleta de Cores (CSS)
+
+**Modo Claro:**
+- Fundo Principal (`--bg-primary`): Substituído branco puro (`#FFFFFF`) por Slate 50 (`#F8FAFC`).
+- Fundo dos Cards (`--bg-card`): Mantido branco para criar contraste por separação visual com o fundo geral.
+- Texto Principal (`--text-primary`): Alterado de um cinza-azulado genérico para Slate 900 (`#0F172A`), mantendo alto contraste sem ser "preto puro".
+- Texto Secundário (`--text-secondary`): Slate 600 (`#475569`).
+
+**Modo Escuro:**
+- Fundo Principal (`--bg-primary`): Alterado do cinza escuro genérico (`#1A1A1A`) para Slate 900 (`#0F172A`).
+- Fundo dos Cards (`--bg-card`): Slate 800 (`#1E293B`).
+- Texto Principal (`--text-primary`): Slate 50 (`#F8FAFC`).
+- Texto Secundário (`--text-secondary`): Slate 400 (`#94A3B8`).
+
+### 2. Separação Visual dos Cards
+- Removido o recurso visual de usar `linear-gradient` nos fundos dos cards. Agora utilizam-se **cores sólidas** com uma fina borda (`border: 1px solid var(--border-color)`), uma técnica moderna que funciona de forma muito mais coesa no modo escuro do que apenas sombras (box-shadow).
+
+### 3. Ajustes no Streamlit e Plotly
+- **Plotly (`obter_template_grafico`)**:
+  - Os fundos do Plotly (`paper_bgcolor` e `plot_bgcolor`) foram alterados para `rgba(0,0,0,0)` (transparente). Isso força o gráfico a assumir e respeitar o fundo exato do contêiner ditado pelo Streamlit/CSS (Slate 800 ou Slate 50).
+  - Ajuste nas cores das fontes (`font_color`) para sincronizar com as variáveis do CSS (Slate 900 para claro, Slate 50 para escuro).
+- O arquivo foi formatado usando o `ruff` de acordo com os padrões da PEP8, corrigindo problemas de linha excessivamente longa no código de renderização do Streamlit.
+
+---
+
+## 🌙 Ajustes no Modo Escuro (Dark Mode)
+
+A atualização focou em remover ruídos visuais, diminuir o contraste vibrante de branco-no-preto e construir profundidade usando bordas e diferentes tons da paleta Slate (Tailwind).
+
+1. **Fundo Geral e Profundidade**: O fundo base de todo o app e tabelas agora é **Slate 900** (`#0F172A`).
+2. **Separação de Cards**: Os cards usam um tom ligeiramente mais elevado **Slate 800** (`#1E293B`) e são desenhados com bordas em **Slate 700** (`#334155`). A sombra preta profunda que deixava o visual sujo foi suavizada.
+3. **Texto e Tipografia**: O texto principal, que antes era o branco "ofuscante" `#FFFFFF` ou azul muito vivo, agora é um tom mais acinzentado frio **Slate 100** (`#F1F5F9`) ou **Slate 50** (`#F8FAFC`). Isso alivia a leitura longa.
+4. **Highlights e Alertas**: As cores de alerta no modo escuro receberam saturação controlada:
+   - Verde: **Emerald 400** (`#34D399`)
+   - Vermelho: **Red 400** (`#F87171`)
+   - Accent / Links: **Blue 400** (`#60A5FA`)
+5. **Integração com Gráficos**: A cor de texto dos gráficos Plotly embutidos foi casada estritamente com as variáveis do CSS (`#F1F5F9` para título e eixos).
+
+## Correção do Contraste nos Cards Principais (.stMetric)
+
+As métricas nativas do Streamlit estavam sofrendo com falta de contraste no modo escuro porque o Streamlit injeta cores de legenda "hardcoded" (`#94A3B8` ou similares) diretamente via HTML/React, o que "apagava" o título do card, valor principal e variações.
+
+**Ajustes realizados no CSS:**
+- Forçamos as variáveis dinâmicas através do `!important` para sobrescrever os estilos padrões do Streamlit nos blocos de métricas (`[data-testid="stMetricValue"] > div` e `[data-testid="stMetricLabel"] p`).
+- Agora o `Valor` obedece a variável `--text-primary` (`Slate 100` no escuro e `Slate 800` no claro) garantindo a legibilidade do dado principal.
+- As `Labels` obedecem a variável `--text-secondary` em ambos os temas.
+- Limpamos a regra específica (`nth-child(2)`) que pintava equivocadamente os textos do card de "Total de Pontos" de um verde muito escuro, o que reduzia a visibilidade.
+- Ajustamos a seleção condicional das setas de variação do Streamlit (`stMetricDelta`) para obedecer as paletas suavizadas de `Verde Sucesso`, `Vermelho Crítico` e `Cinza Neutro`.
+
+## Estilização de Tabelas no Streamlit (Análise Técnica)
+
+O Streamlit renderiza tabelas (`st.dataframe`) utilizando o componente Glide Data Grid. Diferente dos gráficos (que rodam no Plotly e aceitam injeção direta de dicionários de cores via Python), a engine de tabelas nativa do Streamlit herda rigidamente as cores definidas no tema do frontend (o `.streamlit/config.toml`).
+
+**O Problema Atual:**
+O Streamlit permite apenas 1 tema global ativo no `config.toml` (o nosso está travado no Light Mode como base). Quando alternamos para o modo escuro via botão de toggle (injetando `data-theme="dark"` no CSS), o Streamlit **não re-renderiza nativamente as tabelas**, o que resulta em tabelas com fundo claro e contraste quebrado dentro de uma página escura.
+
+**Opções de Solução:**
+1. **Converter todas as tabelas para `go.Table` (Plotly)**: Assim como os gráficos, tabelas do Plotly são 100% responsivas ao nosso script de tema em tempo real.
+2. **Usar `st.dataframe` via Pandas Styler**: O Pandas `.style` consegue forçar cores na tabela, mas tem impacto em performance e a rolagem/layout perde a fluidez nativa.
+3. **CSS Hacks**: Forçar inversão de cores e fundos da classe `stDataFrame` via CSS nativo, mas a grade do Glide Data Grid é renderizada em HTML `<canvas>`, tornando injeção de CSS para cores internas ineficaz (daí as tentativas frustradas anteriores).
+## Bibliotecas de Tabelas Avançadas para Streamlit
+
+Para agregar maior valor visual e resolver as limitações nativas do Streamlit (como dificuldade de estilização CSS profunda e transições Dark/Light), o ecossistema Python possui excelentes alternativas ao `st.dataframe`:
+
+### 1. Ag-Grid (`streamlit-aggrid`) - "Enterprise Grade"
+A Ag-Grid é a biblioteca de tabelas padrão-ouro na indústria. O plugin para Streamlit é amplamente usado.
+- **Vantagens**: Extremamente poderosa. Permite filtros avançados, paginação, redimensionamento de colunas, ordenação multi-coluna, e injeção de CSS customizado ou uso de temas embutidos (Alpine, Balham, Material). Funciona muito bem no modo escuro usando seu próprio tema nativo escuro.
+- **Desvantagem**: A sintaxe de configuração (`GridOptionsBuilder`) é um pouco verbosa. Exige instalação de pacote extra (`pip install streamlit-aggrid`).
+
+### 2. Great Tables (`great_tables`) - "Estética e Relatórios"
+Inspirada na biblioteca `gt` do R. Foca exclusivamente em tabelas lindas, formatadas para relatórios visuais (incluindo cores de fundo condicionais, agrupamentos complexos e notas de rodapé).
+- **Vantagens**: A sintaxe é fluida e o resultado final se parece com uma tabela de publicação de revista financeira ou relatório executivo.
+- **Desvantagem**: É renderizada como HTML/Imagem, o que significa que não tem a interatividade de scroll infinito horizontal/vertical. Excelente para top 10/top 20, ruim para tabelas analíticas com 500 linhas.
+
+### 3. Plotly (`go.Table`) - "Integração e Desempenho"
+A opção que já estávamos considerando. Como já usamos Plotly para gráficos, usar `go.Table` mantém tudo dentro da mesma biblioteca.
+- **Vantagens**: Desempenho muito rápido. Transição imediata de cores entre Claro/Escuro sem piscar (herdando nossas funções `obter_template_grafico`). Sem dependências extras.
+- **Desvantagem**: Menos interativa que o Ag-Grid (sem ordenação por clique). A estética é limpa, mas um pouco mais "quadrada" se não investirmos muito código no layout do `cells` e `header`.
+
+### 4. Extra: Mantine Table (`streamlit-elements`)
+Permite criar tabelas usando componentes Material UI ou Mantine, renderizados no React.
+- Muito elegante, mas não vale o custo de refatoração para dados puramente analíticos como os nossos.
+## Integração com Ag-Grid (Substituição do st.dataframe)
+
+Para resolver definitivamente o problema de contraste e temas do `st.dataframe` e adicionar interatividade avançada (filtros, paginação dinâmica e redimensionamento), substituímos todas as tabelas analíticas do dashboard pelo **Ag-Grid** (via plugin `streamlit-aggrid`).
+
+1. **Novo Componente de Tabela:** Foi criada uma função reutilizável em `src/dashboard/components/tables.py` chamada `criar_tabela_aggrid`.
+2. **Harmonização de Temas (Slate):** A função identifica se o dashboard está no Modo Escuro (`tema_escuro`) e injeta CSS puro do Tailwind Slate diretamente na raiz da biblioteca da Ag-Grid.
+   - *Modo Escuro*: Usa os fundos `Slate 800 (#1E293B)` e textos em `Slate 50 (#F8FAFC)`.
+   - *Modo Claro*: Usa os fundos `Brancos (#FFFFFF)` e bordas sutis em `Slate 300 (#CBD5E1)`.
+3. **Usabilidade Aumentada:** As tabelas agora suportam filtros globais diretamente no cabeçalho das colunas e paginação (limitada a 15 linhas) caso a tabela de dados detalhados fique muito extensa, preservando o layout limpo do dashboard sem forçar um "scroll" infinito na página principal do Streamlit.

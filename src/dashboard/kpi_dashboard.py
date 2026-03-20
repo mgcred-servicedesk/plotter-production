@@ -2,8 +2,10 @@
 Módulo centralizado de cálculos de KPIs para o dashboard Streamlit.
 Integra todos os cálculos dos relatórios Excel e PDF.
 """
+from typing import Dict, Optional
+
 import pandas as pd
-from typing import Dict, Tuple, Optional
+
 from src.reports.tabela_produtos import calcular_dias_uteis
 
 
@@ -12,7 +14,8 @@ def calcular_kpis_gerais(
     df_metas: pd.DataFrame,
     ano: int,
     mes: int,
-    dia_atual: Optional[int] = None
+    dia_atual: Optional[int] = None,
+    df_supervisores: Optional[pd.DataFrame] = None
 ) -> Dict:
     """
     Calcula KPIs gerais do dashboard.
@@ -23,6 +26,7 @@ def calcular_kpis_gerais(
         ano: Ano de referência
         mes: Mês de referência
         dia_atual: Dia atual para cálculo de projeções
+        df_supervisores: DataFrame de supervisores para exclusão da contagem
     
     Returns:
         Dicionário com KPIs gerais
@@ -60,8 +64,23 @@ def calcular_kpis_gerais(
     projecao_pontos = media_du_pontos * du_total
     perc_proj = (projecao_pontos / meta_prata * 100) if meta_prata > 0 else 0
     
-    ticket_medio = total_vendas / total_transacoes if total_transacoes > 0 else 0
-    
+    ticket_medio = (
+        total_vendas / total_transacoes if total_transacoes > 0 else 0
+    )
+
+    num_consultores = 0
+    if 'CONSULTOR' in df.columns:
+        consultores_unicos = df['CONSULTOR'].unique()
+        if (df_supervisores is not None and
+                'SUPERVISOR' in df_supervisores.columns):
+            supervisores = df_supervisores['SUPERVISOR'].unique()
+            consultores_sem_supervisores = [
+                c for c in consultores_unicos if c not in supervisores
+            ]
+            num_consultores = len(consultores_sem_supervisores)
+        else:
+            num_consultores = len(consultores_unicos)
+
     return {
         'total_vendas': total_vendas,
         'total_pontos': total_pontos,
@@ -80,10 +99,10 @@ def calcular_kpis_gerais(
         'du_total': du_total,
         'du_decorridos': du_decorridos,
         'du_restantes': du_restantes,
-        'num_lojas': df['LOJA'].nunique() if 'LOJA' in df.columns else 0,
-        'num_consultores': (
-            df['CONSULTOR'].nunique() if 'CONSULTOR' in df.columns else 0
+        'num_lojas': (
+            df['LOJA'].nunique() if 'LOJA' in df.columns else 0
         ),
+        'num_consultores': num_consultores,
         'num_regioes': (
             df['REGIAO'].nunique() if 'REGIAO' in df.columns else 0
         )
@@ -95,10 +114,19 @@ def calcular_kpis_por_produto(
     df_metas: pd.DataFrame,
     ano: int,
     mes: int,
-    dia_atual: Optional[int] = None
+    dia_atual: Optional[int] = None,
+    df_supervisores: Optional[pd.DataFrame] = None
 ) -> pd.DataFrame:
     """
-    Calcula KPIs detalhados por produto.
+    Calcula KPIs detalhados por produto, incluindo média por consultor.
+    
+    Args:
+        df: DataFrame consolidado
+        df_metas: DataFrame com metas
+        ano: Ano do relatório
+        mes: Mês do relatório
+        dia_atual: Dia atual para cálculo de dias úteis
+        df_supervisores: DataFrame de supervisores para exclusão
     
     Returns:
         DataFrame com KPIs por produto
@@ -106,6 +134,15 @@ def calcular_kpis_por_produto(
     du_total, du_decorridos, du_restantes = calcular_dias_uteis(
         ano, mes, dia_atual
     )
+    
+    # Contar consultores totais excluindo supervisores
+    num_consultores_total = 0
+    if 'CONSULTOR' in df.columns:
+        consultores = df['CONSULTOR'].unique()
+        if df_supervisores is not None and 'SUPERVISOR' in df_supervisores.columns:
+            supervisores = df_supervisores['SUPERVISOR'].unique()
+            consultores = [c for c in consultores if c not in supervisores]
+        num_consultores_total = len(consultores)
     
     mapeamento_produtos = {
         'CNC': ['CNC'],
@@ -152,6 +189,11 @@ def calcular_kpis_por_produto(
         projecao = media_du * du_total
         perc_proj = (projecao / meta_total * 100) if meta_total > 0 else 0
         
+        # Calcular valor médio por consultor
+        valor_medio_consultor = (
+            valor / num_consultores_total if num_consultores_total > 0 else 0
+        )
+        
         dados_produtos.append({
             'Produto': produto_nome,
             'Valor': valor,
@@ -160,6 +202,7 @@ def calcular_kpis_por_produto(
             '% Atingimento': perc_ating,
             'Quantidade': quantidade,
             'Ticket Médio': ticket_medio,
+            'Valor Médio/Consultor': valor_medio_consultor,
             'Média DU': media_du,
             'Projeção': projecao,
             '% Projeção': perc_proj
@@ -173,10 +216,19 @@ def calcular_kpis_por_regiao(
     df_metas: pd.DataFrame,
     ano: int,
     mes: int,
-    dia_atual: Optional[int] = None
+    dia_atual: Optional[int] = None,
+    df_supervisores: Optional[pd.DataFrame] = None
 ) -> pd.DataFrame:
     """
-    Calcula KPIs por região.
+    Calcula KPIs por região, incluindo produção média por consultor.
+    
+    Args:
+        df: DataFrame consolidado
+        df_metas: DataFrame com metas
+        ano: Ano do relatório
+        mes: Mês do relatório
+        dia_atual: Dia atual para cálculo de dias úteis
+        df_supervisores: DataFrame de supervisores para exclusão
     
     Returns:
         DataFrame com KPIs por região
@@ -195,9 +247,16 @@ def calcular_kpis_por_regiao(
         df_regiao = df[df['REGIAO'] == regiao]
         
         valor_total = df_regiao['VALOR'].sum()
-        pontos_total = df_regiao['pontos'].sum()
         num_lojas = df_regiao['LOJA'].nunique()
-        num_consultores = df_regiao['CONSULTOR'].nunique()
+        
+        # Contar consultores excluindo supervisores
+        consultores_regiao = df_regiao['CONSULTOR'].unique()
+        if df_supervisores is not None and 'SUPERVISOR' in df_supervisores.columns:
+            supervisores = df_supervisores['SUPERVISOR'].unique()
+            consultores_regiao = [
+                c for c in consultores_regiao if c not in supervisores
+            ]
+        num_consultores = len(consultores_regiao)
         
         meta_prata_regiao = 0
         if 'META_PRATA' in df_metas.columns:
@@ -206,21 +265,27 @@ def calcular_kpis_por_regiao(
                 df_metas['LOJA'].isin(lojas_regiao)
             ]['META_PRATA'].sum()
         
+        # Calcular % atingimento baseado em valor (não em pontos)
         perc_ating = (
-            (pontos_total / meta_prata_regiao * 100)
+            (valor_total / meta_prata_regiao * 100)
             if meta_prata_regiao > 0 else 0
         )
         media_du = valor_total / du_decorridos if du_decorridos > 0 else 0
         projecao = media_du * du_total
         
+        # Calcular valor médio por consultor
+        valor_medio_consultor = (
+            valor_total / num_consultores if num_consultores > 0 else 0
+        )
+        
         dados_regioes.append({
             'Região': regiao,
             'Valor': valor_total,
-            'Pontos': pontos_total,
-            'Meta Prata': meta_prata_regiao,
+            'Meta': meta_prata_regiao,
             '% Atingimento': perc_ating,
             'Nº Lojas': num_lojas,
             'Nº Consultores': num_consultores,
+            'Valor Médio/Consultor': valor_medio_consultor,
             'Média DU': media_du,
             'Projeção': projecao
         })
@@ -286,10 +351,18 @@ def calcular_ranking_lojas_atingimento(
 def calcular_ranking_consultores_atingimento(
     df: pd.DataFrame,
     df_metas: pd.DataFrame,
-    top_n: int = 10
+    top_n: int = 10,
+    df_supervisores: Optional[pd.DataFrame] = None
 ) -> pd.DataFrame:
     """
     Cria ranking de consultores por % de atingimento de meta prata.
+    Exclui supervisores do ranking (supervisores vendem para loja, não individual).
+    
+    Args:
+        df: DataFrame consolidado
+        df_metas: DataFrame com metas
+        top_n: Número de consultores no ranking
+        df_supervisores: DataFrame de supervisores para exclusão
     
     Returns:
         DataFrame com ranking de consultores
@@ -298,6 +371,11 @@ def calcular_ranking_consultores_atingimento(
     
     if 'CONSULTOR' not in df.columns:
         return pd.DataFrame()
+    
+    # Excluir supervisores
+    if df_supervisores is not None and 'SUPERVISOR' in df_supervisores.columns:
+        supervisores = df_supervisores['SUPERVISOR'].unique()
+        df_valido = df_valido[~df_valido['CONSULTOR'].isin(supervisores)]
     
     ranking = df_valido.groupby('CONSULTOR').agg({
         'VALOR': ['count', 'sum'],
