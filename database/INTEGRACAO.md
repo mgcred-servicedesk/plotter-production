@@ -5,12 +5,14 @@ e **plotter-production** (leitura/dashboard).
 
 > **Banco:** Supabase (PostgreSQL)
 > **Schema:** `public`
+> **SDK Python:** `supabase>=2.22` (recomendado `2.28.3`)
 > **Autenticação:** service_role key (bypassa RLS para escrita)
 
 ---
 
 ## Índice
 
+0. [Pré-requisitos de Conexão](#0-pré-requisitos-de-conexão)
 1. [Visão Geral](#1-visão-geral)
 2. [Ordem de Inserção (Dependências)](#2-ordem-de-inserção-dependências)
 3. [Tabelas de Configuração (carga única)](#3-tabelas-de-configuração-carga-única)
@@ -21,7 +23,75 @@ e **plotter-production** (leitura/dashboard).
 8. [Pontuação — Regra de Fallback](#8-pontuação--regra-de-fallback)
 9. [Categorias de Produto — Referência Completa](#9-categorias-de-produto--referência-completa)
 10. [Mapeamento de Metas — Referência Completa](#10-mapeamento-de-metas--referência-completa)
-11. [Checklist de Validação Pós-Carga](#11-checklist-de-validação-pós-carga)
+11. [Perfis de Usuário](#11-perfis-de-usuário)
+12. [Checklist de Validação Pós-Carga](#12-checklist-de-validação-pós-carga)
+
+---
+
+## 0. Pré-requisitos de Conexão
+
+### API Key
+
+O projeto usa a **service_role key** do Supabase, que bypassa
+RLS (necessário para inserção de dados).
+
+Onde encontrar: **Supabase Dashboard → Settings → API Keys**.
+
+Dois formatos são aceitos (ambos funcionam com `supabase>=2.22`):
+
+| Formato | Onde encontrar | Exemplo |
+|---------|---------------|---------|
+| **Novo** (recomendado) | Aba "API Keys" | `sb_secret_MczXH-bJDH...` |
+| **Legacy** (JWT) | Aba "Legacy API Keys" → service_role | `eyJhbGciOiJIUzI1Ni...` |
+
+> **IMPORTANTE:** Versões do SDK Python anteriores a `2.22` só
+> aceitam o formato JWT legacy. Use `supabase>=2.28.3`.
+
+### Conexão em Python
+
+```python
+import os
+from supabase import create_client, Client
+
+url = os.environ.get("SUPABASE_URL")
+key = os.environ.get("SUPABASE_KEY")
+supabase: Client = create_client(url, key)
+```
+
+### GRANTs obrigatórios
+
+Se o schema foi criado do zero (executando `schema.sql` no
+SQL Editor), é necessário garantir que as roles da API tenham
+acesso. Execute **uma vez** no SQL Editor:
+
+```sql
+GRANT USAGE ON SCHEMA public
+    TO anon, authenticated, service_role;
+
+GRANT ALL ON ALL TABLES IN SCHEMA public
+    TO anon, authenticated, service_role;
+
+GRANT ALL ON ALL SEQUENCES IN SCHEMA public
+    TO anon, authenticated, service_role;
+
+GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA public
+    TO anon, authenticated, service_role;
+
+ALTER DEFAULT PRIVILEGES IN SCHEMA public
+    GRANT ALL ON TABLES
+    TO anon, authenticated, service_role;
+
+ALTER DEFAULT PRIVILEGES IN SCHEMA public
+    GRANT ALL ON SEQUENCES
+    TO anon, authenticated, service_role;
+
+ALTER DEFAULT PRIVILEGES IN SCHEMA public
+    GRANT EXECUTE ON FUNCTIONS
+    TO anon, authenticated, service_role;
+```
+
+Sem isso, qualquer query via API retornará
+`permission denied for schema public`.
 
 ---
 
@@ -818,7 +888,62 @@ Cada coluna da planilha de metas vira um registro normalizado:
 
 ---
 
-## 11. Checklist de Validação Pós-Carga
+## 11. Perfis de Usuário
+
+O sistema possui 4 perfis com diferentes níveis de acesso:
+
+| Perfil | Visão dos dados | Gerenciar usuários | Escopo |
+|--------|-----------------|--------------------|--------|
+| `admin` | Global (todos os dados) | Sim (CRUD completo) | Não precisa |
+| `gestor` | Global (todos os dados) | Não (só alterar própria senha) | Não precisa |
+| `gerente_comercial` | Filtrado por região | Não | Lista de regiões |
+| `supervisor` | Filtrado por loja | Não | Lista de lojas |
+
+### Criação de usuários
+
+Usuários são criados pelo **admin** via dashboard (aba
+"Usuarios") ou diretamente no banco:
+
+```sql
+-- Inserir usuario (senha é hash bcrypt)
+INSERT INTO usuarios (usuario, nome, perfil, senha_hash, ativo)
+VALUES (
+    'rafael.cerqueira',
+    'Rafael Silva Cerqueira',
+    'gestor',
+    -- hash bcrypt gerado pelo Python:
+    -- from src.dashboard.auth import gerar_hash_senha
+    -- gerar_hash_senha('senha_inicial')
+    '$2b$12$...',
+    true
+);
+
+-- Para gestor e admin: não precisa de escopo
+-- Para gerente_comercial: inserir escopos de região
+INSERT INTO usuario_escopos (usuario_id, regiao_id)
+VALUES (
+    (SELECT id FROM usuarios WHERE usuario = 'joao.gerente'),
+    (SELECT id FROM regioes WHERE nome = 'LESTE')
+);
+
+-- Para supervisor: inserir escopos de loja
+INSERT INTO usuario_escopos (usuario_id, loja_id)
+VALUES (
+    (SELECT id FROM usuarios WHERE usuario = 'maria.supervisora'),
+    (SELECT id FROM lojas WHERE nome = 'LOJA CENTRO 01')
+);
+```
+
+### Seed do admin inicial
+
+```bash
+.venv/bin/python scripts/seed_admin.py
+# Cria usuario 'admin' com senha 'mgcred2026'
+```
+
+---
+
+## 12. Checklist de Validação Pós-Carga
 
 Queries para validar que os dados foram inseridos corretamente.
 
