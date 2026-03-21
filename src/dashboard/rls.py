@@ -7,9 +7,11 @@ os dados autorizados.
 
 Perfis:
     admin            → sem filtro (todos os dados)
+    gestor           → sem filtro (visao global)
     gerente_comercial → filtra por REGIAO (escopo = regiões)
     supervisor       → filtra por LOJA (escopo = lojas)
 """
+
 from typing import Optional
 
 import pandas as pd
@@ -55,7 +57,7 @@ def aplicar_rls(
     role = perfil["perfil"]
     escopo = perfil.get("escopo", [])
 
-    if role == "admin":
+    if role in ("admin", "gestor"):
         return df
 
     if role == "gerente_comercial" and escopo:
@@ -84,9 +86,7 @@ def aplicar_rls_metas(
         return df_metas
 
     lojas_permitidas = df_dados[coluna_loja].unique()
-    return df_metas[
-        df_metas[coluna_loja].isin(lojas_permitidas)
-    ].copy()
+    return df_metas[df_metas[coluna_loja].isin(lojas_permitidas)].copy()
 
 
 def aplicar_rls_supervisores(
@@ -105,22 +105,18 @@ def aplicar_rls_supervisores(
     role = perfil["perfil"]
     escopo = perfil.get("escopo", [])
 
-    if role == "admin":
+    if role in ("admin", "gestor"):
         return df_supervisores
 
     if role == "gerente_comercial" and escopo:
         if coluna_regiao in df_supervisores.columns:
-            return df_supervisores[
-                df_supervisores[coluna_regiao].isin(escopo)
-            ].copy()
+            return df_supervisores[df_supervisores[coluna_regiao].isin(escopo)].copy()
 
     if role == "supervisor" and escopo:
         if coluna_loja in df_supervisores.columns:
             lojas_permitidas = df_dados[coluna_loja].unique()
             return df_supervisores[
-                df_supervisores[coluna_loja].isin(
-                    lojas_permitidas
-                )
+                df_supervisores[coluna_loja].isin(lojas_permitidas)
             ].copy()
 
     return df_supervisores
@@ -143,7 +139,7 @@ def obter_regioes_permitidas(
     role = perfil["perfil"]
     escopo = perfil.get("escopo", [])
 
-    if role == "admin":
+    if role in ("admin", "gestor"):
         return regioes_disponiveis
 
     if role == "gerente_comercial" and escopo:

@@ -3,54 +3,131 @@ Módulo de autenticação do dashboard.
 
 Gerencia login, logout, sessão e validação de credenciais
 usando bcrypt para hash de senhas.
+
+Armazenamento: tabela ``usuarios`` no Supabase (PostgreSQL).
+Escopos de acesso são armazenados na tabela
+``usuario_escopos``.
 """
-import json
-from pathlib import Path
+
+import logging
 from typing import Optional
 
 import bcrypt
 import streamlit as st
 
-ARQUIVO_USUARIOS = Path("configuracao/usuarios.json")
+from src.config.supabase_client import get_supabase_client
+
+logger = logging.getLogger(__name__)
 
 # Perfis disponíveis e suas descrições
 PERFIS = {
     "admin": "Administrador — acesso total",
+    "gestor": "Gestor — visão global das operações",
     "gerente_comercial": "Gerente Comercial — acesso por região",
     "supervisor": "Supervisor — acesso por loja",
 }
 
 
-def _carregar_usuarios() -> list[dict]:
-    """Carrega lista de usuários do arquivo JSON."""
-    if not ARQUIVO_USUARIOS.exists():
-        return []
-    with open(ARQUIVO_USUARIOS, "r", encoding="utf-8") as f:
-        dados = json.load(f)
-    return dados.get("usuarios", [])
+# ── helpers internos ──────────────────────────────────
 
 
-def _salvar_usuarios(usuarios: list[dict]) -> None:
-    """Salva lista de usuários no arquivo JSON."""
-    with open(ARQUIVO_USUARIOS, "w", encoding="utf-8") as f:
-        json.dump(
-            {"usuarios": usuarios}, f,
-            ensure_ascii=False, indent=2,
+def _supabase():
+    """Atalho para obter o cliente Supabase."""
+    return get_supabase_client()
+
+
+def _carregar_escopo(usuario_id: str) -> list[str]:
+    """
+    Carrega nomes do escopo (regioes ou lojas) de um
+    usuario a partir de ``usuario_escopos``.
+    """
+    resp = (
+        _supabase()
+        .table("usuario_escopos")
+        .select("regiao_id, loja_id, regioes(nome), lojas(nome)")
+        .eq("usuario_id", usuario_id)
+        .execute()
+    )
+    escopo: list[str] = []
+    for row in resp.data or []:
+        if row.get("regioes") and row["regioes"].get("nome"):
+            escopo.append(row["regioes"]["nome"])
+        elif row.get("lojas") and row["lojas"].get("nome"):
+            escopo.append(row["lojas"]["nome"])
+    return escopo
+
+
+def _salvar_escopos(
+    usuario_id: str,
+    perfil: str,
+    escopo: list[str],
+) -> None:
+    """
+    Salva escopos de um usuario na tabela
+    ``usuario_escopos``.
+
+    Para gerente_comercial: busca regioes por nome.
+    Para supervisor: busca lojas por nome.
+    """
+    # Limpa escopos anteriores
+    (
+        _supabase()
+        .table("usuario_escopos")
+        .delete()
+        .eq("usuario_id", usuario_id)
+        .execute()
+    )
+
+    if not escopo or perfil == "admin":
+        return
+
+    if perfil == "gerente_comercial":
+        resp = (
+            _supabase()
+            .table("regioes")
+            .select("id, nome")
+            .in_("nome", escopo)
+            .execute()
         )
+        registros = [
+            {
+                "usuario_id": usuario_id,
+                "regiao_id": r["id"],
+            }
+            for r in (resp.data or [])
+        ]
+    elif perfil == "supervisor":
+        resp = (
+            _supabase().table("lojas").select("id, nome").in_("nome", escopo).execute()
+        )
+        registros = [
+            {
+                "usuario_id": usuario_id,
+                "loja_id": r["id"],
+            }
+            for r in (resp.data or [])
+        ]
+    else:
+        return
+
+    if registros:
+        (_supabase().table("usuario_escopos").insert(registros).execute())
+
+
+# ── hash de senhas ────────────────────────────────────
 
 
 def gerar_hash_senha(senha: str) -> str:
     """Gera hash bcrypt para uma senha."""
-    return bcrypt.hashpw(
-        senha.encode("utf-8"), bcrypt.gensalt()
-    ).decode("utf-8")
+    return bcrypt.hashpw(senha.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
 
 
 def verificar_senha(senha: str, hash_senha: str) -> bool:
     """Verifica se a senha corresponde ao hash."""
-    return bcrypt.checkpw(
-        senha.encode("utf-8"), hash_senha.encode("utf-8")
-    )
+    return bcrypt.checkpw(senha.encode("utf-8"), hash_senha.encode("utf-8"))
+
+
+# ── autenticação ──────────────────────────────────────
 
 
 def autenticar(usuario: str, senha: str) -> Optional[dict]:
@@ -61,20 +138,33 @@ def autenticar(usuario: str, senha: str) -> Optional[dict]:
         Dados do usuário se credenciais válidas, None caso
         contrário.
     """
-    usuarios = _carregar_usuarios()
-    for u in usuarios:
-        if (
-            u["usuario"] == usuario
-            and u.get("ativo", True)
-            and verificar_senha(senha, u["senha_hash"])
-        ):
-            return {
-                "usuario": u["usuario"],
-                "nome": u["nome"],
-                "perfil": u["perfil"],
-                "escopo": u.get("escopo", []),
-            }
-    return None
+    resp = (
+        _supabase()
+        .table("usuarios")
+        .select("id, usuario, nome, perfil, senha_hash, ativo")
+        .eq("usuario", usuario)
+        .eq("ativo", True)
+        .limit(1)
+        .execute()
+    )
+
+    if not resp.data:
+        return None
+
+    u = resp.data[0]
+
+    if not verificar_senha(senha, u["senha_hash"]):
+        return None
+
+    escopo = _carregar_escopo(u["id"])
+
+    return {
+        "id": u["id"],
+        "usuario": u["usuario"],
+        "nome": u["nome"],
+        "perfil": u["perfil"],
+        "escopo": escopo,
+    }
 
 
 def usuario_logado() -> Optional[dict]:
@@ -122,14 +212,17 @@ def tela_login() -> bool:
                 use_column_width=True,
             )
             usuario = st.text_input(
-                "Usuario", placeholder="Digite seu usuario",
+                "Usuario",
+                placeholder="Digite seu usuario",
             )
             senha = st.text_input(
-                "Senha", type="password",
+                "Senha",
+                type="password",
                 placeholder="Digite sua senha",
             )
             submit = st.form_submit_button(
-                "Entrar", use_container_width=True,
+                "Entrar",
+                use_container_width=True,
             )
 
         if submit:
@@ -148,6 +241,9 @@ def tela_login() -> bool:
     return False
 
 
+# ── CRUD de usuários ──────────────────────────────────
+
+
 def criar_usuario(
     usuario: str,
     nome: str,
@@ -161,36 +257,52 @@ def criar_usuario(
     Returns:
         Tupla (sucesso, mensagem).
     """
-    usuarios = _carregar_usuarios()
-
-    if any(u["usuario"] == usuario for u in usuarios):
-        return False, f"Usuario '{usuario}' ja existe."
-
     if perfil not in PERFIS:
         return False, f"Perfil '{perfil}' invalido."
 
-    if perfil != "admin" and not escopo:
+    if perfil not in ("admin", "gestor") and not escopo:
         return (
             False,
-            "Informe o escopo (regioes ou lojas) para "
-            "este perfil.",
+            "Informe o escopo (regioes ou lojas) para este perfil.",
         )
 
-    usuarios.append({
-        "usuario": usuario,
-        "nome": nome,
-        "perfil": perfil,
-        "escopo": escopo,
-        "senha_hash": gerar_hash_senha(senha),
-        "ativo": True,
-    })
+    # Verifica duplicidade
+    existe = (
+        _supabase()
+        .table("usuarios")
+        .select("id")
+        .eq("usuario", usuario)
+        .limit(1)
+        .execute()
+    )
+    if existe.data:
+        return False, f"Usuario '{usuario}' ja existe."
 
-    _salvar_usuarios(usuarios)
+    resp = (
+        _supabase()
+        .table("usuarios")
+        .insert(
+            {
+                "usuario": usuario,
+                "nome": nome,
+                "perfil": perfil,
+                "senha_hash": gerar_hash_senha(senha),
+                "ativo": True,
+            }
+        )
+        .execute()
+    )
+
+    novo_id = resp.data[0]["id"]
+    _salvar_escopos(novo_id, perfil, escopo)
+
     return True, f"Usuario '{usuario}' criado com sucesso."
 
 
 def alterar_senha(
-    usuario: str, senha_atual: str, nova_senha: str,
+    usuario: str,
+    senha_atual: str,
+    nova_senha: str,
 ) -> tuple[bool, str]:
     """
     Altera senha de um usuário.
@@ -198,61 +310,111 @@ def alterar_senha(
     Returns:
         Tupla (sucesso, mensagem).
     """
-    usuarios = _carregar_usuarios()
+    resp = (
+        _supabase()
+        .table("usuarios")
+        .select("id, senha_hash")
+        .eq("usuario", usuario)
+        .limit(1)
+        .execute()
+    )
 
-    for u in usuarios:
-        if u["usuario"] == usuario:
-            if not verificar_senha(senha_atual, u["senha_hash"]):
-                return False, "Senha atual incorreta."
-            u["senha_hash"] = gerar_hash_senha(nova_senha)
-            _salvar_usuarios(usuarios)
-            return True, "Senha alterada com sucesso."
+    if not resp.data:
+        return False, "Usuario nao encontrado."
 
-    return False, "Usuario nao encontrado."
+    u = resp.data[0]
+
+    if not verificar_senha(senha_atual, u["senha_hash"]):
+        return False, "Senha atual incorreta."
+
+    (
+        _supabase()
+        .table("usuarios")
+        .update({"senha_hash": gerar_hash_senha(nova_senha)})
+        .eq("id", u["id"])
+        .execute()
+    )
+
+    return True, "Senha alterada com sucesso."
 
 
 def listar_usuarios() -> list[dict]:
     """Retorna lista de usuários (sem hash de senha)."""
-    usuarios = _carregar_usuarios()
-    return [
-        {
-            "usuario": u["usuario"],
-            "nome": u["nome"],
-            "perfil": u["perfil"],
-            "escopo": u.get("escopo", []),
-            "ativo": u.get("ativo", True),
-        }
-        for u in usuarios
-    ]
+    resp = (
+        _supabase()
+        .table("usuarios")
+        .select("id, usuario, nome, perfil, ativo")
+        .order("nome")
+        .execute()
+    )
+
+    resultado = []
+    for u in resp.data or []:
+        escopo = _carregar_escopo(u["id"])
+        resultado.append(
+            {
+                "usuario": u["usuario"],
+                "nome": u["nome"],
+                "perfil": u["perfil"],
+                "escopo": escopo,
+                "ativo": u["ativo"],
+            }
+        )
+    return resultado
 
 
 def alternar_ativo(usuario: str) -> tuple[bool, str]:
     """Ativa/desativa um usuário."""
-    usuarios = _carregar_usuarios()
+    resp = (
+        _supabase()
+        .table("usuarios")
+        .select("id, ativo")
+        .eq("usuario", usuario)
+        .limit(1)
+        .execute()
+    )
 
-    for u in usuarios:
-        if u["usuario"] == usuario:
-            u["ativo"] = not u.get("ativo", True)
-            _salvar_usuarios(usuarios)
-            status = "ativado" if u["ativo"] else "desativado"
-            return True, f"Usuario '{usuario}' {status}."
+    if not resp.data:
+        return False, "Usuario nao encontrado."
 
-    return False, "Usuario nao encontrado."
+    u = resp.data[0]
+    novo_status = not u["ativo"]
+
+    (
+        _supabase()
+        .table("usuarios")
+        .update({"ativo": novo_status})
+        .eq("id", u["id"])
+        .execute()
+    )
+
+    status = "ativado" if novo_status else "desativado"
+    return True, f"Usuario '{usuario}' {status}."
 
 
 def resetar_senha(
-    usuario: str, nova_senha: str,
+    usuario: str,
+    nova_senha: str,
 ) -> tuple[bool, str]:
     """Reseta senha de um usuário (admin only)."""
-    usuarios = _carregar_usuarios()
+    resp = (
+        _supabase()
+        .table("usuarios")
+        .select("id")
+        .eq("usuario", usuario)
+        .limit(1)
+        .execute()
+    )
 
-    for u in usuarios:
-        if u["usuario"] == usuario:
-            u["senha_hash"] = gerar_hash_senha(nova_senha)
-            _salvar_usuarios(usuarios)
-            return (
-                True,
-                f"Senha de '{usuario}' resetada.",
-            )
+    if not resp.data:
+        return False, "Usuario nao encontrado."
 
-    return False, "Usuario nao encontrado."
+    (
+        _supabase()
+        .table("usuarios")
+        .update({"senha_hash": gerar_hash_senha(nova_senha)})
+        .eq("id", resp.data[0]["id"])
+        .execute()
+    )
+
+    return True, f"Senha de '{usuario}' resetada."
