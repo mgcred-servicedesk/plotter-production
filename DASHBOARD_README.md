@@ -16,6 +16,29 @@ streamlit run dashboard_refatorado.py
 streamlit run dashboard.py
 ```
 
+## 🔐 Autenticação
+
+O dashboard exige login para acesso. Credenciais padrão: `admin` / `admin123`.
+
+### Perfis e Row-Level Security (RLS)
+
+| Perfil | Descrição | Dados visíveis |
+|--------|-----------|----------------|
+| `admin` | Administrador | Todos os dados + gerenciamento de usuários |
+| `gerente_comercial` | Gerente Comercial | Apenas dados das regiões atribuídas |
+| `supervisor` | Supervisor | Apenas dados das lojas atribuídas |
+
+O RLS é aplicado automaticamente após o carregamento dos dados, antes de qualquer cálculo de KPI ou exibição. Isso garante que cada usuário veja apenas os dados autorizados em todas as abas, gráficos e tabelas.
+
+### Visualizar Como (Admin)
+O admin pode simular a visão de outro perfil selecionando "Visualizar Como" na sidebar, escolhendo o perfil e o escopo (regiões ou lojas).
+
+### Gerenciamento de Usuários
+- **Admin**: aba "Usuarios" — criar, ativar/desativar, resetar senhas
+- **Outros**: aba "Minha Conta" — alterar a própria senha
+
+Usuários são armazenados em `configuracao/usuarios.json` com senhas em hash bcrypt.
+
 ## 📋 Funcionalidades
 
 ### 1. **Indicadores Principais** (Topo da Página)
@@ -165,6 +188,27 @@ Visualização detalhada dos dados com filtros:
 
 ### Módulos Criados
 
+#### `src/dashboard/auth.py`
+Módulo de autenticação:
+- `tela_login()`: Tela de login com formulário
+- `autenticar()`: Valida credenciais com bcrypt
+- `usuario_logado()`: Retorna dados do usuário na sessão
+- `fazer_logout()`: Encerra sessão
+- `criar_usuario()` / `alterar_senha()` / `resetar_senha()`: CRUD de usuários
+
+#### `src/dashboard/rls.py`
+Row-Level Security:
+- `aplicar_rls()`: Filtra DataFrame principal por perfil/escopo
+- `aplicar_rls_metas()`: Filtra metas conforme dados já filtrados
+- `aplicar_rls_supervisores()`: Filtra supervisores por escopo
+- `obter_regioes_permitidas()`: Restringe opções do filtro de região
+
+#### `src/dashboard/user_mgmt.py`
+Interface de gerenciamento de usuários:
+- Criar novo usuário com perfil e escopo
+- Listar, ativar/desativar, resetar senhas (admin)
+- Alterar própria senha (todos)
+
 #### `src/dashboard/kpi_dashboard.py`
 Módulo centralizado de cálculos de KPIs:
 - `calcular_kpis_gerais()`: KPIs principais do dashboard
@@ -187,8 +231,16 @@ O dashboard utiliza os mesmos cálculos dos relatórios:
 - **Ano**: Seleção do ano (2024, 2025, 2026)
 - **Mês**: Seleção do mês (Janeiro a Dezembro)
 
+### Usuário:
+- **Nome e perfil** do usuário logado
+- **Botão Sair** para logout
+
+### Visualizar Como (Admin):
+- **Simular perfil**: Admin pode ver o dashboard como Gerente Comercial ou Supervisor
+- **Escopo**: Selecionar regiões ou lojas para simular
+
 ### Filtros Globais:
-- **Região**: Filtrar todos os dados por região (em desenvolvimento)
+- **Região**: Filtrar todos os dados por região (restrito pelo RLS do perfil)
 
 ### Legenda:
 - **DU**: Dias Úteis
@@ -208,7 +260,11 @@ O dashboard utiliza os mesmos cálculos dos relatórios:
 
 ## 📈 Próximas Melhorias
 
-- [ ] Filtros globais por região funcionais
+- [x] Filtros globais por região funcionais
+- [x] Autenticação com login/logout e bcrypt
+- [x] Row-Level Security (RLS) por perfil
+- [x] Gerenciamento de usuários (admin)
+- [x] Visualizar Como (admin simula outros perfis)
 - [ ] Comparação entre períodos (mês a mês)
 - [ ] Exportação de dados filtrados
 - [ ] Análise de tendências com IA

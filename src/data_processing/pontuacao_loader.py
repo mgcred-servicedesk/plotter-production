@@ -4,10 +4,10 @@ Módulo para carregamento de tabelas de pontuação mensais.
 import pandas as pd
 from pathlib import Path
 from typing import Optional
-from src.config.settings import MESES_ARQUIVO
+from src.config.settings import MESES_ARQUIVO, BASE_DIR
 
 
-PONTUACAO_DIR = Path('pontuacao')
+PONTUACAO_DIR = BASE_DIR / 'pontuacao'
 
 
 def carregar_pontuacao_mensal(mes: int, ano: int) -> pd.DataFrame:

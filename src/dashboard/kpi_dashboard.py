@@ -247,8 +247,9 @@ def calcular_kpis_por_regiao(
         df_regiao = df[df['REGIAO'] == regiao]
         
         valor_total = df_regiao['VALOR'].sum()
+        pontos_total = df_regiao['pontos'].sum()
         num_lojas = df_regiao['LOJA'].nunique()
-        
+
         # Contar consultores excluindo supervisores
         consultores_regiao = df_regiao['CONSULTOR'].unique()
         if df_supervisores is not None and 'SUPERVISOR' in df_supervisores.columns:
@@ -257,31 +258,32 @@ def calcular_kpis_por_regiao(
                 c for c in consultores_regiao if c not in supervisores
             ]
         num_consultores = len(consultores_regiao)
-        
+
         meta_prata_regiao = 0
         if 'META_PRATA' in df_metas.columns:
             lojas_regiao = df_regiao['LOJA'].unique()
             meta_prata_regiao = df_metas[
                 df_metas['LOJA'].isin(lojas_regiao)
             ]['META_PRATA'].sum()
-        
-        # Calcular % atingimento baseado em valor (não em pontos)
+
+        # % atingimento baseado em pontos (meta prata é em pontos)
         perc_ating = (
-            (valor_total / meta_prata_regiao * 100)
+            (pontos_total / meta_prata_regiao * 100)
             if meta_prata_regiao > 0 else 0
         )
         media_du = valor_total / du_decorridos if du_decorridos > 0 else 0
         projecao = media_du * du_total
-        
+
         # Calcular valor médio por consultor
         valor_medio_consultor = (
             valor_total / num_consultores if num_consultores > 0 else 0
         )
-        
+
         dados_regioes.append({
             'Região': regiao,
             'Valor': valor_total,
-            'Meta': meta_prata_regiao,
+            'Pontos': pontos_total,
+            'Meta Prata': meta_prata_regiao,
             '% Atingimento': perc_ating,
             'Nº Lojas': num_lojas,
             'Nº Consultores': num_consultores,

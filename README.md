@@ -11,6 +11,7 @@ Sistema completo para análise de vendas com dashboard interativo, geração de 
 - **Relatórios PDF** executivos e detalhados
 - **Análises comparativas** entre regiões, lojas e consultores
 - **KPIs de performance** e produtividade
+- **Autenticação e controle de acesso** com Row-Level Security (RLS)
 
 ## 🏗️ Estrutura do Projeto
 
@@ -45,7 +46,13 @@ Numeros_venda/
 │   │   ├── tabela_produtos.py  # Tabelas por produto com métricas
 │   │   ├── tabela_produtos_horizontal.py
 │   │   └── tabela_produto_individual.py
-│   ├── dashboard/              # Dashboard Streamlit
+│   ├── dashboard/
+│   │   ├── auth.py            # Autenticação (login, logout, bcrypt)
+│   │   ├── rls.py             # Row-Level Security (filtro por perfil)
+│   │   ├── user_mgmt.py       # Gerenciamento de usuários
+│   │   ├── kpi_dashboard.py   # Cálculos de KPIs do dashboard
+│   │   ├── kpi_analiticos.py  # KPIs analíticos
+│   │   └── components/        # Componentes reutilizáveis (tabelas)
 │   └── analysis/               # Análises comparativas
 ├── outputs/
 │   ├── relatorios_excel/       # Relatórios Excel gerados
@@ -219,6 +226,27 @@ Localização: `configuracao/`
 - `HC_Colaboradores.xlsx`: Headcount de colaboradores
 - `loja_regiao.xlsx`: Mapeamento loja-região
 - `Supervisores.xlsx`: Lista de supervisores (excluídos de análises de consultores)
+- `usuarios.json`: Cadastro de usuários do dashboard (login, perfil, escopo)
+
+## 🔐 Autenticação e Controle de Acesso
+
+### Login
+O dashboard exige autenticação para acesso. Credenciais padrão: `admin` / `admin123`.
+
+### Perfis de Acesso (Row-Level Security)
+
+| Perfil | Acesso | Escopo |
+|--------|--------|--------|
+| `admin` | Todos os dados | Sem restrição |
+| `gerente_comercial` | Dados da(s) região(ões) atribuída(s) | Regiões |
+| `supervisor` | Dados da(s) loja(s) atribuída(s) | Lojas |
+
+### Funcionalidades
+- **Gerenciamento de usuários** (admin): criar, ativar/desativar, resetar senhas
+- **Alterar senha**: disponível para todos os perfis
+- **Visualizar Como** (admin): simular a visão de outro perfil/escopo
+- Senhas armazenadas com hash bcrypt
+- Usuários cadastrados em `configuracao/usuarios.json`
 
 ## 🛠️ Tecnologias Utilizadas
 
@@ -231,6 +259,7 @@ Localização: `configuracao/`
 - **openpyxl**: Leitura/escrita de Excel
 - **ReportLab**: Geração de PDF
 - **python-dotenv**: Variáveis de ambiente
+- **bcrypt**: Hash de senhas para autenticação
 - **pytest**: Testes automatizados
 
 ## 🏗️ Arquitetura dos Módulos Centralizados

@@ -1,116 +1,196 @@
 /*
  * Dashboard Style - MGCred
- * Estilos complementares ao tema nativo do Streamlit
- * (config.toml cuida de fundos, textos, widgets e sidebar)
+ * Estilos complementares ao tema nativo do Streamlit.
+ *
+ * REGRA: nunca definir cores fixas. Usar apenas as
+ * variáveis que o Streamlit injeta e atualiza ao trocar
+ * de tema:
+ *   --primary-color
+ *   --background-color
+ *   --secondary-background-color
+ *   --text-color
  */
 
-/* ── Cards de Métricas ─────────────────────────── */
+/* ── KPI Metric Cards ─────────────────────────────── */
 [data-testid="stMetric"] {
-    background-color: var(--st-secondary-background-color);
-    border: 1px solid rgba(0,0,0,0.08);
+    background-color: var(--secondary-background-color);
+    border: 1px solid color-mix(in srgb, var(--text-color) 20%, transparent);
     padding: 1.25rem 1rem;
     border-radius: 10px;
-    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.06),
-               0 1px 2px rgba(0, 0, 0, 0.04);
-    transition: transform 0.2s ease,
-                box-shadow 0.2s ease;
+    box-shadow: 0 1px 3px color-mix(in srgb, var(--text-color) 6%, transparent);
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
 }
 
 [data-testid="stMetric"]:hover {
     transform: translateY(-2px);
-    box-shadow: 0 6px 16px rgba(0, 0, 0, 0.10),
-               0 2px 4px rgba(0, 0, 0, 0.06);
+    box-shadow: 0 6px 16px color-mix(in srgb, var(--text-color) 10%, transparent);
 }
 
-/* Label da métrica */
-[data-testid="stMetric"] label,
+/* Label */
 [data-testid="stMetricLabel"] > div,
 [data-testid="stMetricLabel"] p {
     font-weight: 600 !important;
-    font-size: 0.9rem !important;
+    font-size: 0.78rem !important;
     text-transform: uppercase;
-    letter-spacing: 0.5px;
-    opacity: 0.65;
+    letter-spacing: 0.05em;
+    opacity: 0.6;
 }
 
-/* Valor da métrica */
+/* Value */
 [data-testid="stMetricValue"] > div {
-    font-weight: 700 !important;
-    font-size: 1.8rem !important;
+    font-weight: 800 !important;
+    font-size: 1.5rem !important;
+    letter-spacing: -0.02em;
 }
 
-/* Delta (variação) */
+/* Delta */
 [data-testid="stMetric"] [data-testid="stMetricDelta"] {
-    font-size: 0.85rem !important;
+    font-size: 0.82rem !important;
     font-weight: 500 !important;
 }
 
-/* ── Títulos de Seção (h3) ─────────────────────── */
-h3 {
+/* Faixa lateral colorida por posição (4 colunas) */
+div[data-testid="column"]:nth-child(1) [data-testid="stMetric"] {
+    border-left: 4px solid #3b82f6;
+}
+div[data-testid="column"]:nth-child(2) [data-testid="stMetric"] {
+    border-left: 4px solid #0d9488;
+}
+div[data-testid="column"]:nth-child(3) [data-testid="stMetric"] {
+    border-left: 4px solid #d97706;
+}
+div[data-testid="column"]:nth-child(4) [data-testid="stMetric"] {
+    border-left: 4px solid #059669;
+}
+
+/* ── Section Titles ───────────────────────────────── */
+.main h3 {
     font-weight: 700 !important;
-    border-bottom: 2px solid var(--st-primary-color);
+    font-size: 1.05rem !important;
+    border-bottom: 2px solid var(--primary-color);
     padding-bottom: 0.4rem;
-    margin-bottom: 1.5rem !important;
+    margin-top: 1.5rem !important;
+    margin-bottom: 1.25rem !important;
 }
 
-/* ── Separadores ───────────────────────────────── */
+/* ── Separators ───────────────────────────────────── */
 hr {
-    opacity: 0.3;
-    margin: 2rem 0 !important;
+    border: none !important;
+    height: 1px !important;
+    background: color-mix(in srgb, var(--text-color) 12%, transparent) !important;
+    margin: 1.5rem 0 !important;
 }
 
-/* ── Dataframe (tabelas) ───────────────────────── */
+/* ── Data Tables ──────────────────────────────────── */
 [data-testid="stDataFrame"] {
-    background-color: var(--st-secondary-background-color);
-    border: 1px solid rgba(0,0,0,0.08);
+    border: 1px solid color-mix(in srgb, var(--text-color) 8%, transparent);
     border-radius: 10px;
     overflow: hidden;
-    padding: 2px;
-    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.05);
+    box-shadow: 0 1px 3px color-mix(in srgb, var(--text-color) 5%, transparent);
 }
 
-/* ── Gráficos Plotly ───────────────────────────── */
+/* ── Plotly Charts ────────────────────────────────── */
 [data-testid="stPlotlyChart"] {
-    background-color: var(--st-secondary-background-color);
-    border: 1px solid rgba(0,0,0,0.08);
+    border: 1px solid color-mix(in srgb, var(--text-color) 8%, transparent);
     border-radius: 10px;
     padding: 0.5rem;
-    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.05);
+    box-shadow: 0 1px 3px color-mix(in srgb, var(--text-color) 5%, transparent);
 }
 
-/* ── Cards específicos por posição ─────────────── */
-
-/* Card 1: Total de Vendas – borda azul */
-div[data-testid="column"]:nth-child(1)
-    [data-testid="stMetric"] {
-    border-left: 3px solid #3B82F6;
+/* ── Expanders ────────────────────────────────────── */
+[data-testid="stExpander"] {
+    border: 1px solid color-mix(in srgb, var(--text-color) 8%, transparent) !important;
+    border-radius: 10px !important;
 }
 
-/* Card 2: Total de Pontos – destaque teal */
-div[data-testid="column"]:nth-child(2)
-    [data-testid="stMetric"] {
-    border-left: 3px solid #0F766E;
+[data-testid="stExpander"] summary {
+    font-weight: 600 !important;
 }
 
-/* Card 3: Projeção – borda âmbar */
-div[data-testid="column"]:nth-child(3)
-    [data-testid="stMetric"] {
-    border-left: 3px solid #F59E0B;
+/* ── Alerts ───────────────────────────────────────── */
+[data-testid="stAlert"] {
+    border-radius: 10px !important;
 }
 
-/* Card 4: Meta – borda esmeralda */
-div[data-testid="column"]:nth-child(4)
-    [data-testid="stMetric"] {
-    border-left: 3px solid #10B981;
+/* ── Buttons ──────────────────────────────────────── */
+.stButton > button {
+    border-radius: 8px !important;
+    font-weight: 600 !important;
+    transition: transform 0.15s ease;
 }
 
-/* ── Responsividade ────────────────────────────── */
+.stButton > button:hover {
+    transform: translateY(-1px);
+}
+
+/* ── Status Bar (custom HTML) ─────────────────────── */
+.status-bar {
+    background-color: var(--secondary-background-color);
+    border: 1px solid color-mix(in srgb, var(--text-color) 8%, transparent);
+    border-radius: 10px;
+    padding: 0.75rem 1rem;
+    margin-bottom: 1rem;
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    font-size: 0.875rem;
+    color: var(--text-color);
+    opacity: 0.85;
+}
+
+.status-bar .status-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: #059669;
+    box-shadow: 0 0 6px #059669;
+    animation: pulse 2s infinite;
+}
+
+@keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.4; }
+}
+
+/* ── Dashboard Header (custom HTML) ───────────────── */
+.dashboard-header {
+    padding: 0.5rem 0 0.25rem;
+}
+
+.dashboard-header h1 {
+    font-size: 1.75rem !important;
+    font-weight: 800 !important;
+    letter-spacing: -0.02em;
+    color: var(--text-color) !important;
+    margin-bottom: 0 !important;
+}
+
+.dashboard-header p {
+    opacity: 0.6;
+    font-size: 0.875rem !important;
+}
+
+/* ── Scrollbar ────────────────────────────────────── */
+::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+}
+
+::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+    background: color-mix(in srgb, var(--text-color) 25%, transparent);
+    border-radius: 3px;
+}
+
+/* ── Responsive ───────────────────────────────────── */
 @media (max-width: 768px) {
     [data-testid="stMetric"] {
         padding: 1rem;
     }
-
     [data-testid="stMetricValue"] > div {
-        font-size: 1.5rem !important;
+        font-size: 1.25rem !important;
     }
 }

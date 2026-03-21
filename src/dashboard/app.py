@@ -87,14 +87,17 @@ def main():
         with col1:
             st.metric(
                 "Total de Vendas",
-                f"R$ {resumo.get('total_valor', 0):,.2f}",
+                f"R$ {resumo.get('total_valor', 0):,.2f}"
+                .replace(",", "X").replace(".", ",")
+                .replace("X", "."),
                 help="Valor total de vendas no período"
             )
         
         with col2:
             st.metric(
                 "Total de Pontos",
-                f"{resumo.get('total_pontos', 0):,.0f}",
+                f"{resumo.get('total_pontos', 0):,.0f}"
+                .replace(",", "."),
                 help="Pontuação total acumulada"
             )
         

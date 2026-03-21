@@ -123,6 +123,26 @@
   - Cache de dados
   - Tratamento de erros
 
+- ✅ **auth.py**: Autenticação e gerenciamento de sessão
+  - Login com formulário (usuario/senha)
+  - Hash de senhas com bcrypt
+  - Gerenciamento de sessão via `st.session_state`
+  - CRUD de usuários (criar, alterar senha, ativar/desativar)
+  - Armazenamento em `configuracao/usuarios.json`
+
+- ✅ **rls.py**: Row-Level Security
+  - Filtro automático de DataFrames por perfil do usuário
+  - Perfil `admin`: acesso total
+  - Perfil `gerente_comercial`: filtra por REGIAO (escopo)
+  - Perfil `supervisor`: filtra por LOJA (escopo)
+  - Suporte a "Visualizar Como" para admin simular outros perfis
+  - Filtro de metas e supervisores conforme escopo
+
+- ✅ **user_mgmt.py**: Interface de gerenciamento de usuários
+  - Criar novo usuário com perfil e escopo (admin)
+  - Listar, ativar/desativar, resetar senhas (admin)
+  - Alterar própria senha (todos os perfis)
+
 #### 6. Utilitários
 - ✅ **exemplo_uso.py**: Script de demonstração
   - Exemplo completo de uso do sistema
@@ -153,21 +173,25 @@
 - ✅ `loader.py`: Pipeline unificado `carregar_e_processar_dados()`
 - ✅ `settings.py`: Constantes de negócio (MAPEAMENTO_PRODUTOS, MAPEAMENTO_COLUNAS_META, LISTA_PRODUTOS)
 
-## ⏳ Fase 3 - Dashboard (PENDENTE)
+## ✅ Fase 3 - Dashboard Refatorado (COMPLETA)
 
-### Páginas do Dashboard a Implementar
-- ⏳ `pages/01_visao_geral.py` - Visão geral completa
-- ⏳ `pages/02_por_regiao.py` - Análise regional
-- ⏳ `pages/03_por_loja.py` - Análise por loja
-- ⏳ `pages/04_por_consultor.py` - Análise individual
-- ⏳ `pages/05_produtos.py` - Análise de produtos
-- ⏳ `pages/06_comparativos.py` - Comparativos
+### Dashboard Unificado (`dashboard_refatorado.py`)
+- ✅ KPIs principais e operacionais
+- ✅ Abas: Produtos, Regiões, Rankings, Analíticos, Evolução, Detalhes
+- ✅ Gráficos Plotly interativos com subplots
+- ✅ Tabelas com AG Grid e fallback st.dataframe
+- ✅ Filtros globais por região na sidebar
+- ✅ Formatação brasileira (moeda, números, percentuais)
 
-### Componentes a Implementar
-- ⏳ `components/filters.py` - Filtros reutilizáveis
-- ⏳ `components/metrics.py` - Cards de métricas
-- ⏳ `components/charts.py` - Gráficos Plotly
-- ⏳ `components/tables.py` - Tabelas interativas
+### Autenticação e Row-Level Security
+- ✅ Login obrigatório com bcrypt (`src/dashboard/auth.py`)
+- ✅ RLS automático por perfil/escopo (`src/dashboard/rls.py`)
+- ✅ Gerenciamento de usuários (`src/dashboard/user_mgmt.py`)
+- ✅ "Visualizar Como" para admin simular outros perfis
+- ✅ Perfis: admin, gerente_comercial (regiões), supervisor (lojas)
+
+### Componentes Implementados
+- ✅ `components/tables.py` - Tabelas com formatação automática (moeda BR, pontos, %)
 
 ## ⏳ Fase 4 - Validação e Documentação (PENDENTE)
 
@@ -206,6 +230,13 @@
 - ✅ Gráficos Matplotlib embarcados nos PDFs
 - ✅ Rodapé padronizado com número de página e data
 
+### Segurança ✅
+- ✅ Autenticação obrigatória com bcrypt
+- ✅ Row-Level Security por perfil (admin, gerente_comercial, supervisor)
+- ✅ Gerenciamento de usuários (criar, ativar/desativar, resetar senha)
+- ✅ "Visualizar Como" para admin simular outros perfis
+- ✅ Armazenamento seguro de senhas (hash bcrypt)
+
 ## 📊 Como Usar
 
 ### 1. Instalar Dependências
@@ -242,8 +273,8 @@ streamlit run src/dashboard/app.py
 ## 🔄 Próximos Passos
 
 1. ✅ ~~Implementar gerador de PDF~~ (Fase 2 - COMPLETA)
-2. **Criar páginas do dashboard** (Fase 3)
-3. **Implementar componentes reutilizáveis** (Fase 3)
+2. ✅ ~~Dashboard refatorado com KPIs completos~~ (Fase 3 - COMPLETA)
+3. ✅ ~~Autenticação e RLS~~ (Fase 3 - COMPLETA)
 4. **Criar notebooks de análise** (Fase 4)
 5. **Implementar testes** (Fase 4)
 6. **Implementar análises comentadas com IA nos relatórios** (Futuro)
@@ -264,7 +295,7 @@ Numeros_venda/
 ├── src/
 │   ├── data_processing/     ✅ COMPLETO (loader unificado)
 │   ├── reports/             ✅ COMPLETO (Excel + 13 PDFs)
-│   ├── dashboard/           🚧 EM PROGRESSO
+│   ├── dashboard/           ✅ COMPLETO (auth + RLS + KPIs)
 │   ├── analysis/            ✅ COMPLETO
 │   └── config/              ✅ COMPLETO (constantes centralizadas)
 ├── outputs/                 ✅ CRIADO
