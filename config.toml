@@ -1,0 +1,29 @@
+[theme]
+primaryColor="#2563EB"
+backgroundColor="#E8EDF3"
+secondaryBackgroundColor="#FFFFFF"
+textColor="#0F172A"
+
+[theme.light]
+primaryColor="#2563EB"
+backgroundColor="#E8EDF3"
+secondaryBackgroundColor="#FFFFFF"
+textColor="#0F172A"
+
+[theme.dark]
+primaryColor="#3B82F6"
+backgroundColor="#111827"
+secondaryBackgroundColor="#1F2937"
+textColor="#F9FAFB"
+
+[server]
+headless = true
+port = 8501
+enableCORS = false
+enableXsrfProtection = false
+
+[browser]
+gatherUsageStats = false
+
+[logger]
+level = "info"

@@ -10,10 +10,19 @@ Sales analysis system for a financial products company. Processes monthly sales 
 ### Key Business Rules
 - Points = Value × PTS (from product table)
 - **Card issuance** (`CARTÃO BENEFICIO`, `Venda Pré-Adesão`): count only as quantity, excluded from values/points
-- **Insurance** (`BMG MED` → "Med", `Seguro` → "Vida Familiar"): count only as quantity
-- **Super Conta** (`SUBTIPO = SUPER CONTA`): counts for values/points AND as production quantity
+- **Insurance** (`BMG MED` → "Med", `Seguro` → "Vida Familiar"): count only as quantity, excluded from values/points. Identified via `TIPO OPER.` field. **In the Supabase dashboard**, these contracts do NOT have `status_pagamento_cliente = 'PAGO AO CLIENTE'` — they are loaded via `sub_status_banco = 'Liquidada'` combined with `tipo_operacao IN ('BMG MED', 'Seguro')`
+- **Super Conta** (`SUBTIPO = SUPER CONTA`): CNC subtype — counts for values/points as CNC AND is counted separately as Super Conta production quantity. In the Supabase DB, category `SUPER_CONTA` must have `grupo_dashboard = 'CNC'` and its own entry in the `pontuacao` table with the same multiplier as CNC
 - Meta Prata (base target) and Meta Ouro (premium target) in points
 - Daily target = (Meta Prata - Current Points) / Remaining Business Days
+
+### Pipeline (Em Análise) Rules
+The source system only returns two values for `status_banco`: `EM ANALISE` and `CANCELADO`. It does **not** update `status_banco` when a proposal is paid. The dashboard applies the following filters to determine what appears in the analysis pipeline:
+
+| Excluded condition | Reason |
+|---|---|
+| `status_pagamento_cliente = 'PAGO AO CLIENTE'` | Already paid — remove from pipeline |
+| `status_banco = 'CANCELADO'` | Cancelled — must not appear |
+| `sub_status_banco = 'Liquidada'` | Insurance paid (BMG Med / Vida Familiar) — already settled |
 
 ### Authentication & Row-Level Security
 - Login required to access the dashboard (bcrypt-hashed passwords)

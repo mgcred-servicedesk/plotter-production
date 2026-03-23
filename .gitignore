@@ -188,6 +188,14 @@ dados/
 *.json
 *.xml
 
+# Diretórios específicos do projeto
+digitacao/
+metas/
+pontuacao/
+tabelas/
+configuracao/
+references/
+
 # Logs
 logs/
 *.log

@@ -565,7 +565,11 @@ def carregar_contratos_pagos(
             .table("contratos")
             .select(_select)
             .eq("periodo_id", periodo["id"])
-            .eq("status_pagamento_cliente", "PAGO AO CLIENTE")
+            .or_(
+                "status_pagamento_cliente.eq.PAGO AO CLIENTE,"
+                'and(sub_status_banco.eq.Liquidada,'
+                'tipo_operacao.in.("BMG MED",Seguro))'
+            )
             .limit(_PAGE_SIZE)
             .offset(offset)
             .execute()
@@ -623,11 +627,16 @@ def carregar_contratos_em_analise(
     ano: int,
 ) -> pd.DataFrame:
     """
-    Carrega contratos em analise (nao pagos) dos ultimos
-    30 dias a partir da data de referencia do periodo.
+    Carrega contratos em analise dos ultimos 30 dias
+    a partir da data de referencia do periodo.
 
-    Regra: data_cadastro nos ultimos 30 dias,
-    status_pagamento_cliente != PAGO AO CLIENTE.
+    Regras de inclusao:
+    - status_pagamento_cliente != 'PAGO AO CLIENTE'
+      (o sistema de origem nao atualiza status_banco ao pagar)
+    - status_banco != 'CANCELADO'
+      (o sistema de origem so retorna 'EM ANALISE' ou 'CANCELADO')
+    - sub_status_banco != 'Liquidada'
+      (seguros pagos — BMG Med e Vida Familiar — saem da analise)
     """
     hoje = datetime.now().date()
 
@@ -670,6 +679,8 @@ def carregar_contratos_em_analise(
             .table("contratos")
             .select(_select)
             .neq("status_pagamento_cliente", "PAGO AO CLIENTE")
+            .neq("status_banco", "CANCELADO")
+            .neq("sub_status_banco", "Liquidada")
             .gte("data_cadastro", data_inicio.isoformat())
             .lte("data_cadastro", data_ref.isoformat())
             .limit(_PAGE_SIZE)
@@ -969,6 +980,17 @@ def consolidar_dados(
     com_pontos = (df["PONTOS"] > 0).sum()
     sem_pontos = com_cat - com_pontos
 
+    # Tipos de produto dos contratos ainda sem categoria após fallback
+    tipos_sem_cat: list = []
+    if sem_cat > 0 and "TIPO_PRODUTO" in df.columns:
+        tipos_sem_cat = (
+            df.loc[df["categoria_codigo"] == "", "TIPO_PRODUTO"]
+            .value_counts()
+            .reset_index()
+            .rename(columns={"TIPO_PRODUTO": "tipo", "count": "qtd"})
+            .to_dict(orient="records")
+        )
+
     _diag = {
         "total_contratos": total,
         "sem_categoria": int(sem_cat),
@@ -984,6 +1006,7 @@ def consolidar_dados(
         "mapa_pontos": (
             mapa_pontos if not df_pontos.empty else {}
         ),
+        "tipos_sem_categoria": tipos_sem_cat,
     }
     st.session_state["_diag_pontuacao"] = _diag
     # ───────────────────────────────────────────────
@@ -997,6 +1020,33 @@ def consolidar_dados(
     df.loc[mask_sem_valor, "VALOR"] = 0
     df["pontos"] = df["VALOR"] * df["PONTOS"]
     df.loc[mask_sem_pontos, "pontos"] = 0
+
+    # Super Conta: CNC com subtipo especifico — conta valor/pontos
+    # como CNC e tambem e contado como producao Super Conta
+    df["is_super_conta"] = df["SUBTIPO"] == "SUPER CONTA"
+
+    # Classificacoes por TIPO OPER. (mesma logica do dashboard original)
+    col_tipo_oper = "TIPO OPER."
+
+    # Emissao de cartao: contam apenas quantidade
+    df["is_emissao_cartao"] = (
+        df[col_tipo_oper].isin(["CARTÃO BENEFICIO", "Venda Pré-Adesão"])
+        if col_tipo_oper in df.columns
+        else False
+    )
+
+    # Seguros: contam apenas quantidade (valor/pontos ja zerados acima)
+    # Fallback para categoria_codigo caso tipo_operacao nao esteja preenchido
+    df["is_bmg_med"] = (
+        (df[col_tipo_oper] == "BMG MED")
+        if col_tipo_oper in df.columns
+        else (df["categoria_codigo"] == "BMG_MED")
+    )
+    df["is_seguro_vida"] = (
+        (df[col_tipo_oper] == "Seguro")
+        if col_tipo_oper in df.columns
+        else (df["categoria_codigo"] == "SEGURO_VIDA")
+    )
 
     return df, df_metas, df_supervisores
 
@@ -1088,6 +1138,27 @@ def calcular_kpis_gerais(
             ]
         num_consultores = len(consultores_unicos)
 
+    qtd_super_conta = (
+        int(df["is_super_conta"].sum())
+        if "is_super_conta" in df.columns
+        else 0
+    )
+    qtd_emissao_cartao = (
+        int(df["is_emissao_cartao"].sum())
+        if "is_emissao_cartao" in df.columns
+        else 0
+    )
+    qtd_bmg_med = (
+        int(df["is_bmg_med"].sum())
+        if "is_bmg_med" in df.columns
+        else 0
+    )
+    qtd_seguro_vida = (
+        int(df["is_seguro_vida"].sum())
+        if "is_seguro_vida" in df.columns
+        else 0
+    )
+
     return {
         "total_vendas": total_vendas,
         "total_pontos": total_pontos,
@@ -1109,6 +1180,10 @@ def calcular_kpis_gerais(
         "num_lojas": (df["LOJA"].nunique() if "LOJA" in df.columns else 0),
         "num_consultores": num_consultores,
         "num_regioes": (df["REGIAO"].nunique() if "REGIAO" in df.columns else 0),
+        "qtd_super_conta": qtd_super_conta,
+        "qtd_emissao_cartao": qtd_emissao_cartao,
+        "qtd_bmg_med": qtd_bmg_med,
+        "qtd_seguro_vida": qtd_seguro_vida,
     }
 
 
@@ -1876,6 +1951,36 @@ def criar_cards_kpis_principais(kpis):
             "valor por consultor",
         )
 
+    col1, col2, col3, col4 = st.columns(4)
+
+    with col1:
+        st.metric(
+            "Super Contas",
+            formatar_numero(kpis.get("qtd_super_conta", 0)),
+            "CNCs com subtipo Super Conta",
+        )
+
+    with col2:
+        st.metric(
+            "Emissao de Cartao",
+            formatar_numero(kpis.get("qtd_emissao_cartao", 0)),
+            "quantidade produzida",
+        )
+
+    with col3:
+        st.metric(
+            "BMG Med",
+            formatar_numero(kpis.get("qtd_bmg_med", 0)),
+            "quantidade produzida",
+        )
+
+    with col4:
+        st.metric(
+            "Seguro Vida Familiar",
+            formatar_numero(kpis.get("qtd_seguro_vida", 0)),
+            "quantidade produzida",
+        )
+
 
 def criar_cards_pipeline(df_analise, kpis_pagos):
     """Cria cards de KPIs do pipeline em analise."""
@@ -2331,7 +2436,7 @@ def _render_tab_produtos(
     )
 
     fig = criar_grafico_produtos(df_prod)
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width="stretch")
 
     sac.divider(
         label="KPIs por Produto",
@@ -2370,7 +2475,7 @@ def _render_tab_regioes(
 
     if not df_reg.empty:
         fig = criar_grafico_regional(df_reg)
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width="stretch")
 
         sac.divider(
             label="KPIs por Regiao",
@@ -2569,7 +2674,7 @@ def _render_tab_analiticos(df, df_sup):
         if not df_mr.empty:
             st.info("Comparativo de produtividade media entre regioes")
             fig = criar_grafico_media_regiao(df_mr)
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width="stretch")
             sac.divider(
                 label="Estatisticas Detalhadas",
                 icon="table",
@@ -2613,7 +2718,7 @@ def _render_tab_evolucao(df, ano, mes, kpis):
 
     if not df_ev.empty:
         fig = criar_grafico_evolucao(df_ev, kpis)
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width="stretch")
 
         col1, col2, col3 = st.columns(3)
         with col1:
@@ -2689,6 +2794,13 @@ def _render_tab_em_analise(df_analise, df_sup):
     if filt_status != "Todos":
         df_a = df_a[df_a["STATUS_BANCO"] == filt_status]
 
+    qtd_emissao_analise = (
+        (df_a["TIPO OPER."].isin(["CARTÃO BENEFICIO", "Venda Pré-Adesão"])).sum()
+        if "TIPO OPER." in df_a.columns
+        else 0
+    )
+    qtd_sem_emissao = len(df_a) - qtd_emissao_analise
+
     st.markdown(f"**{len(df_a):,} propostas em analise**")
 
     # ── KPIs resumo ───────────────────────────────
@@ -2696,7 +2808,12 @@ def _render_tab_em_analise(df_analise, df_sup):
     with col1:
         st.metric("Valor Total", formatar_moeda(df_a["VALOR"].sum()))
     with col2:
-        st.metric("Quantidade", formatar_numero(len(df_a)))
+        st.metric(
+            "Quantidade",
+            formatar_numero(len(df_a)),
+            f"{formatar_numero(qtd_sem_emissao)} operacoes"
+            f" + {formatar_numero(qtd_emissao_analise)} emissoes",
+        )
     with col3:
         tk = df_a["VALOR"].sum() / len(df_a) if len(df_a) > 0 else 0
         st.metric("Ticket Medio", formatar_moeda(tk))
@@ -2888,7 +3005,7 @@ def _render_sidebar_usuario():
             label = "Usuarios"
         if st.button(
             f"{icon} {label}",
-            use_container_width=True,
+            width="stretch",
         ):
             st.session_state["mostrar_config"] = not st.session_state.get(
                 "mostrar_config", False
@@ -2896,7 +3013,7 @@ def _render_sidebar_usuario():
             st.rerun()
 
     with col_sair:
-        if st.button("Sair", use_container_width=True):
+        if st.button("Sair", width="stretch"):
             fazer_logout()
             st.rerun()
 
@@ -2981,7 +3098,7 @@ def main():
         with col_logo:
             st.image(
                 "assets/logotipo-mg-cred.png",
-                use_column_width=True,
+                width="stretch",
             )
         with col_theme:
             st.markdown("<div style='height:2.5rem'></div>", unsafe_allow_html=True)
@@ -3086,6 +3203,19 @@ def main():
 
                 st.markdown("**Mapa de pontos:**")
                 st.json(diag["mapa_pontos"])
+
+                # Tipos sem categoria (não mapeados pelo fallback)
+                tipos_sem_cat = diag.get("tipos_sem_categoria", [])
+                if tipos_sem_cat:
+                    st.warning(
+                        f"**{diag['sem_categoria']} contratos sem categoria** "
+                        f"— TIPO_PRODUTO nao mapeado:"
+                    )
+                    st.dataframe(
+                        pd.DataFrame(tipos_sem_cat),
+                        width="stretch",
+                        hide_index=True,
+                    )
 
                 # Categorias sem match
                 cats_contrato = {

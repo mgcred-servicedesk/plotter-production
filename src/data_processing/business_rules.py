@@ -39,38 +39,50 @@ def identificar_emissao_cartao(df: pd.DataFrame) -> pd.Series:
 def identificar_seguro_med(df: pd.DataFrame) -> pd.Series:
     """
     Identifica produtos de seguro Med.
-    
+
     Regra: TIPO OPER. = 'BMG MED'
-    Estes produtos NÃO contam para valores e pontuação.
-    
+    Estes produtos NÃO contam para valores e pontuação —
+    apenas quantidade é contabilizada.
+
+    Nota (Supabase): esses contratos não possuem
+    status_pagamento_cliente = 'PAGO AO CLIENTE'. São
+    carregados via sub_status_banco = 'Liquidada' combinado
+    com tipo_operacao IN ('BMG MED', 'Seguro').
+
     Args:
         df: DataFrame com dados de vendas.
-    
+
     Returns:
         Series booleana indicando se é seguro Med.
     """
     if COLUNAS_TIPO_OPER not in df.columns:
         return pd.Series([False] * len(df), index=df.index)
-    
+
     return df[COLUNAS_TIPO_OPER] == TIPO_OPER_BMG_MED
 
 
 def identificar_seguro_vida_familiar(df: pd.DataFrame) -> pd.Series:
     """
     Identifica produtos de seguro Vida Familiar.
-    
+
     Regra: TIPO OPER. = 'Seguro'
-    Estes produtos NÃO contam para valores e pontuação.
-    
+    Estes produtos NÃO contam para valores e pontuação —
+    apenas quantidade é contabilizada.
+
+    Nota (Supabase): esses contratos não possuem
+    status_pagamento_cliente = 'PAGO AO CLIENTE'. São
+    carregados via sub_status_banco = 'Liquidada' combinado
+    com tipo_operacao IN ('BMG MED', 'Seguro').
+
     Args:
         df: DataFrame com dados de vendas.
-    
+
     Returns:
         Series booleana indicando se é seguro Vida Familiar.
     """
     if COLUNAS_TIPO_OPER not in df.columns:
         return pd.Series([False] * len(df), index=df.index)
-    
+
     return df[COLUNAS_TIPO_OPER] == TIPO_OPER_SEGURO
 
 

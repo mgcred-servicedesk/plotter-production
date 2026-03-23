@@ -209,7 +209,7 @@ def tela_login() -> bool:
         with st.form("login_form"):
             st.image(
                 "assets/logotipo-mg-cred.png",
-                use_column_width=True,
+                width="stretch",
             )
             usuario = st.text_input(
                 "Usuario",
