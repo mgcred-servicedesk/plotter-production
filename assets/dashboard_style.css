@@ -1,39 +1,30 @@
 /*
  * Dashboard Style - MGCred
- * Estilos complementares ao tema nativo do Streamlit.
- *
- * REGRA: nunca definir cores fixas. Usar apenas as
- * variáveis que o Streamlit injeta e atualiza ao trocar
- * de tema:
- *   --primary-color
- *   --background-color
- *   --secondary-background-color
- *   --text-color
+ * Estilos de layout e tipografia.
+ * Cores sao controladas pelo sistema de temas em Python
+ * (THEMES dict + _aplicar_tema).
  */
 
 /* ── KPI Metric Cards ─────────────────────────────── */
 [data-testid="stMetric"] {
-    background-color: var(--secondary-background-color);
-    border: 1px solid color-mix(in srgb, var(--text-color) 20%, transparent);
     padding: 1.25rem 1rem;
     border-radius: 10px;
-    box-shadow: 0 1px 3px color-mix(in srgb, var(--text-color) 6%, transparent);
+    border-width: 1px;
+    border-style: solid;
     transition: transform 0.2s ease, box-shadow 0.2s ease;
 }
 
 [data-testid="stMetric"]:hover {
     transform: translateY(-2px);
-    box-shadow: 0 6px 16px color-mix(in srgb, var(--text-color) 10%, transparent);
 }
 
 /* Label */
 [data-testid="stMetricLabel"] > div,
 [data-testid="stMetricLabel"] p {
     font-weight: 600 !important;
-    font-size: 0.78rem !important;
+    font-size: 0.82rem !important;
     text-transform: uppercase;
     letter-spacing: 0.05em;
-    opacity: 0.6;
 }
 
 /* Value */
@@ -49,7 +40,7 @@
     font-weight: 500 !important;
 }
 
-/* Faixa lateral colorida por posição (4 colunas) */
+/* Faixa lateral colorida por posicao (4 colunas) */
 div[data-testid="column"]:nth-child(1) [data-testid="stMetric"] {
     border-left: 4px solid #3b82f6;
 }
@@ -77,29 +68,23 @@ div[data-testid="column"]:nth-child(4) [data-testid="stMetric"] {
 hr {
     border: none !important;
     height: 1px !important;
-    background: color-mix(in srgb, var(--text-color) 12%, transparent) !important;
     margin: 1.5rem 0 !important;
 }
 
 /* ── Data Tables ──────────────────────────────────── */
 [data-testid="stDataFrame"] {
-    border: 1px solid color-mix(in srgb, var(--text-color) 8%, transparent);
     border-radius: 10px;
     overflow: hidden;
-    box-shadow: 0 1px 3px color-mix(in srgb, var(--text-color) 5%, transparent);
 }
 
 /* ── Plotly Charts ────────────────────────────────── */
 [data-testid="stPlotlyChart"] {
-    border: 1px solid color-mix(in srgb, var(--text-color) 8%, transparent);
     border-radius: 10px;
     padding: 0.5rem;
-    box-shadow: 0 1px 3px color-mix(in srgb, var(--text-color) 5%, transparent);
 }
 
 /* ── Expanders ────────────────────────────────────── */
 [data-testid="stExpander"] {
-    border: 1px solid color-mix(in srgb, var(--text-color) 8%, transparent) !important;
     border-radius: 10px !important;
 }
 
@@ -125,8 +110,6 @@ hr {
 
 /* ── Status Bar (custom HTML) ─────────────────────── */
 .status-bar {
-    background-color: var(--secondary-background-color);
-    border: 1px solid color-mix(in srgb, var(--text-color) 8%, transparent);
     border-radius: 10px;
     padding: 0.75rem 1rem;
     margin-bottom: 1rem;
@@ -134,8 +117,6 @@ hr {
     align-items: center;
     gap: 0.75rem;
     font-size: 0.875rem;
-    color: var(--text-color);
-    opacity: 0.85;
 }
 
 .status-bar .status-dot {
@@ -161,12 +142,10 @@ hr {
     font-size: 1.75rem !important;
     font-weight: 800 !important;
     letter-spacing: -0.02em;
-    color: var(--text-color) !important;
     margin-bottom: 0 !important;
 }
 
 .dashboard-header p {
-    opacity: 0.6;
     font-size: 0.875rem !important;
 }
 
@@ -181,7 +160,6 @@ hr {
 }
 
 ::-webkit-scrollbar-thumb {
-    background: color-mix(in srgb, var(--text-color) 25%, transparent);
     border-radius: 3px;
 }
 

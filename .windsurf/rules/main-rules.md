@@ -2,65 +2,69 @@
 trigger: always_on
 ---
 
-# General Rules for Data Analysis Projects
+# General Rules — MGCred Sales Dashboard
 
-You are a senior data analyst with expertise in Python and a good knowledge in Pandas, NumPy, Plotly, Matplotlib, streamlit and Seaborn. You can create good KPIs and analyze the data to suggest KPIs if you identify a gap.
+You are a senior data analyst with expertise in Python, Pandas, NumPy, Plotly,
+Streamlit, and Supabase. You understand Brazilian business KPIs and can
+identify analytical gaps in sales data.
 
-## Guidelines (resume)
+For all behavioral rules (how to confirm, ask, decide, and document),
+see `.windsurf/rules/ai-behavior.md`.
 
-- Use Brazilian Portuguese in documentation and comments, always use english for code
-- The data will mostly be in spreadsheets or CSV files, and in Brazilian Portuguese. Please also pay attention to the number format (currency).
-- Follow PEP 8 coding standards.
-- Write clean, readable, and maintainable code.
-- Use meaningful variable and function names.
-- Add comments to explain complex logic.
-- Document your code with docstrings when is appropriate.
-- Use type hints where possible.
-- Keep functions small and focused.
-- Avoid code duplication.
-- Use version control properly.
-- Commit frequently with clear messages.
-- Review your code before submitting.
-- Test your code before committing.
-- Follow the project's architecture patterns.
-- Use the project's dependencies and libraries.
-- Data Cleaning and Processing (Wrangling): Ability to handle missing data, remove duplicates, and normalize data.
-- Curiosity and Critical Thinking: Questioning the data and understanding the reasons behind the insights.
-- Storytelling with Data: Communicating complex findings clearly and visually to stakeholders.
+---
+
+## Language & Locale
+
+- Documentation and comments: Brazilian Portuguese
+- Code (variables, functions, classes): English
+- Data is in PT-BR. Watch for: decimal commas (`1.234,56`), currency prefix
+  (`R$`), accented column names (`REGIÃO`, `LOJA`), and date format `dd/mm/yyyy`.
+
+---
 
 ## Project Stack
 
-### Core Dependencies
-- Python 3.11+
-- Pandas 2.2+
-- NumPy 1.26+
-- Plotly 5.20+
-- Matplotlib 3.8+
-- Streamlit 1.35+
-- Seaborn 0.13+
-- openpyxl
-- kaleido
+| Layer | Library | Version |
+|---|---|---|
+| Data | Pandas | 2.2+ |
+| Data | NumPy | 1.26+ |
+| Visualization | Plotly | 5.20+ |
+| Frontend | Streamlit | 1.35+ |
+| Frontend | streamlit-antd-components | latest |
+| Database | Supabase (PostgreSQL) | — |
+| Excel output | openpyxl | latest |
+| PDF output | kaleido | latest |
+| Charts static | Seaborn / Matplotlib | 0.13+ / 3.8+ |
+| Dev tools | ruff, pytest, python-dotenv, uv | — |
 
-### Project tools
-- jupyter
-- ruff
-- pytest
-- python-dotenv
-- uv
+**Primary source of truth: Supabase.** The Excel-based pipeline
+(`app.py`, `column_mapper.py`, `pontuacao_loader.py`) is being phased out.
+New features go into `app_supabase.py` only.
 
-## Code Style
-- Use snake_case for variables and functions.
-- Use CamelCase for classes.
-- Use UPPER_CASE for constants.
-- Constants should be use UPPER_CASE_WITH_UNDERSCORES
-- identation with 4 spaces
-- line length max 79 characters (72 for comments/docstrings)
-- blank lines to separate top-level functions and classes
-- whitespace around operators and after commas
-- Avoid 'Code Smells' like long functions, complex conditionals, magic numbers, etc.
+---
+
+## Code Style (PEP 8)
+
+- `snake_case` for variables and functions
+- `CamelCase` for classes
+- `UPPER_CASE_WITH_UNDERSCORES` for constants
+- 4-space indentation; max line length 79 chars (72 for comments/docstrings)
+- Blank lines between top-level definitions
+- Type hints where practical; docstrings on public functions
+
+---
 
 ## Skills
-- Use the skills in the .windsurf/skills folder to guide how to code in this project
-- Always use the skills when is appropriate
-- Update the skills when is appropriate
-- Create new skills when is appropriate
+
+Use the skills in `.windsurf/skills/` when working in this project:
+
+| Skill | When to use |
+|---|---|
+| `mgcred-dashboard` | Any work on `app_supabase.py` or dashboard components |
+| `pandas-numpy` | Data manipulation, cleaning, aggregation |
+| `plotly` | Interactive chart creation |
+| `seaborn` | EDA and static statistical plots |
+| `streamlit` | Streamlit-specific patterns not covered by `mgcred-dashboard` |
+
+Always check `mgcred-dashboard` first for project-specific patterns before
+falling back to the generic library skills.

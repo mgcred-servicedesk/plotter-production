@@ -15,7 +15,7 @@ import sys
 import warnings
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import pandas as pd
 import plotly.graph_objects as go
@@ -51,6 +51,409 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded",
 )
+
+
+# ══════════════════════════════════════════════════════
+# SISTEMA DE TEMAS (LIGHT / DARK)
+# ══════════════════════════════════════════════════════
+
+THEMES = {
+    "light": {
+        "primary": "#2563eb",
+        "bg": "#f8f9fb",
+        "secondary_bg": "#ffffff",
+        "sidebar_bg": "#ffffff",
+        "text": "#1a1a2e",
+        "text_secondary": "rgba(26,26,46,0.65)",
+        "border": "rgba(26,26,46,0.10)",
+        "shadow": "rgba(26,26,46,0.06)",
+        "shadow_hover": "rgba(26,26,46,0.10)",
+        "card_border": "rgba(26,26,46,0.08)",
+        "hover_bg": "rgba(37,99,235,0.04)",
+        "grid": "rgba(128,128,128,0.10)",
+        "grid_zero": "rgba(128,128,128,0.15)",
+        "tooltip_bg": "rgba(30,30,46,0.92)",
+        "tooltip_text": "#ffffff",
+        "scrollbar": "rgba(26,26,46,0.18)",
+    },
+    "dark": {
+        "primary": "#3b82f6",
+        "bg": "#0f1117",
+        "secondary_bg": "#1a1c25",
+        "sidebar_bg": "#161820",
+        "text": "#e2e4ea",
+        "text_secondary": "rgba(226,228,234,0.55)",
+        "border": "rgba(226,228,234,0.08)",
+        "shadow": "rgba(0,0,0,0.20)",
+        "shadow_hover": "rgba(0,0,0,0.35)",
+        "card_border": "rgba(226,228,234,0.06)",
+        "hover_bg": "rgba(59,130,246,0.08)",
+        "grid": "rgba(226,228,234,0.06)",
+        "grid_zero": "rgba(226,228,234,0.10)",
+        "tooltip_bg": "rgba(15,17,23,0.95)",
+        "tooltip_text": "#e2e4ea",
+        "scrollbar": "rgba(226,228,234,0.15)",
+    },
+}
+
+
+def _get_theme() -> str:
+    """Retorna o tema atual da session_state."""
+    return st.session_state.get("theme", "light")
+
+
+def _aplicar_tema():
+    """Injeta CSS que sobrescreve as variaveis do Streamlit."""
+    t = THEMES[_get_theme()]
+    st.markdown(
+        f"""<style>
+        /* ── CSS Variables ─────────────────────────── */
+        :root {{
+            --primary-color: {t["primary"]} !important;
+            --background-color: {t["bg"]} !important;
+            --secondary-background-color: {t["secondary_bg"]} !important;
+            --text-color: {t["text"]} !important;
+        }}
+
+        /* ── Global reset — catch-all ──────────────── */
+        html, body, [data-testid="stAppViewContainer"],
+        [data-testid="stApp"],
+        .main, .main .block-container,
+        .stApp {{
+            background-color: {t["bg"]} !important;
+            color: {t["text"]} !important;
+        }}
+
+        /* ── Sidebar ───────────────────────────────── */
+        section[data-testid="stSidebar"],
+        section[data-testid="stSidebar"] > div,
+        section[data-testid="stSidebar"] > div > div {{
+            background-color: {t["sidebar_bg"]} !important;
+            color: {t["text"]} !important;
+        }}
+
+        /* ── Header / toolbar / bottom ─────────────── */
+        [data-testid="stHeader"],
+        header {{
+            background-color: {t["bg"]} !important;
+        }}
+        [data-testid="stBottomBlockContainer"] {{
+            background-color: {t["bg"]} !important;
+        }}
+
+        /* ── All text ──────────────────────────────── */
+        p, span, label, li, td, th,
+        h1, h2, h3, h4, h5, h6,
+        [class*="St"] {{
+            color: {t["text"]} !important;
+        }}
+        .stCaption, small {{
+            color: {t["text_secondary"]} !important;
+        }}
+
+        /* ── Metric cards ──────────────────────────── */
+        [data-testid="stMetric"] {{
+            background-color: {t["secondary_bg"]} !important;
+            border-color: {t["card_border"]} !important;
+            box-shadow: 0 2px 8px {t["shadow"]} !important;
+        }}
+        [data-testid="stMetric"]:hover {{
+            box-shadow: 0 8px 24px {t["shadow_hover"]} !important;
+        }}
+        [data-testid="stMetricLabel"] > div,
+        [data-testid="stMetricLabel"] p {{
+            color: {t["text_secondary"]} !important;
+            opacity: 1 !important;
+        }}
+        [data-testid="stMetricValue"] > div {{
+            color: {t["text"]} !important;
+        }}
+
+        /* ── Inputs: selectbox, text, number ─────── */
+        [data-testid="stSelectbox"] > div > div,
+        [data-testid="stTextInput"] > div > div,
+        [data-testid="stNumberInput"] > div > div,
+        [data-baseweb="select"] > div,
+        [data-baseweb="input"] {{
+            background-color: {t["secondary_bg"]} !important;
+            color: {t["text"]} !important;
+            border-color: {t["border"]} !important;
+        }}
+        [data-testid="stSelectbox"] svg,
+        [data-baseweb="select"] svg {{
+            fill: {t["text"]} !important;
+        }}
+
+        /* ── Dropdowns / popovers ──────────────────── */
+        [data-baseweb="popover"],
+        [data-baseweb="popover"] > div,
+        [data-baseweb="menu"],
+        [data-baseweb="list"],
+        [role="listbox"] {{
+            background-color: {t["secondary_bg"]} !important;
+            border-color: {t["border"]} !important;
+            color: {t["text"]} !important;
+        }}
+        [data-baseweb="menu"] li,
+        [role="option"] {{
+            color: {t["text"]} !important;
+            background-color: {t["secondary_bg"]} !important;
+        }}
+        [data-baseweb="menu"] li:hover,
+        [role="option"]:hover {{
+            background-color: {t["hover_bg"]} !important;
+        }}
+        [role="option"][aria-selected="true"] {{
+            background-color: {t["hover_bg"]} !important;
+        }}
+
+        /* ── Buttons ───────────────────────────────── */
+        .stButton > button,
+        button[kind="secondary"] {{
+            background-color: {t["secondary_bg"]} !important;
+            color: {t["text"]} !important;
+            border-color: {t["border"]} !important;
+        }}
+        .stButton > button:hover,
+        button[kind="secondary"]:hover {{
+            background-color: {t["hover_bg"]} !important;
+            border-color: {t["primary"]} !important;
+            color: {t["primary"]} !important;
+        }}
+
+        /* ── st.status ─────────────────────────────── */
+        [data-testid="stStatusWidget"],
+        [data-testid="stStatusWidget"] > details,
+        [data-testid="stStatusWidget"] > details > div {{
+            background-color: {t["secondary_bg"]} !important;
+            border-color: {t["card_border"]} !important;
+            color: {t["text"]} !important;
+        }}
+        [data-testid="stStatusWidget"] summary,
+        [data-testid="stStatusWidget"] summary * {{
+            color: {t["text"]} !important;
+        }}
+
+        /* ── Expanders ─────────────────────────────── */
+        [data-testid="stExpander"],
+        [data-testid="stExpander"] > details,
+        [data-testid="stExpander"] > details > div,
+        [data-testid="stExpander"] > details > summary {{
+            background-color: {t["secondary_bg"]} !important;
+            border-color: {t["card_border"]} !important;
+            color: {t["text"]} !important;
+        }}
+
+        /* ── Tables / DataFrames ───────────────────── */
+        [data-testid="stDataFrame"],
+        [data-testid="stTable"],
+        .stDataFrame, table {{
+            border-color: {t["card_border"]} !important;
+        }}
+        table th {{
+            background-color: {t["secondary_bg"]} !important;
+        }}
+
+        /* ── Plotly charts ─────────────────────────── */
+        [data-testid="stPlotlyChart"] {{
+            border-color: {t["card_border"]} !important;
+            box-shadow: 0 1px 3px {t["shadow"]} !important;
+        }}
+
+        /* ── Streamlit native tabs ─────────────────── */
+        [data-testid="stTabs"],
+        [data-testid="stTabs"] > div {{
+            background-color: transparent !important;
+        }}
+        [data-testid="stTabs"] button {{
+            color: {t["text_secondary"]} !important;
+            background-color: transparent !important;
+        }}
+        [data-testid="stTabs"] button[aria-selected="true"] {{
+            color: {t["primary"]} !important;
+        }}
+
+        /* ── Ant Design: tabs (sac.tabs) ───────────── */
+        .ant-tabs,
+        .ant-tabs-nav,
+        .ant-tabs-content,
+        .ant-tabs-content-holder,
+        .ant-tabs-tabpane {{
+            background-color: transparent !important;
+            color: {t["text"]} !important;
+        }}
+        .ant-tabs-tab {{
+            color: {t["text_secondary"]} !important;
+            background-color: transparent !important;
+        }}
+        .ant-tabs-tab:hover {{
+            color: {t["text"]} !important;
+        }}
+        .ant-tabs-tab-active,
+        .ant-tabs-tab-active .ant-tabs-tab-btn {{
+            color: {t["primary"]} !important;
+        }}
+        .ant-tabs-tab-btn {{
+            color: inherit !important;
+        }}
+        .ant-tabs-nav::before {{
+            border-color: {t["border"]} !important;
+        }}
+        .ant-tabs-ink-bar {{
+            background: {t["primary"]} !important;
+        }}
+        /* Outline variant */
+        .ant-tabs-card > .ant-tabs-nav .ant-tabs-tab {{
+            background-color: transparent !important;
+            border-color: {t["border"]} !important;
+        }}
+        .ant-tabs-card > .ant-tabs-nav .ant-tabs-tab-active {{
+            background-color: {t["secondary_bg"]} !important;
+            border-color: {t["primary"]} !important;
+        }}
+
+        /* ── Ant Design: dividers (sac.divider) ────── */
+        .ant-divider,
+        .ant-divider-horizontal {{
+            color: {t["text_secondary"]} !important;
+            border-color: {t["border"]} !important;
+        }}
+        .ant-divider-inner-text {{
+            color: {t["text_secondary"]} !important;
+            background-color: transparent !important;
+        }}
+
+        /* ── Ant Design: segmented (sac.segmented) ── */
+        .ant-segmented {{
+            background-color: {t["bg"]} !important;
+            color: {t["text"]} !important;
+        }}
+        .ant-segmented-item {{
+            color: {t["text_secondary"]} !important;
+        }}
+        .ant-segmented-item:hover {{
+            color: {t["text"]} !important;
+        }}
+        .ant-segmented-item-selected {{
+            background-color: {t["secondary_bg"]} !important;
+            color: {t["primary"]} !important;
+            box-shadow: 0 1px 4px {t["shadow"]} !important;
+        }}
+        .ant-segmented-thumb {{
+            background-color: {t["secondary_bg"]} !important;
+        }}
+
+        /* ── Alerts ────────────────────────────────── */
+        [data-testid="stAlert"] {{
+            background-color: {t["secondary_bg"]} !important;
+            color: {t["text"]} !important;
+        }}
+
+        /* ── Scrollbar ─────────────────────────────── */
+        ::-webkit-scrollbar-thumb {{
+            background: {t["scrollbar"]} !important;
+        }}
+
+        /* ── Custom HTML components ────────────────── */
+        .status-bar {{
+            background-color: {t["secondary_bg"]} !important;
+            border-color: {t["card_border"]} !important;
+            color: {t["text"]} !important;
+        }}
+        .dashboard-header h1 {{
+            color: {t["text"]} !important;
+        }}
+        .dashboard-header p {{
+            color: {t["text_secondary"]} !important;
+            opacity: 1 !important;
+        }}
+
+        /* ── Separators ────────────────────────────── */
+        hr {{
+            background: {t["border"]} !important;
+        }}
+
+        /* ── iframe containers (sac components) ────── */
+        iframe[title*="streamlit_antd_components"] {{
+            background-color: transparent !important;
+        }}
+        </style>""",
+        unsafe_allow_html=True,
+    )
+
+    # Injetar JS para tematizar iframes (sac components).
+    # st.markdown sanitiza <script>, entao usamos
+    # st.components.v1.html com height=0.
+    import streamlit.components.v1 as components
+
+    components.html(
+        f"""<script>
+        (function() {{
+            const p = window.parent;
+            const VARS = {{
+                '--primary-color': '{t["primary"]}',
+                '--background-color': '{t["bg"]}',
+                '--secondary-background-color': '{t["secondary_bg"]}',
+                '--text-color': '{t["text"]}',
+            }};
+            const tc = VARS['--text-color'];
+            const pc = VARS['--primary-color'];
+            const sb = VARS['--secondary-background-color'];
+
+            function inject(iframe) {{
+                try {{
+                    const doc = iframe.contentDocument
+                             || iframe.contentWindow.document;
+                    if (!doc || !doc.documentElement) return;
+                    const root = doc.documentElement;
+                    for (const [k, v] of Object.entries(VARS))
+                        root.style.setProperty(k, v);
+
+                    let s = doc.getElementById('mgcred-theme');
+                    if (!s) {{
+                        s = doc.createElement('style');
+                        s.id = 'mgcred-theme';
+                        doc.head.appendChild(s);
+                    }}
+                    s.textContent = `
+                        :root, body {{ background:transparent!important; color:${{tc}}!important }}
+                        .ant-divider {{ border-color:${{tc}}20!important }}
+                        .ant-divider-inner-text {{ background:transparent!important; color:${{tc}}!important }}
+                        .ant-tabs-tab-btn {{ color:${{tc}}90!important }}
+                        .ant-tabs-tab-active .ant-tabs-tab-btn {{ color:${{pc}}!important }}
+                        .ant-tabs-ink-bar {{ background:${{pc}}!important }}
+                        .ant-tabs-nav::before {{ border-color:${{tc}}15!important }}
+                        .ant-tabs-card .ant-tabs-tab {{ background:transparent!important; border-color:${{tc}}15!important }}
+                        .ant-tabs-card .ant-tabs-tab-active {{ background:${{sb}}!important; border-color:${{pc}}!important }}
+                        .ant-segmented {{ background:${{tc}}10!important }}
+                        .ant-segmented-item-label {{ color:${{tc}}80!important }}
+                        .ant-segmented-item-selected .ant-segmented-item-label {{ color:${{pc}}!important }}
+                        .ant-segmented-thumb {{ background:${{sb}}!important }}
+                    `;
+                }} catch(e) {{}}
+            }}
+
+            function run() {{
+                p.document.querySelectorAll('iframe').forEach(f => {{
+                    if (f.contentDocument) inject(f);
+                    else f.addEventListener('load', () => inject(f));
+                }});
+            }}
+
+            run();
+            const obs = new MutationObserver(muts => {{
+                for (const m of muts)
+                    for (const n of m.addedNodes)
+                        if (n.tagName === 'IFRAME' || (n.querySelectorAll && n.querySelectorAll('iframe').length))
+                            {{ setTimeout(run, 100); return; }}
+            }});
+            obs.observe(p.document.body, {{ childList:true, subtree:true }});
+            setTimeout(run, 500);
+            setTimeout(run, 1500);
+        }})();
+        </script>""",
+        height=0,
+    )
 
 
 # ══════════════════════════════════════════════════════
@@ -119,6 +522,9 @@ def carregar_periodo(mes: int, ano: int) -> Optional[dict]:
     return resp.data[0] if resp.data else None
 
 
+_PAGE_SIZE = 1000
+
+
 @st.cache_data(ttl=120)
 def carregar_contratos_pagos(
     mes: int,
@@ -132,37 +538,49 @@ def carregar_contratos_pagos(
     if not periodo:
         return pd.DataFrame()
 
-    resp = (
-        _sb()
-        .table("contratos")
-        .select(
-            "id, contrato_id, valor, prazo, "
-            "valor_parcela, tipo_operacao, "
-            "data_cadastro, status_banco, "
-            "data_status_banco, "
-            "status_pagamento_cliente, "
-            "data_status_pagamento, banco, "
-            "convenio, num_proposta, "
-            "sub_status_banco, "
-            "lojas(id, nome, regiao_id, "
-            "regioes(nome)), "
-            "consultores(id, nome), "
-            "produtos(id, tabela, tipo, subtipo, "
-            "categoria_id, "
-            "categorias_produto(id, codigo, nome, "
-            "grupo_dashboard, grupo_meta, "
-            "conta_valor, conta_pontuacao))"
-        )
-        .eq("periodo_id", periodo["id"])
-        .eq("status_pagamento_cliente", "PAGO AO CLIENTE")
-        .execute()
+    _select = (
+        "id, contrato_id, valor, prazo, "
+        "valor_parcela, tipo_operacao, "
+        "data_cadastro, status_banco, "
+        "data_status_banco, "
+        "status_pagamento_cliente, "
+        "data_status_pagamento, banco, "
+        "convenio, num_proposta, "
+        "sub_status_banco, "
+        "lojas(id, nome, regiao_id, "
+        "regioes(nome)), "
+        "consultores(id, nome), "
+        "produtos(id, tabela, tipo, subtipo, "
+        "categoria_id, "
+        "categorias_produto(id, codigo, nome, "
+        "grupo_dashboard, grupo_meta, "
+        "conta_valor, conta_pontuacao))"
     )
 
-    if not resp.data:
+    all_data: List[dict] = []
+    offset = 0
+    while True:
+        resp = (
+            _sb()
+            .table("contratos")
+            .select(_select)
+            .eq("periodo_id", periodo["id"])
+            .eq("status_pagamento_cliente", "PAGO AO CLIENTE")
+            .limit(_PAGE_SIZE)
+            .offset(offset)
+            .execute()
+        )
+        batch = resp.data or []
+        all_data.extend(batch)
+        if len(batch) < _PAGE_SIZE:
+            break
+        offset += _PAGE_SIZE
+
+    if not all_data:
         return pd.DataFrame()
 
     rows = []
-    for c in resp.data:
+    for c in all_data:
         loja = c.get("lojas") or {}
         regiao = loja.get("regioes") or {}
         consultor = c.get("consultores") or {}
@@ -195,6 +613,111 @@ def carregar_contratos_pagos(
 
     if "DATA" in df.columns:
         df["DATA"] = pd.to_datetime(df["DATA"], errors="coerce")
+
+    return df
+
+
+@st.cache_data(ttl=120)
+def carregar_contratos_em_analise(
+    mes: int,
+    ano: int,
+) -> pd.DataFrame:
+    """
+    Carrega contratos em analise (nao pagos) dos ultimos
+    30 dias a partir da data de referencia do periodo.
+
+    Regra: data_cadastro nos ultimos 30 dias,
+    status_pagamento_cliente != PAGO AO CLIENTE.
+    """
+    hoje = datetime.now().date()
+
+    # Data de referencia: hoje se periodo vigente,
+    # senao ultimo dia do mes selecionado
+    if mes == datetime.now().month and ano == datetime.now().year:
+        data_ref = hoje
+    else:
+        if mes == 12:
+            data_ref = datetime(ano + 1, 1, 1).date() - pd.Timedelta(days=1)
+        else:
+            data_ref = datetime(ano, mes + 1, 1).date() - pd.Timedelta(days=1)
+
+    data_inicio = data_ref - pd.Timedelta(days=30)
+
+    _select = (
+        "id, contrato_id, valor, prazo, "
+        "valor_parcela, tipo_operacao, "
+        "data_cadastro, status_banco, "
+        "data_status_banco, "
+        "status_pagamento_cliente, "
+        "data_status_pagamento, banco, "
+        "convenio, num_proposta, "
+        "sub_status_banco, "
+        "lojas(id, nome, regiao_id, "
+        "regioes(nome)), "
+        "consultores(id, nome), "
+        "produtos(id, tabela, tipo, subtipo, "
+        "categoria_id, "
+        "categorias_produto(id, codigo, nome, "
+        "grupo_dashboard, grupo_meta, "
+        "conta_valor, conta_pontuacao))"
+    )
+
+    all_data: List[dict] = []
+    offset = 0
+    while True:
+        resp = (
+            _sb()
+            .table("contratos")
+            .select(_select)
+            .neq("status_pagamento_cliente", "PAGO AO CLIENTE")
+            .gte("data_cadastro", data_inicio.isoformat())
+            .lte("data_cadastro", data_ref.isoformat())
+            .limit(_PAGE_SIZE)
+            .offset(offset)
+            .execute()
+        )
+        batch = resp.data or []
+        all_data.extend(batch)
+        if len(batch) < _PAGE_SIZE:
+            break
+        offset += _PAGE_SIZE
+
+    if not all_data:
+        return pd.DataFrame()
+
+    rows = []
+    for c in all_data:
+        loja = c.get("lojas") or {}
+        regiao = loja.get("regioes") or {}
+        consultor = c.get("consultores") or {}
+        produto = c.get("produtos") or {}
+        categoria = produto.get("categorias_produto") or {}
+
+        rows.append(
+            {
+                "DATA_CADASTRO": c.get("data_cadastro"),
+                "LOJA": loja.get("nome", ""),
+                "REGIAO": regiao.get("nome", ""),
+                "CONSULTOR": consultor.get("nome", ""),
+                "PRODUTO": produto.get("tabela", ""),
+                "TIPO_PRODUTO": produto.get("tipo", ""),
+                "SUBTIPO": produto.get("subtipo", ""),
+                "TIPO OPER.": c.get("tipo_operacao", ""),
+                "VALOR": float(c.get("valor", 0)),
+                "BANCO": c.get("banco", ""),
+                "STATUS_BANCO": c.get("status_banco", ""),
+                "categoria_codigo": categoria.get("codigo", ""),
+                "grupo_dashboard": categoria.get("grupo_dashboard"),
+                "conta_valor": categoria.get("conta_valor", True),
+            }
+        )
+
+    df = pd.DataFrame(rows)
+
+    if "DATA_CADASTRO" in df.columns:
+        df["DATA_CADASTRO"] = pd.to_datetime(
+            df["DATA_CADASTRO"], errors="coerce"
+        )
 
     return df
 
@@ -377,6 +900,56 @@ def consolidar_dados(
     if df.empty:
         return df, df_metas, df_supervisores
 
+    # Fallback: preencher categoria_codigo via TIPO_PRODUTO
+    # quando produtos.categoria_id esta NULL no banco
+    _TIPO_PARA_CATEGORIA = {
+        "CNC": "CNC",
+        "CNC 13º": "CNC_13",
+        "CNC 13": "CNC_13",
+        "CNC ANT": "ANT_BENEF",
+        "SAQUE": "SAQUE",
+        "SAQUE BENEFICIO": "SAQUE_BENEFICIO",
+        "CONSIG": "CONSIG_BMG",
+        "CONSIG BMG": "CONSIG_BMG",
+        "CONSIG PRIV": "CONSIG_PRIV",
+        "CONSIG ITAU": "CONSIG_ITAU",
+        "CONSIG Itau": "CONSIG_ITAU",
+        "CONSIG C6": "CONSIG_C6",
+        "FGTS": "FGTS",
+        "EMISSAO": "CARTAO",
+        "EMISSAO CB": "CARTAO",
+        "EMISSAO CC": "CARTAO",
+        "Portabilidade": "PORTABILIDADE",
+        "PORTABILIDADE": "PORTABILIDADE",
+    }
+
+    mask_sem_cat = df["categoria_codigo"] == ""
+    if mask_sem_cat.any() and "TIPO_PRODUTO" in df.columns:
+        df.loc[mask_sem_cat, "categoria_codigo"] = (
+            df.loc[mask_sem_cat, "TIPO_PRODUTO"]
+            .map(_TIPO_PARA_CATEGORIA)
+            .fillna("")
+        )
+
+        # Preencher grupo_dashboard, grupo_meta, conta_valor,
+        # conta_pontuacao a partir das categorias do banco
+        categorias = carregar_categorias()
+        if not categorias.empty:
+            cat_map = categorias.set_index("codigo")
+            preenchidos = mask_sem_cat & (df["categoria_codigo"] != "")
+
+            for campo in [
+                "grupo_dashboard",
+                "grupo_meta",
+                "conta_valor",
+                "conta_pontuacao",
+            ]:
+                if campo in cat_map.columns:
+                    df.loc[preenchidos, campo] = (
+                        df.loc[preenchidos, "categoria_codigo"]
+                        .map(cat_map[campo])
+                    )
+
     # Mapear pontos por categoria_codigo
     if not df_pontos.empty:
         mapa_pontos = dict(
@@ -388,6 +961,32 @@ def consolidar_dados(
         df["PONTOS"] = df["categoria_codigo"].map(mapa_pontos).fillna(0)
     else:
         df["PONTOS"] = 0
+
+    # ── Diagnostico de mapeamento ──────────────────
+    total = len(df)
+    sem_cat = (df["categoria_codigo"] == "").sum()
+    com_cat = total - sem_cat
+    com_pontos = (df["PONTOS"] > 0).sum()
+    sem_pontos = com_cat - com_pontos
+
+    _diag = {
+        "total_contratos": total,
+        "sem_categoria": int(sem_cat),
+        "com_categoria": int(com_cat),
+        "com_pontos_mapeados": int(com_pontos),
+        "sem_pontos_mapeados": int(sem_pontos),
+        "categorias_no_contrato": (
+            sorted(df["categoria_codigo"].unique().tolist())
+        ),
+        "categorias_na_pontuacao": (
+            sorted(mapa_pontos.keys()) if not df_pontos.empty else []
+        ),
+        "mapa_pontos": (
+            mapa_pontos if not df_pontos.empty else {}
+        ),
+    }
+    st.session_state["_diag_pontuacao"] = _diag
+    # ───────────────────────────────────────────────
 
     # Aplicar regras de exclusao:
     # Produtos com conta_valor=false → VALOR = 0
@@ -455,7 +1054,7 @@ def calcular_kpis_gerais(
 
     total_vendas = df["VALOR"].sum()
     total_pontos = df["pontos"].sum()
-    total_transacoes = len(df)
+    total_transacoes = len(df[df["VALOR"] > 0])
 
     meta_prata = 0
     meta_ouro = 0
@@ -576,7 +1175,7 @@ def calcular_kpis_por_produto(
         df_grupo = df[df["grupo_dashboard"] == grupo].copy()
 
         valor = df_grupo["VALOR"].sum()
-        quantidade = len(df_grupo)
+        quantidade = len(df_grupo[df_grupo["VALOR"] > 0])
 
         # Buscar meta por grupo_meta
         meta_key = grupo_meta_map.get(grupo, grupo)
@@ -1088,6 +1687,7 @@ def _render_status_bar(
     num_registros,
     ultima_data,
     filtro_regiao,
+    num_em_analise=0,
 ):
     """Renderiza barra de status."""
     regiao_txt = (
@@ -1098,11 +1698,17 @@ def _render_status_bar(
         if hasattr(ultima_data, "strftime")
         else str(ultima_data)
     )
+    analise_txt = (
+        f" &middot; <strong>{num_em_analise:,}</strong> em analise"
+        if num_em_analise > 0
+        else ""
+    )
     st.markdown(
         '<div class="status-bar fade-in">'
         '<span class="status-dot"></span>'
         f"<span><strong>{num_registros:,}</strong>"
-        f" registros carregados &middot; Atualizado em"
+        f" pagos{analise_txt}"
+        f" &middot; Atualizado em"
         f" <strong>{data_str}</strong>"
         f"{regiao_txt}</span></div>",
         unsafe_allow_html=True,
@@ -1271,6 +1877,61 @@ def criar_cards_kpis_principais(kpis):
         )
 
 
+def criar_cards_pipeline(df_analise, kpis_pagos):
+    """Cria cards de KPIs do pipeline em analise."""
+    sac.divider(
+        label="Pipeline em Analise (ultimos 30 dias)",
+        icon="hourglass-split",
+        align="left",
+        color="orange",
+    )
+
+    if df_analise.empty:
+        st.info("Nenhum contrato em analise no periodo.")
+        return
+
+    valor_analise = df_analise["VALOR"].sum()
+    qtd_analise = len(df_analise)
+    ticket_analise = valor_analise / qtd_analise if qtd_analise > 0 else 0
+    valor_pagos = kpis_pagos["total_vendas"]
+    razao = (
+        (valor_analise / valor_pagos * 100)
+        if valor_pagos > 0
+        else 0
+    )
+
+    col1, col2, col3, col4 = st.columns(4)
+
+    with col1:
+        st.metric(
+            "Valor em Analise",
+            formatar_moeda(valor_analise),
+            f"{qtd_analise} propostas",
+        )
+    with col2:
+        st.metric(
+            "Ticket Medio (Analise)",
+            formatar_moeda(ticket_analise),
+        )
+    with col3:
+        num_lojas = (
+            df_analise["LOJA"].nunique()
+            if "LOJA" in df_analise.columns
+            else 0
+        )
+        st.metric(
+            "Lojas com Pipeline",
+            formatar_numero(num_lojas),
+        )
+    with col4:
+        st.metric(
+            "Pipeline / Produzido",
+            formatar_percentual(razao),
+            "do valor pago no periodo",
+            delta_color="off",
+        )
+
+
 # ══════════════════════════════════════════════════════
 # GRAFICOS
 # ══════════════════════════════════════════════════════
@@ -1278,6 +1939,7 @@ def criar_cards_kpis_principais(kpis):
 
 def _template():
     """Configuracao base para graficos Plotly."""
+    t = THEMES[_get_theme()]
     return {
         "paper_bgcolor": "rgba(0,0,0,0)",
         "plot_bgcolor": "rgba(0,0,0,0)",
@@ -1286,6 +1948,7 @@ def _template():
                 "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif"
             ),
             size=12,
+            color=t["text"],
         ),
         "title_font": dict(size=16, weight=700),
         "legend": dict(
@@ -1294,35 +1957,45 @@ def _template():
             y=1.02,
             xanchor="right",
             x=1,
-            font=dict(size=11),
+            font=dict(size=11, color=t["text"]),
             bgcolor="rgba(0,0,0,0)",
         ),
         "margin": dict(l=60, r=30, t=60, b=50),
         "hoverlabel": dict(
-            bgcolor="rgba(30,30,46,0.9)",
-            font_color="#fff",
+            bgcolor=t["tooltip_bg"],
+            font_color=t["tooltip_text"],
             font_size=12,
-            bordercolor="rgba(255,255,255,0.1)",
+            bordercolor=t["border"],
         ),
     }
 
 
 def _aplicar(fig, t):
     """Aplica template a um grafico."""
+    th = THEMES[_get_theme()]
+    text_color = th["text"]
     fig.update_layout(
         paper_bgcolor=t["paper_bgcolor"],
         plot_bgcolor=t["plot_bgcolor"],
         font=t["font"],
         legend=t["legend"],
         hoverlabel=t["hoverlabel"],
+        title_font_color=text_color,
     )
+    # subplot_titles criam annotations — forcar cor do texto
+    for ann in fig.layout.annotations:
+        ann.font.color = text_color
     fig.update_xaxes(
-        gridcolor="rgba(128,128,128,0.1)",
-        zerolinecolor="rgba(128,128,128,0.15)",
+        gridcolor=th["grid"],
+        zerolinecolor=th["grid_zero"],
+        tickfont_color=text_color,
+        title_font_color=text_color,
     )
     fig.update_yaxes(
-        gridcolor="rgba(128,128,128,0.1)",
-        zerolinecolor="rgba(128,128,128,0.15)",
+        gridcolor=th["grid"],
+        zerolinecolor=th["grid_zero"],
+        tickfont_color=text_color,
+        title_font_color=text_color,
     )
     return fig
 
@@ -1416,7 +2089,7 @@ def criar_grafico_produtos(df_produtos):
             marker=dict(
                 size=10,
                 color=CHART_COLORS["rose"],
-                line=dict(width=2, color="#fff"),
+                line=dict(width=2, color=THEMES[_get_theme()]["bg"]),
             ),
             line=dict(width=3, color=CHART_COLORS["rose"]),
         ),
@@ -1501,7 +2174,7 @@ def criar_grafico_evolucao(df_evolucao, kpis):
             marker=dict(
                 size=5,
                 color=CHART_COLORS["primary_dark"],
-                line=dict(width=1, color="#fff"),
+                line=dict(width=1, color=THEMES[_get_theme()]["bg"]),
             ),
             line=dict(width=3, color=CHART_COLORS["primary_dark"]),
             fill="tozeroy",
@@ -1969,6 +2642,145 @@ def _render_tab_evolucao(df, ano, mes, kpis):
         st.warning("Dados de evolucao nao disponiveis")
 
 
+def _render_tab_em_analise(df_analise, df_sup):
+    """Renderiza aba de contratos Em Analise."""
+    sac.divider(
+        label="Contratos em Analise",
+        icon="hourglass-split",
+        align="left",
+        color="orange",
+    )
+
+    if df_analise.empty:
+        st.warning("Nenhum contrato em analise no periodo.")
+        return
+
+    df_a = df_analise.copy()
+    if df_sup is not None and "SUPERVISOR" in df_sup.columns:
+        supervisores = df_sup["SUPERVISOR"].unique()
+    else:
+        supervisores = []
+
+    # ── Filtros ────────────────────────────────────
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        lojas = ["Todas"] + sorted(df_a["LOJA"].unique().tolist())
+        filt_loja = st.selectbox("Loja", lojas, key="analise_loja")
+    with col2:
+        if "REGIAO" in df_a.columns:
+            regioes = ["Todas"] + sorted(df_a["REGIAO"].unique().tolist())
+            filt_reg = st.selectbox(
+                "Regiao", regioes, key="analise_regiao"
+            )
+        else:
+            filt_reg = "Todas"
+    with col3:
+        status_opts = ["Todos"] + sorted(
+            [str(x) for x in df_a["STATUS_BANCO"].unique() if pd.notna(x)]
+        )
+        filt_status = st.selectbox(
+            "Status Banco", status_opts, key="analise_status"
+        )
+
+    if filt_loja != "Todas":
+        df_a = df_a[df_a["LOJA"] == filt_loja]
+    if filt_reg != "Todas" and "REGIAO" in df_a.columns:
+        df_a = df_a[df_a["REGIAO"] == filt_reg]
+    if filt_status != "Todos":
+        df_a = df_a[df_a["STATUS_BANCO"] == filt_status]
+
+    st.markdown(f"**{len(df_a):,} propostas em analise**")
+
+    # ── KPIs resumo ───────────────────────────────
+    col1, col2, col3, col4 = st.columns(4)
+    with col1:
+        st.metric("Valor Total", formatar_moeda(df_a["VALOR"].sum()))
+    with col2:
+        st.metric("Quantidade", formatar_numero(len(df_a)))
+    with col3:
+        tk = df_a["VALOR"].sum() / len(df_a) if len(df_a) > 0 else 0
+        st.metric("Ticket Medio", formatar_moeda(tk))
+    with col4:
+        cons = df_a["CONSULTOR"].unique()
+        cons_sem_sup = [c for c in cons if c not in supervisores]
+        st.metric("Consultores", formatar_numero(len(cons_sem_sup)))
+
+    # ── Breakdown por produto ─────────────────────
+    sac.divider(
+        label="Por Produto",
+        icon="box-seam",
+        align="left",
+        color="gray",
+    )
+
+    if "grupo_dashboard" in df_a.columns:
+        df_prod = (
+            df_a[df_a["grupo_dashboard"].notna()]
+            .groupby("grupo_dashboard")
+            .agg(
+                Qtd=("VALOR", "count"),
+                Valor=("VALOR", "sum"),
+            )
+            .reset_index()
+            .rename(columns={"grupo_dashboard": "Produto"})
+            .sort_values("Valor", ascending=False)
+        )
+        df_prod["Ticket Medio"] = df_prod.apply(
+            lambda r: r["Valor"] / r["Qtd"] if r["Qtd"] > 0 else 0,
+            axis=1,
+        )
+        exibir_tabela(df_prod, colunas_moeda=["Valor", "Ticket Medio"])
+
+    # ── Breakdown por loja ────────────────────────
+    sac.divider(
+        label="Por Loja",
+        icon="shop",
+        align="left",
+        color="gray",
+    )
+
+    df_loja = (
+        df_a.groupby("LOJA")
+        .agg(
+            Qtd=("VALOR", "count"),
+            Valor=("VALOR", "sum"),
+        )
+        .reset_index()
+        .rename(columns={"LOJA": "Loja"})
+        .sort_values("Valor", ascending=False)
+    )
+    df_loja["Ticket Medio"] = df_loja.apply(
+        lambda r: r["Valor"] / r["Qtd"] if r["Qtd"] > 0 else 0,
+        axis=1,
+    )
+    exibir_tabela(df_loja, colunas_moeda=["Valor", "Ticket Medio"])
+
+    # ── Tabela detalhada ──────────────────────────
+    sac.divider(
+        label="Detalhamento",
+        icon="table",
+        align="left",
+        color="gray",
+    )
+
+    cols = [
+        "DATA_CADASTRO",
+        "LOJA",
+        "CONSULTOR",
+        "TIPO_PRODUTO",
+        "VALOR",
+        "STATUS_BANCO",
+        "BANCO",
+    ]
+    if "REGIAO" in df_a.columns:
+        cols.insert(2, "REGIAO")
+
+    exibir_tabela(
+        df_a[cols].sort_values("DATA_CADASTRO", ascending=False),
+        colunas_moeda=["VALOR"],
+    )
+
+
 def _render_tab_detalhes(df):
     """Renderiza aba de Detalhes."""
     sac.divider(
@@ -2155,6 +2967,7 @@ def _render_sidebar_visualizar_como(df):
 def main():
     """Funcao principal do dashboard."""
     carregar_estilos_customizados()
+    _aplicar_tema()
 
     # ── Autenticacao ──────────────────────────────
     if not tela_login():
@@ -2163,10 +2976,21 @@ def main():
     _render_header()
 
     with st.sidebar:
-        st.image(
-            "assets/logotipo-mg-cred.png",
-            use_column_width=True,
-        )
+        # ── Toggle de tema ──
+        col_logo, col_theme = st.columns([4, 1])
+        with col_logo:
+            st.image(
+                "assets/logotipo-mg-cred.png",
+                use_column_width=True,
+            )
+        with col_theme:
+            st.markdown("<div style='height:2.5rem'></div>", unsafe_allow_html=True)
+            is_dark = _get_theme() == "dark"
+            icon = "☀️" if is_dark else "🌙"
+            if st.button(icon, key="theme_toggle", help="Alternar tema claro/escuro"):
+                st.session_state["theme"] = "light" if is_dark else "dark"
+                st.rerun()
+
         _render_sidebar_usuario()
 
         sac.divider(
@@ -2209,10 +3033,71 @@ def main():
         st.caption("**PACK**: FGTS + ANT. BEN. + CNC 13o")
 
     try:
-        with st.spinner("Carregando dados..."):
+        with st.status(
+            "Carregando dados...", expanded=False
+        ) as _status:
+            _status.update(label="Carregando contratos pagos...")
             df, df_metas, df_sup = consolidar_dados(mes, ano)
+
+            _status.update(label="Carregando categorias e metas...")
             categorias = carregar_categorias()
             df_metas_produto = carregar_metas_produto(mes, ano)
+
+            _status.update(label="Carregando pipeline em analise...")
+            df_analise = carregar_contratos_em_analise(mes, ano)
+
+            n_pagos = len(df)
+            n_analise = len(df_analise)
+            _status.update(
+                label=(
+                    f"Dados carregados — "
+                    f"{n_pagos:,} pagos · "
+                    f"{n_analise:,} em analise"
+                ).replace(",", "."),
+                state="complete",
+            )
+
+        # ── Diagnostico de pontuacao ─────────────
+        diag = st.session_state.get("_diag_pontuacao")
+        if diag:
+            with st.expander(
+                f"Diagnostico de pontuacao — "
+                f"{diag['com_pontos_mapeados']}/{diag['total_contratos']} "
+                f"contratos com pontos",
+                expanded=False,
+            ):
+                c1, c2, c3 = st.columns(3)
+                c1.metric("Total contratos", diag["total_contratos"])
+                c2.metric("Sem categoria", diag["sem_categoria"])
+                c3.metric("Com pontos", diag["com_pontos_mapeados"])
+
+                st.markdown("**Categorias nos contratos:**")
+                st.code(
+                    ", ".join(
+                        c for c in diag["categorias_no_contrato"] if c
+                    )
+                    or "(vazio)",
+                )
+
+                st.markdown("**Categorias na pontuacao (RPC):**")
+                st.code(
+                    ", ".join(diag["categorias_na_pontuacao"]) or "(vazio)",
+                )
+
+                st.markdown("**Mapa de pontos:**")
+                st.json(diag["mapa_pontos"])
+
+                # Categorias sem match
+                cats_contrato = {
+                    c for c in diag["categorias_no_contrato"] if c
+                }
+                cats_pontuacao = set(diag["categorias_na_pontuacao"])
+                sem_match = sorted(cats_contrato - cats_pontuacao)
+                if sem_match:
+                    st.warning(
+                        f"**{len(sem_match)} categorias sem pontuacao:** "
+                        + ", ".join(sem_match)
+                    )
 
         # ── Configuracoes (toggle via sidebar) ────
         if st.session_state.get("mostrar_config"):
@@ -2252,14 +3137,28 @@ def main():
                 render_pagina_usuarios()
             return
 
-        if df.empty:
+        if df.empty and df_analise.empty:
             st.warning("Nenhum dado encontrado para o periodo selecionado.")
+            return
+
+        if df.empty:
+            st.info(
+                "Nenhum contrato pago no periodo. "
+                "Exibindo apenas propostas em analise."
+            )
+            df_analise = aplicar_rls(df_analise)
+            criar_cards_pipeline(df_analise, {
+                "total_vendas": 0,
+            })
+            _render_tab_em_analise(df_analise, df_sup)
             return
 
         # ── RLS: filtrar dados por perfil ─────────
         df = aplicar_rls(df)
         df_metas = aplicar_rls_metas(df_metas, df)
         df_sup = aplicar_rls_supervisores(df_sup, df)
+        if not df_analise.empty:
+            df_analise = aplicar_rls(df_analise)
 
         ultima_data = df["DATA"].max()
         dia_atual = ultima_data.day if hasattr(ultima_data, "day") else None
@@ -2294,6 +3193,7 @@ def main():
         df_metas_f = df_metas.copy()
         df_metas_prod_f = df_metas_produto.copy()
         df_sup_f = df_sup.copy()
+        df_analise_f = df_analise.copy()
 
         if filtro_regiao != "Todas" and "REGIAO" in df.columns:
             df_f = df_f[df_f["REGIAO"] == filtro_regiao]
@@ -2303,8 +3203,15 @@ def main():
                 df_metas_prod_f = df_metas_prod_f[df_metas_prod_f["LOJA"].isin(lojas_r)]
             if "REGIAO" in df_sup.columns:
                 df_sup_f = df_sup_f[df_sup_f["REGIAO"] == filtro_regiao]
+            if not df_analise_f.empty and "REGIAO" in df_analise_f.columns:
+                df_analise_f = df_analise_f[df_analise_f["REGIAO"] == filtro_regiao]
 
-        _render_status_bar(len(df_f), ultima_data, filtro_regiao)
+        _render_status_bar(
+            len(df_f),
+            ultima_data,
+            filtro_regiao,
+            num_em_analise=len(df_analise_f),
+        )
 
         # ── Aviso de pontuacao com fallback ───────
         df_pontos = carregar_pontuacao_efetiva(mes, ano)
@@ -2348,6 +3255,7 @@ def main():
             df_sup_f,
         )
         criar_cards_kpis_principais(kpis)
+        criar_cards_pipeline(df_analise_f, kpis)
 
         # ── Navegacao principal ───────────────────
         user = usuario_logado()
@@ -2359,6 +3267,10 @@ def main():
             sac.TabsItem(
                 label="Evolucao",
                 icon="calendar-range",
+            ),
+            sac.TabsItem(
+                label="Em Analise",
+                icon="hourglass-split",
             ),
             sac.TabsItem(
                 label="Detalhes",
@@ -2407,6 +3319,8 @@ def main():
                 mes,
                 kpis,
             )
+        elif tab == "Em Analise":
+            _render_tab_em_analise(df_analise_f, df_sup_f)
         elif tab == "Detalhes":
             _render_tab_detalhes(df_f)
 
