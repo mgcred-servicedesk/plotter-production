@@ -229,8 +229,8 @@ Thumbs.db
 # Ruff
 .ruff_cache/
 
-# Streamlit
-.streamlit/
+# Streamlit — commitar config.toml mas nao secrets
+.streamlit/secrets.toml
 
 # Jupyter outputs
 *.ipynb
