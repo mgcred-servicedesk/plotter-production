@@ -58,348 +58,129 @@ st.set_page_config(
 # SISTEMA DE TEMAS (LIGHT / DARK)
 # ══════════════════════════════════════════════════════
 
-THEMES = {
+# Paleta estendida para graficos Plotly (CSS nao alcanca)
+_CHART_THEME = {
     "light": {
-        "primary": "#2563eb",
-        "bg": "#f8f9fb",
-        "secondary_bg": "#ffffff",
-        "sidebar_bg": "#ffffff",
         "text": "#1a1a2e",
         "text_secondary": "rgba(26,26,46,0.65)",
-        "border": "rgba(26,26,46,0.10)",
-        "shadow": "rgba(26,26,46,0.06)",
-        "shadow_hover": "rgba(26,26,46,0.10)",
-        "card_border": "rgba(26,26,46,0.08)",
-        "hover_bg": "rgba(37,99,235,0.04)",
+        "bg": "rgba(0,0,0,0)",
         "grid": "rgba(128,128,128,0.10)",
         "grid_zero": "rgba(128,128,128,0.15)",
         "tooltip_bg": "rgba(30,30,46,0.92)",
         "tooltip_text": "#ffffff",
-        "scrollbar": "rgba(26,26,46,0.18)",
+        "border": "rgba(26,26,46,0.10)",
     },
     "dark": {
-        "primary": "#3b82f6",
-        "bg": "#0f1117",
-        "secondary_bg": "#1a1c25",
-        "sidebar_bg": "#161820",
         "text": "#e2e4ea",
         "text_secondary": "rgba(226,228,234,0.55)",
-        "border": "rgba(226,228,234,0.08)",
-        "shadow": "rgba(0,0,0,0.20)",
-        "shadow_hover": "rgba(0,0,0,0.35)",
-        "card_border": "rgba(226,228,234,0.06)",
-        "hover_bg": "rgba(59,130,246,0.08)",
+        "bg": "rgba(0,0,0,0)",
         "grid": "rgba(226,228,234,0.06)",
         "grid_zero": "rgba(226,228,234,0.10)",
         "tooltip_bg": "rgba(15,17,23,0.95)",
         "tooltip_text": "#e2e4ea",
-        "scrollbar": "rgba(226,228,234,0.15)",
+        "border": "rgba(226,228,234,0.08)",
     },
+}
+
+# Variaveis CSS por tema (--mg-*)
+_CSS_VARS = {
+    "light": """
+        --mg-primary: #2563eb;
+        --mg-bg: #f8f9fb;
+        --mg-secondary-bg: #ffffff;
+        --mg-sidebar-bg: #ffffff;
+        --mg-text: #1a1a2e;
+        --mg-text-secondary: rgba(26,26,46,0.65);
+        --mg-border: rgba(26,26,46,0.10);
+        --mg-shadow: rgba(26,26,46,0.06);
+        --mg-shadow-hover: rgba(26,26,46,0.10);
+        --mg-card-border: rgba(26,26,46,0.08);
+        --mg-hover-bg: rgba(37,99,235,0.04);
+        --mg-scrollbar: rgba(26,26,46,0.18);
+    """,
+    "dark": """
+        --mg-primary: #3b82f6;
+        --mg-bg: #0f1117;
+        --mg-secondary-bg: #1a1c25;
+        --mg-sidebar-bg: #161820;
+        --mg-text: #e2e4ea;
+        --mg-text-secondary: rgba(226,228,234,0.55);
+        --mg-border: rgba(226,228,234,0.08);
+        --mg-shadow: rgba(0,0,0,0.20);
+        --mg-shadow-hover: rgba(0,0,0,0.35);
+        --mg-card-border: rgba(226,228,234,0.06);
+        --mg-hover-bg: rgba(59,130,246,0.08);
+        --mg-scrollbar: rgba(226,228,234,0.15);
+    """,
 }
 
 
 def _get_theme() -> str:
-    """Retorna o tema atual da session_state."""
+    """Retorna tema ativo (session_state ou localStorage)."""
     return st.session_state.get("theme", "light")
 
 
+def _chart_theme() -> dict:
+    """Retorna paleta de cores para graficos Plotly."""
+    return _CHART_THEME[_get_theme()]
+
+
 def _aplicar_tema():
-    """Injeta CSS que sobrescreve as variaveis do Streamlit."""
-    t = THEMES[_get_theme()]
+    """Injeta CSS custom properties e JS para iframes."""
+    theme = _get_theme()
+    vars_css = _CSS_VARS[theme]
+
+    # CSS custom properties — o CSS file usa var(--mg-*)
     st.markdown(
         f"""<style>
-        /* ── CSS Variables ─────────────────────────── */
-        :root {{
-            --primary-color: {t["primary"]} !important;
-            --background-color: {t["bg"]} !important;
-            --secondary-background-color: {t["secondary_bg"]} !important;
-            --text-color: {t["text"]} !important;
+        :root {{ {vars_css}
+            --primary-color: var(--mg-primary) !important;
+            --background-color: var(--mg-bg) !important;
+            --secondary-background-color: var(--mg-secondary-bg) !important;
+            --text-color: var(--mg-text) !important;
         }}
-
-        /* ── Global reset — catch-all ──────────────── */
-        html, body, [data-testid="stAppViewContainer"],
-        [data-testid="stApp"],
-        .main, .main .block-container,
-        .stApp {{
-            background-color: {t["bg"]} !important;
-            color: {t["text"]} !important;
+        html, body, .stApp,
+        [data-testid="stAppViewContainer"],
+        .main, .main .block-container {{
+            background-color: var(--mg-bg) !important;
+            color: var(--mg-text) !important;
         }}
-
-        /* ── Sidebar ───────────────────────────────── */
-        section[data-testid="stSidebar"],
-        section[data-testid="stSidebar"] > div,
-        section[data-testid="stSidebar"] > div > div {{
-            background-color: {t["sidebar_bg"]} !important;
-            color: {t["text"]} !important;
-        }}
-
-        /* ── Header / toolbar / bottom ─────────────── */
-        [data-testid="stHeader"],
-        header {{
-            background-color: {t["bg"]} !important;
+        [data-testid="stHeader"], header {{
+            background-color: var(--mg-bg) !important;
         }}
         [data-testid="stBottomBlockContainer"] {{
-            background-color: {t["bg"]} !important;
+            background-color: var(--mg-bg) !important;
         }}
-
-        /* ── All text ──────────────────────────────── */
-        p, span, label, li, td, th,
-        h1, h2, h3, h4, h5, h6,
-        [class*="St"] {{
-            color: {t["text"]} !important;
-        }}
-        .stCaption, small {{
-            color: {t["text_secondary"]} !important;
-        }}
-
-        /* ── Metric cards ──────────────────────────── */
-        [data-testid="stMetric"] {{
-            background-color: {t["secondary_bg"]} !important;
-            border-color: {t["card_border"]} !important;
-            box-shadow: 0 2px 8px {t["shadow"]} !important;
-        }}
-        [data-testid="stMetric"]:hover {{
-            box-shadow: 0 8px 24px {t["shadow_hover"]} !important;
-        }}
-        [data-testid="stMetricLabel"] > div,
-        [data-testid="stMetricLabel"] p {{
-            color: {t["text_secondary"]} !important;
-            opacity: 1 !important;
-        }}
-        [data-testid="stMetricValue"] > div {{
-            color: {t["text"]} !important;
-        }}
-
-        /* ── Inputs: selectbox, text, number ─────── */
-        [data-testid="stSelectbox"] > div > div,
-        [data-testid="stTextInput"] > div > div,
-        [data-testid="stNumberInput"] > div > div,
-        [data-baseweb="select"] > div,
-        [data-baseweb="input"] {{
-            background-color: {t["secondary_bg"]} !important;
-            color: {t["text"]} !important;
-            border-color: {t["border"]} !important;
-        }}
-        [data-testid="stSelectbox"] svg,
-        [data-baseweb="select"] svg {{
-            fill: {t["text"]} !important;
-        }}
-
-        /* ── Dropdowns / popovers ──────────────────── */
-        [data-baseweb="popover"],
-        [data-baseweb="popover"] > div,
-        [data-baseweb="menu"],
-        [data-baseweb="list"],
-        [role="listbox"] {{
-            background-color: {t["secondary_bg"]} !important;
-            border-color: {t["border"]} !important;
-            color: {t["text"]} !important;
-        }}
-        [data-baseweb="menu"] li,
-        [role="option"] {{
-            color: {t["text"]} !important;
-            background-color: {t["secondary_bg"]} !important;
-        }}
-        [data-baseweb="menu"] li:hover,
-        [role="option"]:hover {{
-            background-color: {t["hover_bg"]} !important;
-        }}
-        [role="option"][aria-selected="true"] {{
-            background-color: {t["hover_bg"]} !important;
-        }}
-
-        /* ── Buttons ───────────────────────────────── */
-        .stButton > button,
-        button[kind="secondary"] {{
-            background-color: {t["secondary_bg"]} !important;
-            color: {t["text"]} !important;
-            border-color: {t["border"]} !important;
-        }}
-        .stButton > button:hover,
-        button[kind="secondary"]:hover {{
-            background-color: {t["hover_bg"]} !important;
-            border-color: {t["primary"]} !important;
-            color: {t["primary"]} !important;
-        }}
-
-        /* ── st.status ─────────────────────────────── */
-        [data-testid="stStatusWidget"],
-        [data-testid="stStatusWidget"] > details,
-        [data-testid="stStatusWidget"] > details > div {{
-            background-color: {t["secondary_bg"]} !important;
-            border-color: {t["card_border"]} !important;
-            color: {t["text"]} !important;
-        }}
-        [data-testid="stStatusWidget"] summary,
-        [data-testid="stStatusWidget"] summary * {{
-            color: {t["text"]} !important;
-        }}
-
-        /* ── Expanders ─────────────────────────────── */
-        [data-testid="stExpander"],
-        [data-testid="stExpander"] > details,
-        [data-testid="stExpander"] > details > div,
-        [data-testid="stExpander"] > details > summary {{
-            background-color: {t["secondary_bg"]} !important;
-            border-color: {t["card_border"]} !important;
-            color: {t["text"]} !important;
-        }}
-
-        /* ── Tables / DataFrames ───────────────────── */
-        [data-testid="stDataFrame"],
-        [data-testid="stTable"],
-        .stDataFrame, table {{
-            border-color: {t["card_border"]} !important;
-        }}
-        table th {{
-            background-color: {t["secondary_bg"]} !important;
-        }}
-
-        /* ── Plotly charts ─────────────────────────── */
-        [data-testid="stPlotlyChart"] {{
-            border-color: {t["card_border"]} !important;
-            box-shadow: 0 1px 3px {t["shadow"]} !important;
-        }}
-
-        /* ── Streamlit native tabs ─────────────────── */
-        [data-testid="stTabs"],
-        [data-testid="stTabs"] > div {{
-            background-color: transparent !important;
-        }}
-        [data-testid="stTabs"] button {{
-            color: {t["text_secondary"]} !important;
-            background-color: transparent !important;
-        }}
-        [data-testid="stTabs"] button[aria-selected="true"] {{
-            color: {t["primary"]} !important;
-        }}
-
-        /* ── Ant Design: tabs (sac.tabs) ───────────── */
-        .ant-tabs,
-        .ant-tabs-nav,
-        .ant-tabs-content,
-        .ant-tabs-content-holder,
-        .ant-tabs-tabpane {{
-            background-color: transparent !important;
-            color: {t["text"]} !important;
-        }}
-        .ant-tabs-tab {{
-            color: {t["text_secondary"]} !important;
-            background-color: transparent !important;
-        }}
-        .ant-tabs-tab:hover {{
-            color: {t["text"]} !important;
-        }}
-        .ant-tabs-tab-active,
-        .ant-tabs-tab-active .ant-tabs-tab-btn {{
-            color: {t["primary"]} !important;
-        }}
-        .ant-tabs-tab-btn {{
-            color: inherit !important;
-        }}
-        .ant-tabs-nav::before {{
-            border-color: {t["border"]} !important;
-        }}
-        .ant-tabs-ink-bar {{
-            background: {t["primary"]} !important;
-        }}
-        /* Outline variant */
-        .ant-tabs-card > .ant-tabs-nav .ant-tabs-tab {{
-            background-color: transparent !important;
-            border-color: {t["border"]} !important;
-        }}
-        .ant-tabs-card > .ant-tabs-nav .ant-tabs-tab-active {{
-            background-color: {t["secondary_bg"]} !important;
-            border-color: {t["primary"]} !important;
-        }}
-
-        /* ── Ant Design: dividers (sac.divider) ────── */
-        .ant-divider,
-        .ant-divider-horizontal {{
-            color: {t["text_secondary"]} !important;
-            border-color: {t["border"]} !important;
-        }}
-        .ant-divider-inner-text {{
-            color: {t["text_secondary"]} !important;
-            background-color: transparent !important;
-        }}
-
-        /* ── Ant Design: segmented (sac.segmented) ── */
-        .ant-segmented {{
-            background-color: {t["bg"]} !important;
-            color: {t["text"]} !important;
-        }}
-        .ant-segmented-item {{
-            color: {t["text_secondary"]} !important;
-        }}
-        .ant-segmented-item:hover {{
-            color: {t["text"]} !important;
-        }}
-        .ant-segmented-item-selected {{
-            background-color: {t["secondary_bg"]} !important;
-            color: {t["primary"]} !important;
-            box-shadow: 0 1px 4px {t["shadow"]} !important;
-        }}
-        .ant-segmented-thumb {{
-            background-color: {t["secondary_bg"]} !important;
-        }}
-
-        /* ── Alerts ────────────────────────────────── */
-        [data-testid="stAlert"] {{
-            background-color: {t["secondary_bg"]} !important;
-            color: {t["text"]} !important;
-        }}
-
-        /* ── Scrollbar ─────────────────────────────── */
-        ::-webkit-scrollbar-thumb {{
-            background: {t["scrollbar"]} !important;
-        }}
-
-        /* ── Custom HTML components ────────────────── */
-        .status-bar {{
-            background-color: {t["secondary_bg"]} !important;
-            border-color: {t["card_border"]} !important;
-            color: {t["text"]} !important;
-        }}
-        .dashboard-header h1 {{
-            color: {t["text"]} !important;
-        }}
-        .dashboard-header p {{
-            color: {t["text_secondary"]} !important;
-            opacity: 1 !important;
-        }}
-
-        /* ── Separators ────────────────────────────── */
-        hr {{
-            background: {t["border"]} !important;
-        }}
-
-        /* ── iframe containers (sac components) ────── */
-        iframe[title*="streamlit_antd_components"] {{
-            background-color: transparent !important;
+        section[data-testid="stSidebar"],
+        section[data-testid="stSidebar"] > div {{
+            background-color: var(--mg-sidebar-bg) !important;
         }}
         </style>""",
         unsafe_allow_html=True,
     )
 
-    # Injetar JS para tematizar iframes (sac components).
-    # st.markdown sanitiza <script>, entao usamos
-    # st.components.v1.html com height=0.
+    # JS: persistir tema + tematizar iframes (sac components)
     import streamlit.components.v1 as components
 
+    is_dark = "true" if theme == "dark" else "false"
     components.html(
         f"""<script>
         (function() {{
             const p = window.parent;
+            const isDark = {is_dark};
+            const tc = isDark ? '#e2e4ea' : '#1a1a2e';
+            const pc = isDark ? '#3b82f6' : '#2563eb';
+            const sb = isDark ? '#1a1c25' : '#ffffff';
+            const bg = isDark ? '#0f1117' : '#f8f9fb';
+
+            localStorage.setItem('mgcred_theme', isDark ? 'dark' : 'light');
+
             const VARS = {{
-                '--primary-color': '{t["primary"]}',
-                '--background-color': '{t["bg"]}',
-                '--secondary-background-color': '{t["secondary_bg"]}',
-                '--text-color': '{t["text"]}',
+                '--primary-color': pc,
+                '--background-color': bg,
+                '--secondary-background-color': sb,
+                '--text-color': tc,
             }};
-            const tc = VARS['--text-color'];
-            const pc = VARS['--primary-color'];
-            const sb = VARS['--secondary-background-color'];
 
             function inject(iframe) {{
                 try {{
@@ -409,7 +190,6 @@ def _aplicar_tema():
                     const root = doc.documentElement;
                     for (const [k, v] of Object.entries(VARS))
                         root.style.setProperty(k, v);
-
                     let s = doc.getElementById('mgcred-theme');
                     if (!s) {{
                         s = doc.createElement('style');
@@ -756,7 +536,11 @@ def carregar_pontuacao_efetiva(
 
 @st.cache_data(ttl=120)
 def carregar_metas(mes: int, ano: int) -> pd.DataFrame:
-    """Carrega metas normalizadas do periodo."""
+    """Carrega metas GERAL/LOJA do periodo.
+
+    Filtra server-side para evitar corte por
+    paginacao (limite padrao 1000 registros).
+    """
     periodo = carregar_periodo(mes, ano)
     if not periodo:
         return pd.DataFrame()
@@ -764,13 +548,20 @@ def carregar_metas(mes: int, ano: int) -> pd.DataFrame:
     resp = (
         _sb()
         .table("metas")
-        .select("id, produto, escopo, nivel, valor, lojas(nome)")
+        .select(
+            "id, produto, escopo, nivel, valor, "
+            "lojas(nome)"
+        )
         .eq("periodo_id", periodo["id"])
+        .eq("produto", "GERAL")
+        .eq("escopo", "LOJA")
         .execute()
     )
 
     if not resp.data:
-        return pd.DataFrame()
+        return pd.DataFrame(
+            columns=["LOJA", "META_PRATA", "META_OURO"]
+        )
 
     rows = []
     for m in resp.data:
@@ -778,19 +569,12 @@ def carregar_metas(mes: int, ano: int) -> pd.DataFrame:
         rows.append(
             {
                 "LOJA": loja.get("nome", ""),
-                "produto": m["produto"],
-                "escopo": m["escopo"],
                 "nivel": m.get("nivel"),
                 "valor": float(m.get("valor", 0)),
             }
         )
 
-    df = pd.DataFrame(rows)
-
-    # Pivotar metas GERAL/LOJA com niveis para
-    # manter compatibilidade com o formato antigo
-    # (colunas META_PRATA, META_OURO por loja)
-    df_geral_loja = df[(df["produto"] == "GERAL") & (df["escopo"] == "LOJA")].copy()
+    df_geral_loja = pd.DataFrame(rows)
 
     if not df_geral_loja.empty:
         df_pivot = df_geral_loja.pivot_table(
@@ -2045,7 +1829,7 @@ def criar_cards_pipeline(df_analise, kpis_pagos):
 
 def _template():
     """Configuracao base para graficos Plotly."""
-    t = THEMES[_get_theme()]
+    ct = _chart_theme()
     return {
         "paper_bgcolor": "rgba(0,0,0,0)",
         "plot_bgcolor": "rgba(0,0,0,0)",
@@ -2054,7 +1838,7 @@ def _template():
                 "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif"
             ),
             size=12,
-            color=t["text"],
+            color=ct["text"],
         ),
         "title_font": dict(size=16, weight=700),
         "legend": dict(
@@ -2063,23 +1847,23 @@ def _template():
             y=1.02,
             xanchor="right",
             x=1,
-            font=dict(size=11, color=t["text"]),
+            font=dict(size=11, color=ct["text"]),
             bgcolor="rgba(0,0,0,0)",
         ),
         "margin": dict(l=60, r=30, t=60, b=50),
         "hoverlabel": dict(
-            bgcolor=t["tooltip_bg"],
-            font_color=t["tooltip_text"],
+            bgcolor=ct["tooltip_bg"],
+            font_color=ct["tooltip_text"],
             font_size=12,
-            bordercolor=t["border"],
+            bordercolor=ct["border"],
         ),
     }
 
 
 def _aplicar(fig, t):
     """Aplica template a um grafico."""
-    th = THEMES[_get_theme()]
-    text_color = th["text"]
+    ct = _chart_theme()
+    text_color = ct["text"]
     fig.update_layout(
         paper_bgcolor=t["paper_bgcolor"],
         plot_bgcolor=t["plot_bgcolor"],
@@ -2092,14 +1876,14 @@ def _aplicar(fig, t):
     for ann in fig.layout.annotations:
         ann.font.color = text_color
     fig.update_xaxes(
-        gridcolor=th["grid"],
-        zerolinecolor=th["grid_zero"],
+        gridcolor=ct["grid"],
+        zerolinecolor=ct["grid_zero"],
         tickfont_color=text_color,
         title_font_color=text_color,
     )
     fig.update_yaxes(
-        gridcolor=th["grid"],
-        zerolinecolor=th["grid_zero"],
+        gridcolor=ct["grid"],
+        zerolinecolor=ct["grid_zero"],
         tickfont_color=text_color,
         title_font_color=text_color,
     )
@@ -2195,7 +1979,7 @@ def criar_grafico_produtos(df_produtos):
             marker=dict(
                 size=10,
                 color=CHART_COLORS["rose"],
-                line=dict(width=2, color=THEMES[_get_theme()]["bg"]),
+                line=dict(width=2, color=_chart_theme()["bg"]),
             ),
             line=dict(width=3, color=CHART_COLORS["rose"]),
         ),
@@ -2238,10 +2022,11 @@ def criar_grafico_produtos(df_produtos):
     )
 
     fig.update_layout(
-        height=720,
+        height=640,
         showlegend=True,
         title_text="Analise Completa de Produtos",
         bargap=0.2,
+        autosize=True,
     )
     return _aplicar(fig, t)
 
@@ -2280,7 +2065,7 @@ def criar_grafico_evolucao(df_evolucao, kpis):
             marker=dict(
                 size=5,
                 color=CHART_COLORS["primary_dark"],
-                line=dict(width=1, color=THEMES[_get_theme()]["bg"]),
+                line=dict(width=1, color=_chart_theme()["bg"]),
             ),
             line=dict(width=3, color=CHART_COLORS["primary_dark"]),
             fill="tozeroy",
@@ -2312,9 +2097,10 @@ def criar_grafico_evolucao(df_evolucao, kpis):
     )
 
     fig.update_layout(
-        height=720,
+        height=640,
         showlegend=True,
         hovermode="x unified",
+        autosize=True,
     )
     return _aplicar(fig, t)
 
@@ -2368,10 +2154,11 @@ def criar_grafico_regional(df_regioes):
     )
 
     fig.update_layout(
-        height=500,
+        height=460,
         showlegend=False,
         title_text="Analise por Regiao",
         bargap=0.25,
+        autosize=True,
     )
     return _aplicar(fig, t)
 
@@ -2398,8 +2185,9 @@ def criar_grafico_media_regiao(df_media):
         title="Media de Pontos por Consultor por Regiao",
         xaxis_title="Regiao",
         yaxis_title="Pontos Medio",
-        height=420,
+        height=400,
         bargap=0.3,
+        autosize=True,
     )
     return _aplicar(fig, t)
 
@@ -2506,7 +2294,6 @@ def _render_tab_rankings(df, df_metas, df_sup):
         ],
         align="start",
         variant="outline",
-        use_container_width=True,
     )
 
     if menu == "Lojas":
@@ -2626,7 +2413,6 @@ def _render_tab_analiticos(df, df_sup):
         ],
         align="start",
         variant="outline",
-        use_container_width=True,
     )
 
     if menu == "Consultores por Produto":
@@ -3094,7 +2880,7 @@ def main():
     _render_header()
 
     with st.sidebar:
-        # ── Toggle de tema ──
+        # ── Logo + toggle de tema ──
         col_logo, col_theme = st.columns([4, 1])
         with col_logo:
             st.image(
@@ -3102,11 +2888,16 @@ def main():
                 width="stretch",
             )
         with col_theme:
-            st.markdown("<div style='height:2.5rem'></div>", unsafe_allow_html=True)
             is_dark = _get_theme() == "dark"
-            icon = "☀️" if is_dark else "🌙"
-            if st.button(icon, key="theme_toggle", help="Alternar tema claro/escuro"):
-                st.session_state["theme"] = "light" if is_dark else "dark"
+            icon = ":material/light_mode:" if is_dark else ":material/dark_mode:"
+            if st.button(
+                icon,
+                key="theme_toggle",
+                help="Alternar tema claro/escuro",
+                width="stretch",
+            ):
+                new_theme = "light" if is_dark else "dark"
+                st.session_state["theme"] = new_theme
                 st.rerun()
 
         _render_sidebar_usuario()
@@ -3163,6 +2954,17 @@ def main():
 
             _status.update(label="Carregando pipeline em analise...")
             df_analise = carregar_contratos_em_analise(mes, ano)
+
+            # Zerar VALOR de produtos que nao contam
+            # valor (emissoes de cartao, seguros)
+            if (
+                not df_analise.empty
+                and "conta_valor" in df_analise.columns
+            ):
+                df_analise.loc[
+                    df_analise["conta_valor"] == False,  # noqa
+                    "VALOR",
+                ] = 0
 
             n_pagos = len(df)
             n_analise = len(df_analise)
@@ -3413,7 +3215,6 @@ def main():
             items=tab_items,
             align="center",
             variant="outline",
-            use_container_width=True,
         )
 
         if tab == "Produtos":

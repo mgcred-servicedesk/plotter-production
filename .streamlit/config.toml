@@ -1,11 +1,5 @@
 # Configuracao do Streamlit para deploy no Streamlit Cloud
-
-[theme]
-font = "sans serif"
-primaryColor = "#2563EB"
-backgroundColor = "#E8EDF3"
-secondaryBackgroundColor = "#FFFFFF"
-textColor = "#0F172A"
+# Sem [theme] fixo — permite light/dark via toggle customizado
 
 [server]
 headless = true

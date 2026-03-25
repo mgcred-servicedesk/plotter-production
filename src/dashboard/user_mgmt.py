@@ -72,7 +72,7 @@ def _render_lista_usuarios():
 
     st.dataframe(
         df,
-        use_container_width=True,
+        width="stretch",
         hide_index=True,
     )
 
@@ -164,7 +164,7 @@ def _render_criar_usuario(regioes: list[str], lojas: list[str]):
                 )
 
         submit = st.form_submit_button(
-            "Criar Usuario", use_container_width=True,
+            "Criar Usuario", width="stretch",
         )
 
     if submit:

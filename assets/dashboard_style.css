@@ -1,12 +1,25 @@
 /*
  * Dashboard Style - MGCred
- * Estilos de layout e tipografia.
- * Cores sao controladas pelo sistema de temas em Python
- * (THEMES dict + _aplicar_tema).
+ * Todas as cores usam CSS custom properties (--mg-*)
+ * definidas por _aplicar_tema() em app.py.
  */
 
-/* ── KPI Metric Cards ─────────────────────────────── */
+/* ── Text ────────────────────────────────────────── */
+p, span, label, li, td, th,
+h1, h2, h3, h4, h5, h6,
+[class*="St"] {
+    color: var(--mg-text) !important;
+}
+
+.stCaption, small {
+    color: var(--mg-text-secondary) !important;
+}
+
+/* ── KPI Metric Cards ────────────────────────────── */
 [data-testid="stMetric"] {
+    background-color: var(--mg-secondary-bg) !important;
+    border-color: var(--mg-card-border) !important;
+    box-shadow: 0 2px 8px var(--mg-shadow) !important;
     padding: 1.25rem 1rem;
     border-radius: 10px;
     border-width: 1px;
@@ -16,11 +29,14 @@
 
 [data-testid="stMetric"]:hover {
     transform: translateY(-2px);
+    box-shadow: 0 8px 24px var(--mg-shadow-hover) !important;
 }
 
 /* Label */
 [data-testid="stMetricLabel"] > div,
 [data-testid="stMetricLabel"] p {
+    color: var(--mg-text-secondary) !important;
+    opacity: 1 !important;
     font-weight: 600 !important;
     font-size: 0.82rem !important;
     text-transform: uppercase;
@@ -29,6 +45,7 @@
 
 /* Value */
 [data-testid="stMetricValue"] > div {
+    color: var(--mg-text) !important;
     font-weight: 800 !important;
     font-size: 1.5rem !important;
     letter-spacing: -0.02em;
@@ -54,37 +71,89 @@ div[data-testid="column"]:nth-child(4) [data-testid="stMetric"] {
     border-left: 4px solid #059669;
 }
 
-/* ── Section Titles ───────────────────────────────── */
-.main h3 {
-    font-weight: 700 !important;
-    font-size: 1.05rem !important;
-    border-bottom: 2px solid var(--primary-color);
-    padding-bottom: 0.4rem;
-    margin-top: 1.5rem !important;
-    margin-bottom: 1.25rem !important;
+/* ── Inputs: selectbox, text, number ─────────────── */
+[data-testid="stSelectbox"] > div > div,
+[data-testid="stTextInput"] > div > div,
+[data-testid="stNumberInput"] > div > div,
+[data-baseweb="select"] > div,
+[data-baseweb="input"] {
+    background-color: var(--mg-secondary-bg) !important;
+    color: var(--mg-text) !important;
+    border-color: var(--mg-border) !important;
 }
 
-/* ── Separators ───────────────────────────────────── */
-hr {
-    border: none !important;
-    height: 1px !important;
-    margin: 1.5rem 0 !important;
+[data-testid="stSelectbox"] svg,
+[data-baseweb="select"] svg {
+    fill: var(--mg-text) !important;
 }
 
-/* ── Data Tables ──────────────────────────────────── */
-[data-testid="stDataFrame"] {
-    border-radius: 10px;
-    overflow: hidden;
+/* ── Dropdowns / popovers ────────────────────────── */
+[data-baseweb="popover"],
+[data-baseweb="popover"] > div,
+[data-baseweb="menu"],
+[data-baseweb="list"],
+[role="listbox"] {
+    background-color: var(--mg-secondary-bg) !important;
+    border-color: var(--mg-border) !important;
+    color: var(--mg-text) !important;
 }
 
-/* ── Plotly Charts ────────────────────────────────── */
-[data-testid="stPlotlyChart"] {
-    border-radius: 10px;
-    padding: 0.5rem;
+[data-baseweb="menu"] li,
+[role="option"] {
+    color: var(--mg-text) !important;
+    background-color: var(--mg-secondary-bg) !important;
 }
 
-/* ── Expanders ────────────────────────────────────── */
-[data-testid="stExpander"] {
+[data-baseweb="menu"] li:hover,
+[role="option"]:hover {
+    background-color: var(--mg-hover-bg) !important;
+}
+
+[role="option"][aria-selected="true"] {
+    background-color: var(--mg-hover-bg) !important;
+}
+
+/* ── Buttons ─────────────────────────────────────── */
+.stButton > button,
+button[kind="secondary"] {
+    background-color: var(--mg-secondary-bg) !important;
+    color: var(--mg-text) !important;
+    border-color: var(--mg-border) !important;
+    border-radius: 8px !important;
+    font-weight: 600 !important;
+    transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+.stButton > button:hover,
+button[kind="secondary"]:hover {
+    background-color: var(--mg-hover-bg) !important;
+    border-color: var(--mg-primary) !important;
+    color: var(--mg-primary) !important;
+    transform: translateY(-1px);
+}
+
+/* ── st.status ───────────────────────────────────── */
+[data-testid="stStatusWidget"],
+[data-testid="stStatusWidget"] > details,
+[data-testid="stStatusWidget"] > details > div {
+    background-color: var(--mg-secondary-bg) !important;
+    border-color: var(--mg-card-border) !important;
+    color: var(--mg-text) !important;
+}
+
+[data-testid="stStatusWidget"] summary,
+[data-testid="stStatusWidget"] summary * {
+    color: var(--mg-text) !important;
+}
+
+/* ── Expanders ───────────────────────────────────── */
+[data-testid="stExpander"],
+[data-testid="stExpander"] > details,
+[data-testid="stExpander"] > details > div,
+[data-testid="stExpander"] > details > summary {
+    background-color: var(--mg-secondary-bg) !important;
+    border-color: var(--mg-card-border) !important;
+    color: var(--mg-text) !important;
     border-radius: 10px !important;
 }
 
@@ -92,24 +161,158 @@ hr {
     font-weight: 600 !important;
 }
 
-/* ── Alerts ───────────────────────────────────────── */
+/* ── Tables / DataFrames ─────────────────────────── */
+[data-testid="stDataFrame"],
+[data-testid="stTable"],
+.stDataFrame, table {
+    border-color: var(--mg-card-border) !important;
+}
+
+[data-testid="stDataFrame"] {
+    border-radius: 10px;
+    overflow: hidden;
+}
+
+table th {
+    background-color: var(--mg-secondary-bg) !important;
+}
+
+/* ── Plotly Charts ───────────────────────────────── */
+[data-testid="stPlotlyChart"] {
+    border-radius: 10px;
+    padding: 0.5rem;
+    border-color: var(--mg-card-border) !important;
+    box-shadow: 0 1px 3px var(--mg-shadow) !important;
+}
+
+/* ── Streamlit native tabs ───────────────────────── */
+[data-testid="stTabs"],
+[data-testid="stTabs"] > div {
+    background-color: transparent !important;
+}
+
+[data-testid="stTabs"] button {
+    color: var(--mg-text-secondary) !important;
+    background-color: transparent !important;
+}
+
+[data-testid="stTabs"] button[aria-selected="true"] {
+    color: var(--mg-primary) !important;
+}
+
+/* ── Ant Design: tabs (sac.tabs) ─────────────────── */
+.ant-tabs,
+.ant-tabs-nav,
+.ant-tabs-content,
+.ant-tabs-content-holder,
+.ant-tabs-tabpane {
+    background-color: transparent !important;
+    color: var(--mg-text) !important;
+}
+
+.ant-tabs-tab {
+    color: var(--mg-text-secondary) !important;
+    background-color: transparent !important;
+}
+
+.ant-tabs-tab:hover {
+    color: var(--mg-text) !important;
+}
+
+.ant-tabs-tab-active,
+.ant-tabs-tab-active .ant-tabs-tab-btn {
+    color: var(--mg-primary) !important;
+}
+
+.ant-tabs-tab-btn {
+    color: inherit !important;
+}
+
+.ant-tabs-nav::before {
+    border-color: var(--mg-border) !important;
+}
+
+.ant-tabs-ink-bar {
+    background: var(--mg-primary) !important;
+}
+
+/* Outline variant */
+.ant-tabs-card > .ant-tabs-nav .ant-tabs-tab {
+    background-color: transparent !important;
+    border-color: var(--mg-border) !important;
+}
+
+.ant-tabs-card > .ant-tabs-nav .ant-tabs-tab-active {
+    background-color: var(--mg-secondary-bg) !important;
+    border-color: var(--mg-primary) !important;
+}
+
+/* ── Ant Design: dividers (sac.divider) ──────────── */
+.ant-divider,
+.ant-divider-horizontal {
+    color: var(--mg-text-secondary) !important;
+    border-color: var(--mg-border) !important;
+}
+
+.ant-divider-inner-text {
+    color: var(--mg-text-secondary) !important;
+    background-color: transparent !important;
+}
+
+/* ── Ant Design: segmented (sac.segmented) ───────── */
+.ant-segmented {
+    background-color: var(--mg-bg) !important;
+    color: var(--mg-text) !important;
+}
+
+.ant-segmented-item {
+    color: var(--mg-text-secondary) !important;
+}
+
+.ant-segmented-item:hover {
+    color: var(--mg-text) !important;
+}
+
+.ant-segmented-item-selected {
+    background-color: var(--mg-secondary-bg) !important;
+    color: var(--mg-primary) !important;
+    box-shadow: 0 1px 4px var(--mg-shadow) !important;
+}
+
+.ant-segmented-thumb {
+    background-color: var(--mg-secondary-bg) !important;
+}
+
+/* ── Alerts ──────────────────────────────────────── */
 [data-testid="stAlert"] {
+    background-color: var(--mg-secondary-bg) !important;
+    color: var(--mg-text) !important;
     border-radius: 10px !important;
 }
 
-/* ── Buttons ──────────────────────────────────────── */
-.stButton > button {
-    border-radius: 8px !important;
-    font-weight: 600 !important;
-    transition: transform 0.15s ease;
+/* ── Section Titles ──────────────────────────────── */
+.main h3 {
+    font-weight: 700 !important;
+    font-size: 1.05rem !important;
+    border-bottom: 2px solid var(--mg-primary);
+    padding-bottom: 0.4rem;
+    margin-top: 1.5rem !important;
+    margin-bottom: 1.25rem !important;
 }
 
-.stButton > button:hover {
-    transform: translateY(-1px);
+/* ── Separators ──────────────────────────────────── */
+hr {
+    border: none !important;
+    height: 1px !important;
+    background: var(--mg-border) !important;
+    margin: 1.5rem 0 !important;
 }
 
-/* ── Status Bar (custom HTML) ─────────────────────── */
+/* ── Custom HTML: status bar ─────────────────────── */
 .status-bar {
+    background-color: var(--mg-secondary-bg) !important;
+    border-color: var(--mg-card-border) !important;
+    color: var(--mg-text) !important;
     border-radius: 10px;
     padding: 0.75rem 1rem;
     margin-bottom: 1rem;
@@ -133,12 +336,13 @@ hr {
     50% { opacity: 0.4; }
 }
 
-/* ── Dashboard Header (custom HTML) ───────────────── */
+/* ── Custom HTML: dashboard header ───────────────── */
 .dashboard-header {
     padding: 0.5rem 0 0.25rem;
 }
 
 .dashboard-header h1 {
+    color: var(--mg-text) !important;
     font-size: 1.75rem !important;
     font-weight: 800 !important;
     letter-spacing: -0.02em;
@@ -146,10 +350,12 @@ hr {
 }
 
 .dashboard-header p {
+    color: var(--mg-text-secondary) !important;
+    opacity: 1 !important;
     font-size: 0.875rem !important;
 }
 
-/* ── Scrollbar ────────────────────────────────────── */
+/* ── Scrollbar ───────────────────────────────────── */
 ::-webkit-scrollbar {
     width: 6px;
     height: 6px;
@@ -160,15 +366,142 @@ hr {
 }
 
 ::-webkit-scrollbar-thumb {
+    background: var(--mg-scrollbar) !important;
     border-radius: 3px;
 }
 
-/* ── Responsive ───────────────────────────────────── */
-@media (max-width: 768px) {
-    [data-testid="stMetric"] {
-        padding: 1rem;
+/* ── iframe containers (sac components) ──────────── */
+iframe[title*="streamlit_antd_components"] {
+    background-color: transparent !important;
+}
+
+/* ── Responsive: Tablet (<=1024px) ───────────────── */
+@media (max-width: 1024px) {
+    .main .block-container {
+        padding-left: 1rem !important;
+        padding-right: 1rem !important;
     }
+
+    [data-testid="stMetric"] {
+        padding: 1rem 0.75rem;
+    }
+
     [data-testid="stMetricValue"] > div {
+        font-size: 1.3rem !important;
+    }
+
+    [data-testid="stMetricLabel"] > div,
+    [data-testid="stMetricLabel"] p {
+        font-size: 0.75rem !important;
+    }
+
+    /* Charts reduzem altura */
+    [data-testid="stPlotlyChart"] {
+        padding: 0.25rem;
+    }
+
+    .dashboard-header h1 {
+        font-size: 1.5rem !important;
+    }
+}
+
+/* ── Responsive: Mobile (<=768px) ────────────────── */
+@media (max-width: 768px) {
+    .main .block-container {
+        padding-left: 0.5rem !important;
+        padding-right: 0.5rem !important;
+        max-width: 100% !important;
+    }
+
+    /* KPI cards empilham verticalmente via Streamlit,
+       mas garantir que nao fiquem apertados */
+    [data-testid="stMetric"] {
+        padding: 0.875rem 0.75rem;
+        border-radius: 8px;
+    }
+
+    [data-testid="stMetricValue"] > div {
+        font-size: 1.15rem !important;
+    }
+
+    [data-testid="stMetricLabel"] > div,
+    [data-testid="stMetricLabel"] p {
+        font-size: 0.7rem !important;
+        letter-spacing: 0.03em;
+    }
+
+    [data-testid="stMetric"] [data-testid="stMetricDelta"] {
+        font-size: 0.72rem !important;
+    }
+
+    /* Faixa lateral mais fina em mobile */
+    div[data-testid="column"]:nth-child(1) [data-testid="stMetric"],
+    div[data-testid="column"]:nth-child(2) [data-testid="stMetric"],
+    div[data-testid="column"]:nth-child(3) [data-testid="stMetric"],
+    div[data-testid="column"]:nth-child(4) [data-testid="stMetric"] {
+        border-left-width: 3px;
+    }
+
+    .dashboard-header h1 {
         font-size: 1.25rem !important;
+    }
+
+    .dashboard-header p {
+        font-size: 0.75rem !important;
+    }
+
+    .status-bar {
+        flex-wrap: wrap;
+        font-size: 0.78rem;
+        padding: 0.5rem 0.75rem;
+        gap: 0.5rem;
+    }
+
+    /* Titulos de secao */
+    .main h3 {
+        font-size: 0.95rem !important;
+        margin-top: 1rem !important;
+        margin-bottom: 1rem !important;
+    }
+
+    /* Separadores menores */
+    hr {
+        margin: 1rem 0 !important;
+    }
+
+    /* Tabelas com scroll horizontal */
+    [data-testid="stDataFrame"] {
+        overflow-x: auto;
+    }
+
+    /* Expanders */
+    [data-testid="stExpander"] summary {
+        font-size: 0.875rem !important;
+    }
+
+    /* Buttons */
+    .stButton > button {
+        font-size: 0.82rem !important;
+        padding: 0.4rem 0.75rem !important;
+    }
+}
+
+/* ── Responsive: Small mobile (<=480px) ──────────── */
+@media (max-width: 480px) {
+    .main .block-container {
+        padding-left: 0.25rem !important;
+        padding-right: 0.25rem !important;
+    }
+
+    [data-testid="stMetric"] {
+        padding: 0.75rem 0.5rem;
+    }
+
+    [data-testid="stMetricValue"] > div {
+        font-size: 1rem !important;
+    }
+
+    .dashboard-header h1 {
+        font-size: 1.1rem !important;
     }
 }

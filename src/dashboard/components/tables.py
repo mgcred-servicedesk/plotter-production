@@ -293,7 +293,7 @@ def _exibir_dataframe(
 
     st.dataframe(
         df_fmt,
-        use_container_width=True,
+        width="stretch",
         hide_index=True,
         height=altura,
         column_config=column_config,

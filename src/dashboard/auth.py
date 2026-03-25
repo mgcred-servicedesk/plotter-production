@@ -222,7 +222,7 @@ def tela_login() -> bool:
             )
             submit = st.form_submit_button(
                 "Entrar",
-                use_container_width=True,
+                width="stretch",
             )
 
         if submit:
