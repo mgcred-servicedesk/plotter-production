@@ -37,7 +37,7 @@ def calcular_kpis_gerais(
     
     total_vendas = df['VALOR'].sum()
     total_pontos = df['pontos'].sum()
-    total_transacoes = len(df)
+    total_transacoes = len(df[df['VALOR'] > 0])
     
     meta_prata = 0
     meta_ouro = 0
@@ -81,6 +81,27 @@ def calcular_kpis_gerais(
         else:
             num_consultores = len(consultores_unicos)
 
+    qtd_super_conta = (
+        int(df['is_super_conta'].sum())
+        if 'is_super_conta' in df.columns
+        else 0
+    )
+    qtd_emissao_cartao = (
+        int(df['is_emissao_cartao'].sum())
+        if 'is_emissao_cartao' in df.columns
+        else 0
+    )
+    qtd_bmg_med = (
+        int(df['is_bmg_med'].sum())
+        if 'is_bmg_med' in df.columns
+        else 0
+    )
+    qtd_seguro_vida = (
+        int(df['is_seguro_vida'].sum())
+        if 'is_seguro_vida' in df.columns
+        else 0
+    )
+
     return {
         'total_vendas': total_vendas,
         'total_pontos': total_pontos,
@@ -104,8 +125,14 @@ def calcular_kpis_gerais(
         ),
         'num_consultores': num_consultores,
         'num_regioes': (
-            df['REGIAO'].nunique() if 'REGIAO' in df.columns else 0
-        )
+            df['REGIAO'].nunique()
+            if 'REGIAO' in df.columns
+            else 0
+        ),
+        'qtd_super_conta': qtd_super_conta,
+        'qtd_emissao_cartao': qtd_emissao_cartao,
+        'qtd_bmg_med': qtd_bmg_med,
+        'qtd_seguro_vida': qtd_seguro_vida,
     }
 
 

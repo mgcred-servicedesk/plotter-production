@@ -567,7 +567,7 @@ def carregar_contratos_pagos(
             .select(_select)
             .eq("periodo_id", periodo["id"])
             .or_(
-                "status_pagamento_cliente.eq.PAGO AO CLIENTE,"
+                'status_pagamento_cliente.eq."PAGO AO CLIENTE",'
                 'and(sub_status_banco.eq.Liquidada,'
                 'tipo_operacao.in.("BMG MED",Seguro))'
             )

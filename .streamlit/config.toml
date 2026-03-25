@@ -1,27 +1,15 @@
 # Configuracao do Streamlit para deploy no Streamlit Cloud
-# Tema MGCred - Paleta Slate (Tailwind)
 
 [theme]
 font = "sans serif"
-
-[theme.light]
 primaryColor = "#2563EB"
 backgroundColor = "#E8EDF3"
 secondaryBackgroundColor = "#FFFFFF"
 textColor = "#0F172A"
-borderColor = "#E2E8F0"
-
-[theme.dark]
-primaryColor = "#3B82F6"
-backgroundColor = "#111827"
-secondaryBackgroundColor = "#1F2937"
-textColor = "#F9FAFB"
-borderColor = "#374151"
 
 [server]
 headless = true
 enableCORS = false
-enableXsrfProtection = false
 
 [browser]
 gatherUsageStats = false

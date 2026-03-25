@@ -386,6 +386,36 @@ def criar_cards_kpis_principais(kpis):
             "valor por consultor",
         )
 
+    col1, col2, col3, col4 = st.columns(4)
+
+    with col1:
+        st.metric(
+            "Super Contas",
+            formatar_numero(kpis.get("qtd_super_conta", 0)),
+            "CNCs com subtipo Super Conta",
+        )
+
+    with col2:
+        st.metric(
+            "Emissao de Cartao",
+            formatar_numero(kpis.get("qtd_emissao_cartao", 0)),
+            "quantidade produzida",
+        )
+
+    with col3:
+        st.metric(
+            "BMG Med",
+            formatar_numero(kpis.get("qtd_bmg_med", 0)),
+            "quantidade produzida",
+        )
+
+    with col4:
+        st.metric(
+            "Seguro Vida Familiar",
+            formatar_numero(kpis.get("qtd_seguro_vida", 0)),
+            "quantidade produzida",
+        )
+
 
 # ══════════════════════════════════════════════════════
 # CHART TEMPLATE

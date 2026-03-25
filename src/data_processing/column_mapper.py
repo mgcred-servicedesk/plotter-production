@@ -286,6 +286,7 @@ def identificar_tipo_produto_real(df: pd.DataFrame) -> pd.DataFrame:
     - is_bmg_med: Se é seguro BMG MED
     - is_seguro_vida: Se é seguro Vida Familiar
     - is_emissao_cartao: Se é produto de emissão de cartão
+    - is_super_conta: Se é CNC com subtipo SUPER CONTA
     
     Args:
         df: DataFrame com dados consolidados (após merge com tabelas).
@@ -309,6 +310,13 @@ def identificar_tipo_produto_real(df: pd.DataFrame) -> pd.DataFrame:
         df['is_emissao_cartao'] = df['TIPO OPER.'].isin(['CARTÃO BENEFICIO', 'Venda Pré-Adesão'])
     else:
         df['is_emissao_cartao'] = False
+    
+    if 'SUBTIPO' in df.columns:
+        df['is_super_conta'] = (
+            df['SUBTIPO'].fillna('').str.upper() == 'SUPER CONTA'
+        )
+    else:
+        df['is_super_conta'] = False
     
     return df
 
