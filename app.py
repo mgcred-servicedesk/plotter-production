@@ -116,8 +116,23 @@ _CSS_VARS = {
 
 
 def _get_theme() -> str:
-    """Retorna tema ativo (session_state ou localStorage)."""
-    return st.session_state.get("theme", "light")
+    """Retorna tema ativo.
+
+    Na primeira visita, detecta preferencia do sistema
+    via localStorage (setado pelo JS de deteccao).
+    """
+    if "theme" not in st.session_state:
+        # Tenta ler do query param _theme (setado pelo JS)
+        detected = st.query_params.get("_theme")
+        if detected in ("light", "dark"):
+            st.session_state["theme"] = detected
+            # Limpar o param para nao poluir a URL
+            del st.query_params["_theme"]
+        else:
+            # Fallback: sera corrigido pelo JS de deteccao
+            # no primeiro render (redireciona com ?_theme)
+            st.session_state["theme"] = "light"
+    return st.session_state["theme"]
 
 
 def _chart_theme() -> dict:
@@ -159,7 +174,8 @@ def _aplicar_tema():
         unsafe_allow_html=True,
     )
 
-    # JS: persistir tema + tematizar iframes (sac components)
+    # JS: detectar preferencia do sistema na primeira
+    # visita + persistir tema + tematizar iframes
     import streamlit.components.v1 as components
 
     is_dark = "true" if theme == "dark" else "false"
@@ -168,6 +184,21 @@ def _aplicar_tema():
         (function() {{
             const p = window.parent;
             const isDark = {is_dark};
+
+            // Detectar preferencia do sistema na 1a visita
+            const stored = localStorage.getItem('mgcred_theme');
+            if (!stored) {{
+                const prefersDark = window.matchMedia
+                    && window.matchMedia('(prefers-color-scheme: dark)').matches;
+                const detected = prefersDark ? 'dark' : 'light';
+                localStorage.setItem('mgcred_theme', detected);
+                if (detected !== (isDark ? 'dark' : 'light')) {{
+                    const url = new URL(p.location);
+                    url.searchParams.set('_theme', detected);
+                    p.location.replace(url.toString());
+                    return;
+                }}
+            }}
             const tc = isDark ? '#e2e4ea' : '#1a1a2e';
             const pc = isDark ? '#3b82f6' : '#2563eb';
             const sb = isDark ? '#1a1c25' : '#ffffff';
