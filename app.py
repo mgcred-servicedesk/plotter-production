@@ -1054,6 +1054,8 @@ def calcular_kpis_gerais(
     media_du = total_vendas / du_dec if du_dec > 0 else 0
     media_du_pts = total_pontos / du_dec if du_dec > 0 else 0
     meta_diaria = meta_prata / du_total if du_total > 0 else 0
+    gap_pontos = max(0, meta_prata - total_pontos)
+    meta_diaria_restante = gap_pontos / du_rest if du_rest > 0 else 0
     projecao = media_du * du_total
     projecao_pts = media_du_pts * du_total
     perc_proj = (projecao_pts / meta_prata * 100) if meta_prata > 0 else 0
@@ -1097,6 +1099,7 @@ def calcular_kpis_gerais(
         "meta_prata": meta_prata,
         "meta_ouro": meta_ouro,
         "meta_diaria": meta_diaria,
+        "meta_diaria_restante": meta_diaria_restante,
         "perc_ating_prata": perc_prata,
         "perc_ating_ouro": perc_ouro,
         "media_du": media_du,
@@ -1157,7 +1160,7 @@ def calcular_kpis_por_produto(
     df_supervisores: Optional[pd.DataFrame] = None,
 ) -> pd.DataFrame:
     """Calcula KPIs por grupo de produto do dashboard."""
-    du_total, du_dec, _ = calcular_dias_uteis(ano, mes, dia_atual)
+    du_total, du_dec, du_rest = calcular_dias_uteis(ano, mes, dia_atual)
 
     num_consultores = _contar_consultores(df, df_supervisores)
 
@@ -1199,6 +1202,8 @@ def calcular_kpis_por_produto(
         perc_ating = (valor / meta_total * 100) if meta_total > 0 else 0
         media_du = valor / du_dec if du_dec > 0 else 0
         meta_diaria = meta_total / du_total if du_total > 0 else 0
+        gap = max(0, meta_total - valor)
+        meta_diaria_rest = gap / du_rest if du_rest > 0 else 0
         ticket = valor / quantidade if quantidade > 0 else 0
         projecao = media_du * du_total
         perc_proj = (projecao / meta_total * 100) if meta_total > 0 else 0
@@ -1210,6 +1215,7 @@ def calcular_kpis_por_produto(
                 "Valor": valor,
                 "Meta": meta_total,
                 "Meta Diária": meta_diaria,
+                "Meta Diária Restante": meta_diaria_rest,
                 "% Atingimento": perc_ating,
                 "Quantidade": quantidade,
                 "Ticket Médio": ticket,
@@ -2073,14 +2079,23 @@ def criar_cards_kpis_principais(kpis):
         )
 
     with col2:
-        dif = kpis["media_du"] - kpis["meta_diaria"]
-        dc = "normal" if dif >= 0 else "inverse"
-        st.metric(
-            "Media por DU",
-            formatar_moeda(kpis["media_du"]),
-            f"Meta diaria: {formatar_moeda(kpis['meta_diaria'])}",
-            delta_color=dc,
-        )
+        mdr = kpis["meta_diaria_restante"]
+        if mdr == 0 and kpis["perc_ating_prata"] >= 100:
+            st.metric(
+                "Meta Diaria (Pontos)",
+                "Meta atingida",
+                f"Ritmo: {formatar_numero(kpis['media_du_pontos'])} pts/DU",
+                delta_color="normal",
+            )
+        else:
+            dif_pts = kpis["media_du_pontos"] - mdr
+            dc = "normal" if dif_pts >= 0 else "inverse"
+            st.metric(
+                "Meta Diaria Restante",
+                f"{formatar_numero(mdr)} pts/DU",
+                f"Ritmo atual: {formatar_numero(kpis['media_du_pontos'])} pts/DU",
+                delta_color=dc,
+            )
 
     with col3:
         st.metric(
@@ -2628,6 +2643,94 @@ def _render_tab_produtos(
         dia_atual,
         df_sup,
     )
+
+    # ── Cards de meta diaria por produto ────────
+    if not df_prod.empty and "Meta Diária Restante" in df_prod.columns:
+        sac.divider(
+            label="Meta Diaria Restante por Produto",
+            icon="calendar-check",
+            align="left",
+            color="gray",
+        )
+
+        prods = df_prod[df_prod["Meta"] > 0]
+        if not prods.empty:
+            cols = st.columns(len(prods))
+            for col, (_, row) in zip(cols, prods.iterrows()):
+                with col:
+                    mdr = row["Meta Diária Restante"]
+                    atingiu = (
+                        mdr == 0 and row["% Atingimento"] >= 100
+                    )
+                    if atingiu:
+                        st.metric(
+                            row["Produto"],
+                            "Meta atingida",
+                            f"Ritmo: {formatar_moeda(row['Média DU'])}/DU",
+                            delta_color="normal",
+                        )
+                    else:
+                        dif = row["Média DU"] - mdr
+                        dc = "normal" if dif >= 0 else "inverse"
+                        st.metric(
+                            row["Produto"],
+                            formatar_moeda(mdr) + "/DU",
+                            f"Ritmo: {formatar_moeda(row['Média DU'])}/DU",
+                            delta_color=dc,
+                        )
+
+            # Resumo geral de produtos
+            mdr_total = prods["Meta Diária Restante"].sum()
+            media_du_total = prods["Média DU"].sum()
+            todas_atingidas = (
+                mdr_total == 0
+                and (prods["% Atingimento"] >= 100).all()
+            )
+
+            col_geral, col_gap, col_ritmo = st.columns([2, 1, 2])
+            with col_geral:
+                if todas_atingidas:
+                    st.metric(
+                        "Meta Diaria Geral (Produtos)",
+                        "Todas atingidas",
+                        f"Ritmo: {formatar_moeda(media_du_total)}/DU",
+                        delta_color="normal",
+                    )
+                else:
+                    dif_total = media_du_total - mdr_total
+                    dc_total = (
+                        "normal" if dif_total >= 0 else "inverse"
+                    )
+                    st.metric(
+                        "Meta Diaria Restante (Geral)",
+                        formatar_moeda(mdr_total) + "/DU",
+                        f"Ritmo: {formatar_moeda(media_du_total)}/DU",
+                        delta_color=dc_total,
+                    )
+            with col_ritmo:
+                if todas_atingidas:
+                    st.metric(
+                        "Folga Diaria",
+                        formatar_moeda(media_du_total),
+                        "meta ja atingida",
+                        delta_color="normal",
+                    )
+                else:
+                    gap = mdr_total - media_du_total
+                    if gap > 0:
+                        st.metric(
+                            "Gap Diario",
+                            formatar_moeda(gap),
+                            "abaixo do necessario",
+                            delta_color="inverse",
+                        )
+                    else:
+                        st.metric(
+                            "Folga Diaria",
+                            formatar_moeda(abs(gap)),
+                            "acima do necessario",
+                            delta_color="normal",
+                        )
 
     fig = criar_grafico_produtos(df_prod)
     st.plotly_chart(fig, width="stretch")
@@ -4013,6 +4116,7 @@ def main():
         # ── RLS: filtrar dados por perfil ─────────
         df = aplicar_rls(df)
         df_metas = aplicar_rls_metas(df_metas, df)
+        df_metas_produto = aplicar_rls_metas(df_metas_produto, df)
         df_sup = aplicar_rls_supervisores(df_sup, df)
         if not df_analise.empty:
             df_analise = aplicar_rls(df_analise)
