@@ -189,31 +189,167 @@ def tela_login() -> bool:
     if usuario_logado():
         return True
 
+    # CSS específico da tela de login
     st.markdown(
         """
-        <div style="text-align: center; padding: 2rem 0 1rem;">
-            <h1 style="font-size: 2rem; font-weight: 800;">
-                Dashboard de Vendas
-            </h1>
-            <p style="opacity: 0.6;">
-                Acesso restrito — insira suas credenciais
-            </p>
-        </div>
+        <style>
+        /* Ocultar sidebar, header e iframe de tema */
+        [data-testid="stSidebar"],
+        [data-testid="stSidebarCollapsedControl"],
+        [data-testid="stHeader"] {
+            display: none !important;
+        }
+        iframe[height="0"] {
+            display: none !important;
+        }
+
+        /* Centralizar verticalmente o container */
+        .main .block-container {
+            display: flex !important;
+            flex-direction: column !important;
+            justify-content: center !important;
+            min-height: 92vh !important;
+        }
+
+        /* Formulario como card */
+        [data-testid="stForm"] {
+            background: var(--mg-secondary-bg, #ffffff);
+            border: 1px solid var(--mg-card-border,
+                rgba(26,26,46,0.08));
+            border-radius: 14px;
+            padding: 1.5rem 1.75rem 1.25rem;
+            box-shadow:
+                0 4px 24px var(--mg-shadow,
+                    rgba(26,26,46,0.06)),
+                0 1px 4px var(--mg-shadow,
+                    rgba(26,26,46,0.04));
+        }
+
+        /* Labels dos inputs */
+        [data-testid="stForm"]
+            [data-testid="stTextInput"] label {
+            font-size: 0.8rem !important;
+            font-weight: 600 !important;
+            color: var(--mg-text-secondary,
+                rgba(26,26,46,0.65)) !important;
+            text-transform: uppercase;
+            letter-spacing: 0.04em;
+        }
+
+        /* Botao Entrar */
+        [data-testid="stForm"]
+            .stFormSubmitButton > button {
+            background: var(--mg-primary, #2563eb)
+                !important;
+            color: #ffffff !important;
+            border: none !important;
+            border-radius: 10px !important;
+            padding: 0.6rem 1.5rem !important;
+            font-weight: 700 !important;
+            font-size: 0.9rem !important;
+            letter-spacing: 0.02em;
+            transition: opacity 0.2s ease,
+                transform 0.15s ease !important;
+            margin-top: 0.25rem;
+        }
+
+        [data-testid="stForm"]
+            .stFormSubmitButton > button:hover {
+            opacity: 0.88 !important;
+            transform: translateY(-1px) !important;
+            background: var(--mg-primary, #2563eb)
+                !important;
+            color: #ffffff !important;
+        }
+
+        /* Logo */
+        .login-logo {
+            text-align: center;
+            margin-bottom: 0.25rem;
+        }
+        .login-logo img {
+            max-width: 180px;
+            height: auto;
+        }
+
+        /* Subtitulo */
+        .login-subtitle {
+            text-align: center;
+            color: var(--mg-text-secondary,
+                rgba(26,26,46,0.65)) !important;
+            font-size: 0.82rem;
+            margin-bottom: 1rem;
+            font-weight: 400;
+        }
+
+        /* Rodape */
+        .login-footer {
+            text-align: center;
+            color: var(--mg-text-secondary,
+                rgba(26,26,46,0.65)) !important;
+            font-size: 0.7rem;
+            margin-top: 1.25rem;
+            opacity: 0.6;
+        }
+
+        /* Responsivo: mobile */
+        @media (max-width: 480px) {
+            [data-testid="stForm"] {
+                padding: 1.25rem 1.25rem 1rem;
+                border-radius: 12px;
+            }
+            .login-logo img {
+                max-width: 150px;
+            }
+        }
+        </style>
         """,
         unsafe_allow_html=True,
     )
 
-    col1, col2, col3 = st.columns([1, 1.5, 1])
+    import base64
+    from pathlib import Path
 
-    with col2:
-        with st.form("login_form"):
-            st.image(
-                "assets/logotipo-mg-cred.png",
-                width="stretch",
+    is_dark = st.session_state.get("theme", "light") == "dark"
+    logo_path = Path(
+        "assets/logo-grayscale.png"
+        if is_dark
+        else "assets/logotipo-mg-cred.png"
+    )
+    logo_b64 = ""
+    if logo_path.exists():
+        logo_b64 = base64.b64encode(
+            logo_path.read_bytes()
+        ).decode()
+
+    # Colunas para centralizar (nativo Streamlit)
+    _, col_center, _ = st.columns([1.2, 1, 1.2])
+
+    with col_center:
+        # Logo + subtítulo
+        header_html = ""
+        if logo_b64:
+            header_html += (
+                '<div class="login-logo">'
+                '<img src="data:image/png;base64,'
+                f'{logo_b64}" alt="MGCred">'
+                "</div>"
             )
+        header_html += (
+            '<p class="login-subtitle">'
+            "Acesso restrito &mdash; "
+            "insira suas credenciais"
+            "</p>"
+        )
+        st.markdown(
+            header_html, unsafe_allow_html=True,
+        )
+
+        # Formulário
+        with st.form("login_form"):
             usuario = st.text_input(
-                "Usuario",
-                placeholder="Digite seu usuario",
+                "Usuário",
+                placeholder="Digite seu usuário",
             )
             senha = st.text_input(
                 "Senha",
@@ -225,18 +361,27 @@ def tela_login() -> bool:
                 width="stretch",
             )
 
-        if submit:
-            if not usuario or not senha:
-                st.error("Preencha usuario e senha.")
-                return False
+        # Rodapé
+        st.markdown(
+            '<p class="login-footer">'
+            "&copy; 2026 MGCred &mdash; "
+            "Dashboard de Vendas"
+            "</p>",
+            unsafe_allow_html=True,
+        )
 
-            dados = autenticar(usuario, senha)
-            if dados:
-                st.session_state["usuario_logado"] = dados
-                st.rerun()
-            else:
-                st.error("Usuario ou senha invalidos.")
-                return False
+    if submit:
+        if not usuario or not senha:
+            st.error("Preencha usuário e senha.")
+            return False
+
+        dados = autenticar(usuario, senha)
+        if dados:
+            st.session_state["usuario_logado"] = dados
+            st.rerun()
+        else:
+            st.error("Usuário ou senha inválidos.")
+            return False
 
     return False
 

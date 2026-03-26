@@ -853,6 +853,12 @@ def carregar_metas_produto(
 
     df = pd.DataFrame(rows)
 
+    # Deduplicar por (LOJA, produto_meta) — constraint
+    # UNIQUE com nivel NULL nao impede duplicatas no PG
+    df = df.drop_duplicates(
+        subset=["LOJA", "produto_meta"], keep="first"
+    )
+
     # Pivotar para ter uma coluna por produto_meta
     if not df.empty:
         df_pivot = df.pivot_table(
@@ -1558,9 +1564,20 @@ def calcular_analitico_consultores(
     if "CONSULTOR" not in df.columns:
         return pd.DataFrame()
 
-    df_v = _excluir_supervisores(df[df["VALOR"] > 0], df_supervisores)
+    # Incluir seguros (VALOR=0) que contam apenas quantidade
+    mask_producao = df["VALOR"] > 0
+    if "is_bmg_med" in df.columns:
+        mask_producao = mask_producao | df["is_bmg_med"]
+    if "is_seguro_vida" in df.columns:
+        mask_producao = mask_producao | df["is_seguro_vida"]
+
+    df_v = _excluir_supervisores(df[mask_producao], df_supervisores)
 
     df_v["PRODUTO_MIX"] = df_v["grupo_dashboard"].fillna("OUTROS")
+    if "is_bmg_med" in df_v.columns:
+        df_v.loc[df_v["is_bmg_med"], "PRODUTO_MIX"] = "BMG Med"
+    if "is_seguro_vida" in df_v.columns:
+        df_v.loc[df_v["is_seguro_vida"], "PRODUTO_MIX"] = "Vida Familiar"
 
     analitico = (
         df_v.groupby(["CONSULTOR", "LOJA", "REGIAO", "PRODUTO_MIX"])
@@ -1642,12 +1659,23 @@ def calcular_distribuicao_produtos(
     if "CONSULTOR" not in df.columns:
         return pd.DataFrame()
 
-    df_v = _excluir_supervisores(df[df["VALOR"] > 0], df_supervisores)
+    # Incluir seguros (VALOR=0) que contam apenas quantidade
+    mask_producao = df["VALOR"] > 0
+    if "is_bmg_med" in df.columns:
+        mask_producao = mask_producao | df["is_bmg_med"]
+    if "is_seguro_vida" in df.columns:
+        mask_producao = mask_producao | df["is_seguro_vida"]
+
+    df_v = _excluir_supervisores(df[mask_producao], df_supervisores)
 
     df_v["PRODUTO_MIX"] = df_v["grupo_dashboard"].fillna("OUTROS")
+    if "is_bmg_med" in df_v.columns:
+        df_v.loc[df_v["is_bmg_med"], "PRODUTO_MIX"] = "BMG Med"
+    if "is_seguro_vida" in df_v.columns:
+        df_v.loc[df_v["is_seguro_vida"], "PRODUTO_MIX"] = "Vida Familiar"
 
     grupos = sorted(
-        df_v[df_v["grupo_dashboard"].notna()]["grupo_dashboard"].unique().tolist()
+        df_v[df_v["PRODUTO_MIX"] != "OUTROS"]["PRODUTO_MIX"].unique().tolist()
     )
 
     distrib = df_v.pivot_table(
@@ -2649,22 +2677,53 @@ def _render_tab_analiticos(df, df_sup):
 
             exibir_tabela(df_af)
 
+            # Cards resumo: usar df original (mesma base dos KPIs
+            # principais) para manter consistencia, aplicando apenas
+            # os filtros de consultor/produto selecionados pelo usuario
+            mask_cards = df["VALOR"] > 0
+            if "is_bmg_med" in df.columns:
+                mask_cards = mask_cards | df["is_bmg_med"]
+            if "is_seguro_vida" in df.columns:
+                mask_cards = mask_cards | df["is_seguro_vida"]
+            df_cards = df[mask_cards].copy()
+            df_cards["PRODUTO_MIX"] = df_cards[
+                "grupo_dashboard"
+            ].fillna("OUTROS")
+            if "is_bmg_med" in df_cards.columns:
+                df_cards.loc[
+                    df_cards["is_bmg_med"], "PRODUTO_MIX"
+                ] = "BMG Med"
+            if "is_seguro_vida" in df_cards.columns:
+                df_cards.loc[
+                    df_cards["is_seguro_vida"], "PRODUTO_MIX"
+                ] = "Vida Familiar"
+            if filt_c != "Todos":
+                df_cards = df_cards[df_cards["CONSULTOR"] == filt_c]
+            if filt_p != "Todos":
+                df_cards = df_cards[df_cards["PRODUTO_MIX"] == filt_p]
+
+            total_valor = df_cards["VALOR"].sum()
+            total_pts = df_cards["pontos"].sum()
+            total_trans = len(df_cards[df_cards["VALOR"] > 0])
+            tk_medio = (
+                total_valor / total_trans if total_trans > 0 else 0
+            )
+
             col1, col2, col3 = st.columns(3)
             with col1:
                 st.metric(
                     "Total de Pontos",
-                    formatar_numero(df_af["Pontos"].sum()),
+                    formatar_numero(total_pts),
                 )
             with col2:
                 st.metric(
                     "Total de Valor",
-                    formatar_moeda(df_af["Valor"].sum()),
+                    formatar_moeda(total_valor),
                 )
             with col3:
-                qtd = df_af["Qtd"].sum()
                 st.metric(
                     "Ticket Medio Geral",
-                    formatar_moeda(df_af["Valor"].sum() / qtd if qtd > 0 else 0),
+                    formatar_moeda(tk_medio),
                 )
         else:
             st.warning("Dados nao disponiveis")
