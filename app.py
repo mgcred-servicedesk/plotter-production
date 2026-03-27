@@ -428,6 +428,7 @@ def _carregar_contratos_pagos_cached(
             .from_("v_contratos_dashboard")
             .select("*")
             .eq("periodo_id", periodo["id"])
+            .order("id")
             .limit(_PAGE_SIZE)
             .offset(offset)
             .execute()

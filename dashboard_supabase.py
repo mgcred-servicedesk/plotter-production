@@ -1,5 +1,9 @@
 """
-Dashboard interativo de vendas — Versao Supabase.
+[OBSOLETO] Dashboard interativo de vendas — Versao Supabase.
+
+DESCONTINUADO: este arquivo foi substituido por app.py, que e o
+dashboard unico e oficial do projeto. Mantido temporariamente
+apenas como referencia historica. NAO use para deploy.
 
 Consome dados diretamente do banco Supabase (PostgreSQL),
 usando categorias_produto, v_pontuacao_efetiva e views.
@@ -570,6 +574,7 @@ def carregar_contratos_pagos(
                 'and(sub_status_banco.eq.Liquidada,'
                 'tipo_operacao.in.("BMG MED",Seguro))'
             )
+            .order("id")
             .limit(_PAGE_SIZE)
             .offset(offset)
             .execute()
@@ -683,6 +688,7 @@ def carregar_contratos_em_analise(
             .neq("sub_status_banco", "Liquidada")
             .gte("data_cadastro", data_inicio.isoformat())
             .lte("data_cadastro", data_ref.isoformat())
+            .order("id")
             .limit(_PAGE_SIZE)
             .offset(offset)
             .execute()

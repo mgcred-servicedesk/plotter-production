@@ -1,5 +1,8 @@
 """
-Dashboard interativo de vendas com Streamlit.
+[OBSOLETO] Dashboard interativo de vendas com Streamlit.
+
+DESCONTINUADO: substituido por app.py. Mantido apenas como
+referencia historica. NAO use para deploy.
 """
 import sys
 from pathlib import Path

@@ -1,8 +1,11 @@
 """
-Dashboard interativo de vendas com Streamlit - Versão Refatorada.
-Integra todos os cálculos e KPIs dos relatórios Excel e PDF.
+[OBSOLETO] Dashboard interativo de vendas - Versao Refatorada.
 
-Frontend: streamlit-antd-components para navegação,
+DESCONTINUADO: substituido por app.py. Mantido apenas como
+referencia historica. NAO use para deploy.
+
+Integra todos os calculos e KPIs dos relatorios Excel e PDF.
+Frontend: streamlit-antd-components para navegacao,
 AG Grid para tabelas, CSS design system customizado.
 """
 

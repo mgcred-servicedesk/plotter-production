@@ -3,9 +3,11 @@
 ## Project Overview
 
 Sales analysis system for a financial products company. Processes monthly sales data (Excel/CSV in Brazilian Portuguese), calculates a point-based scoring system per product, and generates:
-- Interactive **Streamlit** dashboard (`src/dashboard/app.py`)
+- Interactive **Streamlit** dashboard (`app.py`) — single, authoritative dashboard
 - Automated **Excel** reports (`gerar_relatorio.py`)
 - **PDF** reports: executive, complete, regional, per-product (`gerar_relatorio_pdf.py`)
+
+> **Note:** Legacy dashboard files (`dashboard.py`, `dashboard_refatorado.py`, `dashboard_supabase.py`) are obsolete. All development happens in `app.py`.
 
 ### Key Business Rules
 - Points = Value × PTS (from product table)
@@ -71,15 +73,16 @@ src/
 │   ├── pdf_charts.py           # Matplotlib charts for PDFs
 │   └── resumo_geral.py         # Consolidated summary data
 ├── dashboard/
-│   ├── app.py                  # Streamlit app (original)
+│   ├── app.py                  # Streamlit app (legacy entry — see root app.py)
 │   ├── auth.py                 # Authentication: login, logout, bcrypt passwords
 │   ├── rls.py                  # Row-Level Security: per-profile data filtering
 │   ├── user_mgmt.py            # User management UI (admin CRUD, password change)
 │   ├── kpi_dashboard.py        # Dashboard KPI calculations
 │   ├── kpi_analiticos.py       # Analytical KPI calculations
 │   └── components/
-│       └── tables.py           # AG Grid / st.dataframe with auto-formatting
+│       └── tables.py           # st.dataframe with auto-formatting
 └── analysis/                   # Comparative analyses
+app.py                          # ★ Main dashboard (Supabase, single entrypoint)
 ```
 
 ---
@@ -208,8 +211,8 @@ ruff check src/
 ## Running the Project
 
 ```bash
-# Dashboard
-streamlit run src/dashboard/app.py
+# Dashboard (entrypoint unico)
+streamlit run app.py
 
 # Excel report
 python gerar_relatorio.py
