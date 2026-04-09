@@ -967,6 +967,14 @@ def _consolidar_cached(
         else False
     )
 
+    # Zerar valor/pontos de emissoes nao cobertas por conta_valor=false
+    # (ex: Venda Pre-Adesao com produto CONSIG tem categoria CONSIG_BMG
+    # que possui conta_valor=true, mas o TIPO OPER. indica emissao)
+    mask_emissao = df["is_emissao_cartao"]
+    if mask_emissao.any():
+        df.loc[mask_emissao, "VALOR"] = 0
+        df.loc[mask_emissao, "pontos"] = 0
+
     # Seguros: contam apenas quantidade (valor/pontos ja zerados acima)
     # Fallback para categoria_codigo caso tipo_operacao nao esteja preenchido
     df["is_bmg_med"] = (
@@ -3978,6 +3986,18 @@ def main():
                     df_analise["conta_valor"] == False,  # noqa
                     "VALOR",
                 ] = 0
+            # Zerar emissoes por TIPO OPER. (Venda Pre-Adesao
+            # com produto CONSIG nao tem conta_valor=false)
+            if (
+                not df_analise.empty
+                and "TIPO OPER." in df_analise.columns
+            ):
+                df_analise.loc[
+                    df_analise["TIPO OPER."].isin(
+                        ["CARTÃO BENEFICIO", "Venda Pré-Adesão"]
+                    ),
+                    "VALOR",
+                ] = 0
 
             _status.update(label="Carregando cancelados...")
             df_cancelados = carregar_contratos_cancelados(
@@ -3991,7 +4011,16 @@ def main():
                     df_cancelados["conta_valor"] == False,  # noqa
                     "VALOR",
                 ] = 0
-
+            if (
+                not df_cancelados.empty
+                and "TIPO OPER." in df_cancelados.columns
+            ):
+                df_cancelados.loc[
+                    df_cancelados["TIPO OPER."].isin(
+                        ["CARTÃO BENEFICIO", "Venda Pré-Adesão"]
+                    ),
+                    "VALOR",
+                ] = 0
             n_pagos = len(df)
             n_analise = len(df_analise)
             n_cancel = len(df_cancelados)
