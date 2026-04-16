@@ -34,11 +34,6 @@ LOCALE = os.getenv('LOCALE', 'pt_BR.UTF-8')
 CURRENCY_SYMBOL = os.getenv('CURRENCY_SYMBOL', 'R$')
 DATE_FORMAT = os.getenv('DATE_FORMAT', '%d/%m/%Y')
 
-HOLIDAYS_STR = os.getenv('HOLIDAYS', '')
-HOLIDAYS = [
-    h.strip() for h in HOLIDAYS_STR.split(',') if h.strip()
-] if HOLIDAYS_STR else []
-
 DASHBOARD_TITLE = os.getenv(
     'DASHBOARD_TITLE',
     'Dashboard de Análise de Vendas'

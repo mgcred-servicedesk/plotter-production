@@ -28,7 +28,6 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 from src.config.supabase_client import get_supabase_client
 from src.dashboard.auth import (
-    PERFIS,
     fazer_logout,
     tela_login,
     usuario_logado,
@@ -41,6 +40,8 @@ from src.dashboard.rls import (
     obter_regioes_permitidas,
 )
 from src.dashboard.user_mgmt import render_pagina_usuarios
+from src.dashboard.feriados_mgmt import render_pagina_feriados
+from src.shared.dias_uteis import calcular_dias_uteis
 
 warnings.filterwarnings("ignore", category=FutureWarning)
 warnings.filterwarnings("ignore", category=DeprecationWarning)
@@ -352,16 +353,17 @@ def _ttl_periodo(
     ttl_atual: int,
     ttl_historico: int,
 ) -> int:
-    """Retorna TTL curto para periodo vigente, longo para historico.
-
-    Periodos fechados (meses passados) raramente mudam,
-    entao podem ter cache longo. O mes corrente usa TTL
-    mais curto para refletir atualizacoes diarias.
-    """
+    """Retorna TTL curto para periodo vigente, longo para historico."""
     hoje = datetime.now()
     if mes == hoje.month and ano == hoje.year:
         return ttl_atual
     return ttl_historico
+
+
+def _eh_mes_atual(mes: int, ano: int) -> bool:
+    """Retorna True se mes/ano corresponde ao mes corrente."""
+    hoje = datetime.now()
+    return mes == hoje.month and ano == hoje.year
 
 
 @st.cache_data(ttl=86400)
@@ -402,20 +404,15 @@ def carregar_contratos_pagos(
 ) -> pd.DataFrame:
     """Carrega contratos pagos via view v_contratos_dashboard.
 
-    TTL dinamico: 30min para mes corrente, 24h para historico.
-    A view resolve todos os joins no banco — sem paginacao manual.
+    TTL real: 30min para mes corrente, 24h para historico.
     """
-    ttl = _ttl_periodo(mes, ano, 1800, 86400)
-    return _carregar_contratos_pagos_cached(mes, ano, ttl)
+    if _eh_mes_atual(mes, ano):
+        return _contratos_pagos_atual(mes, ano)
+    return _contratos_pagos_historico(mes, ano)
 
 
-@st.cache_data(ttl=1800)
-def _carregar_contratos_pagos_cached(
-    mes: int,
-    ano: int,
-    _ttl: int,
-) -> pd.DataFrame:
-    """Cache interno com TTL variavel via parametro _ttl."""
+def _fetch_contratos_pagos(mes: int, ano: int) -> pd.DataFrame:
+    """Executa a query de contratos pagos sem cache."""
     periodo = carregar_periodo(mes, ano)
     if not periodo:
         return pd.DataFrame()
@@ -475,36 +472,51 @@ def _carregar_contratos_pagos_cached(
     return df
 
 
+@st.cache_data(ttl=1800)
+def _contratos_pagos_atual(mes: int, ano: int) -> pd.DataFrame:
+    """Contratos pagos — mes corrente. TTL 30min."""
+    return _fetch_contratos_pagos(mes, ano)
+
+
+@st.cache_data(ttl=86400)
+def _contratos_pagos_historico(mes: int, ano: int) -> pd.DataFrame:
+    """Contratos pagos — historico. TTL 24h."""
+    return _fetch_contratos_pagos(mes, ano)
+
+
 def carregar_contratos_em_analise(
     mes: int,
     ano: int,
 ) -> pd.DataFrame:
     """Carrega contratos em analise via RPC obter_contratos_em_analise.
 
-    TTL dinamico: 15min para mes corrente, 6h para historico.
-    A RPC encapsula a logica de datas (ultimos 30 dias) no banco.
+    TTL real: 15min para mes corrente, 6h para historico.
     """
-    ttl = _ttl_periodo(mes, ano, 900, 21600)
-    return _carregar_contratos_em_analise_cached(mes, ano, ttl)
+    if _eh_mes_atual(mes, ano):
+        return _contratos_em_analise_atual(mes, ano)
+    return _contratos_em_analise_historico(mes, ano)
 
 
-@st.cache_data(ttl=900)
-def _carregar_contratos_em_analise_cached(
-    mes: int,
-    ano: int,
-    _ttl: int,
-) -> pd.DataFrame:
-    """Cache interno com TTL variavel via parametro _ttl."""
-    resp = (
-        _sb()
-        .rpc(
-            "obter_contratos_em_analise",
-            {"p_mes": mes, "p_ano": ano},
+def _fetch_contratos_em_analise(mes: int, ano: int) -> pd.DataFrame:
+    """Executa a RPC de contratos em analise sem cache."""
+    all_data: List[dict] = []
+    offset = 0
+    while True:
+        resp = (
+            _sb()
+            .rpc(
+                "obter_contratos_em_analise",
+                {"p_mes": mes, "p_ano": ano},
+            )
+            .range(offset, offset + _PAGE_SIZE - 1)
+            .execute()
         )
-        .execute()
-    )
+        batch = resp.data or []
+        all_data.extend(batch)
+        if len(batch) < _PAGE_SIZE:
+            break
+        offset += _PAGE_SIZE
 
-    all_data = resp.data or []
     if not all_data:
         return pd.DataFrame()
 
@@ -540,35 +552,51 @@ def _carregar_contratos_em_analise_cached(
     return df
 
 
+@st.cache_data(ttl=900)
+def _contratos_em_analise_atual(mes: int, ano: int) -> pd.DataFrame:
+    """Contratos em analise — mes corrente. TTL 15min."""
+    return _fetch_contratos_em_analise(mes, ano)
+
+
+@st.cache_data(ttl=21600)
+def _contratos_em_analise_historico(mes: int, ano: int) -> pd.DataFrame:
+    """Contratos em analise — historico. TTL 6h."""
+    return _fetch_contratos_em_analise(mes, ano)
+
+
 def carregar_contratos_cancelados(
     mes: int,
     ano: int,
 ) -> pd.DataFrame:
     """Carrega contratos cancelados via RPC obter_contratos_cancelados.
 
-    TTL dinamico: 15min para mes corrente, 6h para historico.
+    TTL real: 15min para mes corrente, 6h para historico.
     """
-    ttl = _ttl_periodo(mes, ano, 900, 21600)
-    return _carregar_contratos_cancelados_cached(mes, ano, ttl)
+    if _eh_mes_atual(mes, ano):
+        return _contratos_cancelados_atual(mes, ano)
+    return _contratos_cancelados_historico(mes, ano)
 
 
-@st.cache_data(ttl=900)
-def _carregar_contratos_cancelados_cached(
-    mes: int,
-    ano: int,
-    _ttl: int,
-) -> pd.DataFrame:
-    """Cache interno com TTL variavel via parametro _ttl."""
-    resp = (
-        _sb()
-        .rpc(
-            "obter_contratos_cancelados",
-            {"p_mes": mes, "p_ano": ano},
+def _fetch_contratos_cancelados(mes: int, ano: int) -> pd.DataFrame:
+    """Executa a RPC de contratos cancelados sem cache."""
+    all_data: List[dict] = []
+    offset = 0
+    while True:
+        resp = (
+            _sb()
+            .rpc(
+                "obter_contratos_cancelados",
+                {"p_mes": mes, "p_ano": ano},
+            )
+            .range(offset, offset + _PAGE_SIZE - 1)
+            .execute()
         )
-        .execute()
-    )
+        batch = resp.data or []
+        all_data.extend(batch)
+        if len(batch) < _PAGE_SIZE:
+            break
+        offset += _PAGE_SIZE
 
-    all_data = resp.data or []
     if not all_data:
         return pd.DataFrame()
 
@@ -610,26 +638,33 @@ def _carregar_contratos_cancelados_cached(
     return df
 
 
+@st.cache_data(ttl=900)
+def _contratos_cancelados_atual(mes: int, ano: int) -> pd.DataFrame:
+    """Contratos cancelados — mes corrente. TTL 15min."""
+    return _fetch_contratos_cancelados(mes, ano)
+
+
+@st.cache_data(ttl=21600)
+def _contratos_cancelados_historico(mes: int, ano: int) -> pd.DataFrame:
+    """Contratos cancelados — historico. TTL 6h."""
+    return _fetch_contratos_cancelados(mes, ano)
+
+
 def carregar_pontuacao_efetiva(
     mes: int,
     ano: int,
 ) -> pd.DataFrame:
     """Carrega pontuacao efetiva via funcao SQL.
 
-    TTL dinamico: 6h para mes corrente, 24h para historico.
-    Pontuacao muda raramente dentro do mes.
+    TTL real: 6h para mes corrente, 24h para historico.
     """
-    ttl = _ttl_periodo(mes, ano, 21600, 86400)
-    return _carregar_pontuacao_cached(mes, ano, ttl)
+    if _eh_mes_atual(mes, ano):
+        return _pontuacao_atual(mes, ano)
+    return _pontuacao_historico(mes, ano)
 
 
-@st.cache_data(ttl=21600)
-def _carregar_pontuacao_cached(
-    mes: int,
-    ano: int,
-    _ttl: int,
-) -> pd.DataFrame:
-    """Cache interno com TTL variavel."""
+def _fetch_pontuacao(mes: int, ano: int) -> pd.DataFrame:
+    """Executa a RPC de pontuacao sem cache."""
     resp = (
         _sb()
         .rpc(
@@ -641,21 +676,30 @@ def _carregar_pontuacao_cached(
     return pd.DataFrame(resp.data or [])
 
 
+@st.cache_data(ttl=21600)
+def _pontuacao_atual(mes: int, ano: int) -> pd.DataFrame:
+    """Pontuacao — mes corrente. TTL 6h."""
+    return _fetch_pontuacao(mes, ano)
+
+
+@st.cache_data(ttl=86400)
+def _pontuacao_historico(mes: int, ano: int) -> pd.DataFrame:
+    """Pontuacao — historico. TTL 24h."""
+    return _fetch_pontuacao(mes, ano)
+
+
 def carregar_metas(mes: int, ano: int) -> pd.DataFrame:
     """Carrega metas GERAL/LOJA do periodo.
 
-    TTL dinamico: 6h para mes corrente, 24h para historico.
-    Metas sao definidas mensalmente e raramente mudam intraday.
+    TTL real: 6h para mes corrente, 24h para historico.
     """
-    ttl = _ttl_periodo(mes, ano, 21600, 86400)
-    return _carregar_metas_cached(mes, ano, ttl)
+    if _eh_mes_atual(mes, ano):
+        return _metas_atual(mes, ano)
+    return _metas_historico(mes, ano)
 
 
-@st.cache_data(ttl=21600)
-def _carregar_metas_cached(
-    mes: int, ano: int, _ttl: int,
-) -> pd.DataFrame:
-    """Cache interno com TTL variavel."""
+def _fetch_metas(mes: int, ano: int) -> pd.DataFrame:
+    """Executa a query de metas GERAL/LOJA sem cache."""
     periodo = carregar_periodo(mes, ano)
     if not periodo:
         return pd.DataFrame()
@@ -717,23 +761,33 @@ def _carregar_metas_cached(
     return pd.DataFrame(columns=["LOJA", "META_PRATA", "META_OURO"])
 
 
+@st.cache_data(ttl=21600)
+def _metas_atual(mes: int, ano: int) -> pd.DataFrame:
+    """Metas GERAL/LOJA — mes corrente. TTL 6h."""
+    return _fetch_metas(mes, ano)
+
+
+@st.cache_data(ttl=86400)
+def _metas_historico(mes: int, ano: int) -> pd.DataFrame:
+    """Metas GERAL/LOJA — historico. TTL 24h."""
+    return _fetch_metas(mes, ano)
+
+
 def carregar_metas_produto(
     mes: int,
     ano: int,
 ) -> pd.DataFrame:
     """Carrega metas por produto do periodo.
 
-    TTL dinamico: 6h para mes corrente, 24h para historico.
+    TTL real: 6h para mes corrente, 24h para historico.
     """
-    ttl = _ttl_periodo(mes, ano, 21600, 86400)
-    return _carregar_metas_produto_cached(mes, ano, ttl)
+    if _eh_mes_atual(mes, ano):
+        return _metas_produto_atual(mes, ano)
+    return _metas_produto_historico(mes, ano)
 
 
-@st.cache_data(ttl=21600)
-def _carregar_metas_produto_cached(
-    mes: int, ano: int, _ttl: int,
-) -> pd.DataFrame:
-    """Cache interno com TTL variavel."""
+def _fetch_metas_produto(mes: int, ano: int) -> pd.DataFrame:
+    """Executa a query de metas por produto sem cache."""
     periodo = carregar_periodo(mes, ano)
     if not periodo:
         return pd.DataFrame()
@@ -785,6 +839,39 @@ def _carregar_metas_produto_cached(
 
 
 @st.cache_data(ttl=21600)
+def _metas_produto_atual(mes: int, ano: int) -> pd.DataFrame:
+    """Metas por produto — mes corrente. TTL 6h."""
+    return _fetch_metas_produto(mes, ano)
+
+
+@st.cache_data(ttl=86400)
+def _metas_produto_historico(mes: int, ano: int) -> pd.DataFrame:
+    """Metas por produto — historico. TTL 24h."""
+    return _fetch_metas_produto(mes, ano)
+
+
+@st.cache_data(ttl=21600)
+@st.cache_data(ttl=86400)
+def carregar_lojas_regioes() -> tuple[list[str], list[str]]:
+    """Retorna (lojas, regioes) para selects de configuracao. TTL 24h."""
+    resp = (
+        _sb()
+        .table("lojas")
+        .select("nome, regioes(nome)")
+        .order("nome")
+        .execute()
+    )
+    lojas: list[str] = []
+    regioes_set: set[str] = set()
+    for row in resp.data or []:
+        lojas.append(row.get("nome", ""))
+        reg = (row.get("regioes") or {}).get("nome", "")
+        if reg:
+            regioes_set.add(reg)
+    return sorted(lojas), sorted(regioes_set)
+
+
+@st.cache_data(ttl=21600)
 def carregar_supervisores() -> pd.DataFrame:
     """Carrega supervisores com suas lojas e regioes. TTL 6h."""
     resp = (
@@ -815,15 +902,20 @@ def consolidar_dados(
 ) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """Carrega, consolida e aplica pontuacao/regras.
 
-    Delega o processamento pesado para _consolidar_cached()
+    Delega o processamento pesado para a camada de cache
     e popula o diagnostico no session_state (side-effect
     que nao pode viver dentro de cache_data).
+
+    TTL real: 30min para mes corrente, 24h para historico.
 
     Returns:
         (df_consolidado, df_metas, df_supervisores)
     """
-    ttl = _ttl_periodo(mes, ano, 1800, 86400)
-    resultado = _consolidar_cached(mes, ano, ttl)
+    if _eh_mes_atual(mes, ano):
+        resultado = _consolidar_atual(mes, ano)
+    else:
+        resultado = _consolidar_historico(mes, ano)
+
     df, df_metas, df_supervisores, diag = resultado
 
     # Side-effect: diagnostico no session_state
@@ -834,10 +926,26 @@ def consolidar_dados(
 
 
 @st.cache_data(ttl=1800)
-def _consolidar_cached(
+def _consolidar_atual(
     mes: int,
     ano: int,
-    _ttl: int,
+) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, Optional[dict]]:
+    """Consolidacao — mes corrente. TTL 30min."""
+    return _executar_consolidacao(mes, ano)
+
+
+@st.cache_data(ttl=86400)
+def _consolidar_historico(
+    mes: int,
+    ano: int,
+) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, Optional[dict]]:
+    """Consolidacao — historico. TTL 24h."""
+    return _executar_consolidacao(mes, ano)
+
+
+def _executar_consolidacao(
+    mes: int,
+    ano: int,
 ) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, Optional[dict]]:
     """Consolidacao cacheada — pura, sem side-effects."""
     df = carregar_contratos_pagos(mes, ano)
@@ -989,41 +1097,6 @@ def _consolidar_cached(
     )
 
     return df, df_metas, df_supervisores, diag
-
-
-# ══════════════════════════════════════════════════════
-# CALCULO DE DIAS UTEIS
-# ══════════════════════════════════════════════════════
-
-
-def calcular_dias_uteis(
-    ano: int,
-    mes: int,
-    dia_atual: Optional[int] = None,
-) -> Tuple[int, int, int]:
-    """Calcula total de DU, DU decorridos e restantes."""
-    if dia_atual is None:
-        data_ref = datetime.now()
-    else:
-        data_ref = datetime(ano, mes, int(dia_atual))
-
-    primeiro_dia = datetime(ano, mes, 1)
-    if mes == 12:
-        ultimo_dia = datetime(ano + 1, 1, 1) - pd.Timedelta(days=1)
-    else:
-        ultimo_dia = datetime(ano, mes + 1, 1) - pd.Timedelta(days=1)
-
-    total_du = len(pd.bdate_range(primeiro_dia, ultimo_dia))
-
-    if data_ref < primeiro_dia:
-        return total_du, 0, total_du
-    if data_ref > ultimo_dia:
-        return total_du, total_du, 0
-
-    du_decorridos = len(pd.bdate_range(primeiro_dia, data_ref))
-    du_restantes = total_du - du_decorridos
-
-    return total_du, du_decorridos, du_restantes
 
 
 # ══════════════════════════════════════════════════════
@@ -1287,6 +1360,84 @@ def calcular_kpis_por_regiao(
         )
 
     return pd.DataFrame(dados)
+
+
+def calcular_heatmap_regiao_produto(
+    df: pd.DataFrame,
+    df_metas_produto: pd.DataFrame,
+    categorias: pd.DataFrame,
+) -> Tuple[pd.DataFrame, pd.DataFrame]:
+    """Calcula matriz de ranking por regiao x produto.
+
+    Cada celula contem a posicao da regiao naquele produto,
+    baseada no % de atingimento (valor realizado / meta).
+
+    Returns:
+        (df_ranking, df_atingimento): ranking e % atingimento.
+    """
+    if "REGIAO" not in df.columns or "grupo_dashboard" not in df.columns:
+        return pd.DataFrame(), pd.DataFrame()
+
+    # Mapeamento grupo_dashboard → grupo_meta
+    grupo_meta_map = (
+        categorias[categorias["grupo_dashboard"].notna()]
+        .groupby("grupo_dashboard")["grupo_meta"]
+        .first()
+        .to_dict()
+    )
+
+    grupos = sorted(
+        categorias[categorias["grupo_dashboard"].notna()][
+            "grupo_dashboard"
+        ]
+        .unique()
+        .tolist()
+    )
+
+    regioes = sorted(df["REGIAO"].unique())
+
+    # Calcular % atingimento por regiao x produto
+    dados_ating = []
+    for regiao in regioes:
+        df_r = df[df["REGIAO"] == regiao]
+        lojas_r = df_r["LOJA"].unique()
+        row = {"Região": regiao}
+
+        for grupo in grupos:
+            valor = df_r[df_r["grupo_dashboard"] == grupo][
+                "VALOR"
+            ].sum()
+
+            meta_key = grupo_meta_map.get(grupo, grupo)
+            meta = 0
+            if (
+                not df_metas_produto.empty
+                and meta_key in df_metas_produto.columns
+            ):
+                meta = (
+                    pd.to_numeric(
+                        df_metas_produto[
+                            df_metas_produto["LOJA"].isin(lojas_r)
+                        ][meta_key],
+                        errors="coerce",
+                    )
+                    .fillna(0)
+                    .sum()
+                )
+
+            perc = (valor / meta * 100) if meta > 0 else 0
+            row[grupo] = perc
+
+        dados_ating.append(row)
+
+    df_ating = pd.DataFrame(dados_ating).set_index("Região")
+
+    # Gerar ranking (1 = melhor % atingimento)
+    df_ranking = df_ating.rank(ascending=False, method="min").astype(
+        int
+    )
+
+    return df_ranking, df_ating
 
 
 def calcular_ranking_lojas(
@@ -1945,8 +2096,62 @@ def carregar_estilos_customizados():
 
 
 # ══════════════════════════════════════════════════════
+# SKELETON LOADING
+# ══════════════════════════════════════════════════════
+
+
+def _render_skeleton():
+    """Renderiza placeholder shimmer enquanto dados carregam."""
+    cards = ""
+    for _ in range(4):
+        cards += (
+            '<div class="mg-skeleton-card">'
+            '<div class="mg-skeleton-line lg"></div>'
+            '<div class="mg-skeleton-line sm"></div>'
+            '<div class="mg-skeleton-line xs"></div>'
+            "</div>"
+        )
+    st.markdown(
+        f'<div class="mg-skeleton">'
+        f'<div class="mg-skeleton-row">{cards}</div>'
+        f'<div class="mg-skeleton-chart">'
+        f'<div class="mg-skeleton-chart-inner"></div>'
+        f"</div></div>",
+        unsafe_allow_html=True,
+    )
+
+
+# ══════════════════════════════════════════════════════
 # HEADER
 # ══════════════════════════════════════════════════════
+
+
+def _chart_card_open(title: str, icon: str = "", subtitle: str = ""):
+    """Abre container HTML de card de grafico com header."""
+    icon_html = (
+        f'<div class="mg-chart-icon">{icon}</div>'
+        if icon
+        else ""
+    )
+    sub_html = (
+        f'<div class="mg-chart-subtitle">{subtitle}</div>'
+        if subtitle
+        else ""
+    )
+    st.markdown(
+        f'<div class="mg-chart-card">'
+        f'<div class="mg-chart-header">'
+        f'{icon_html}'
+        f'<div><div class="mg-chart-title">{title}</div>'
+        f'{sub_html}</div>'
+        f'</div>',
+        unsafe_allow_html=True,
+    )
+
+
+def _chart_card_close():
+    """Fecha container HTML de card de grafico."""
+    st.markdown("</div>", unsafe_allow_html=True)
 
 
 def _render_header():
@@ -2000,6 +2205,48 @@ def _render_status_bar(
 # ══════════════════════════════════════════════════════
 
 
+def _progress_bar(percent: float, label: str = "") -> None:
+    """Renderiza barra de progresso abaixo de um st.metric."""
+    clamped = max(0, min(percent, 100))
+    if percent >= 100:
+        css_class = "mg-success"
+    elif percent >= 80:
+        css_class = "mg-warning"
+    else:
+        css_class = "mg-danger"
+    lbl = (
+        f'<div class="mg-progress-label">{label}</div>'
+        if label
+        else ""
+    )
+    st.markdown(
+        f'<div class="mg-progress">'
+        f'<div class="mg-progress-fill {css_class}" '
+        f'style="width:{clamped:.1f}%"></div>'
+        f"</div>{lbl}",
+        unsafe_allow_html=True,
+    )
+
+
+def _status_badge(percent: float) -> None:
+    """Renderiza badge de status baseado no percentual."""
+    if percent >= 100:
+        cls = "mg-status-success"
+        txt = "Meta atingida"
+    elif percent >= 80:
+        cls = "mg-status-warning"
+        txt = "Em progresso"
+    else:
+        cls = "mg-status-danger"
+        txt = "Abaixo da meta"
+    st.markdown(
+        f'<div class="mg-status {cls}">'
+        f'<span class="mg-status-dot"></span>'
+        f"{txt}</div>",
+        unsafe_allow_html=True,
+    )
+
+
 def criar_cards_kpis_principais(kpis):
     """Cria cards de KPIs principais."""
     sac.divider(
@@ -2025,6 +2272,8 @@ def criar_cards_kpis_principais(kpis):
             f"{formatar_percentual(kpis['perc_ating_prata'])} da meta prata",
             delta_color=dc,
         )
+        _progress_bar(kpis["perc_ating_prata"])
+        _status_badge(kpis["perc_ating_prata"])
 
     with col2:
         dc = (
@@ -2040,6 +2289,8 @@ def criar_cards_kpis_principais(kpis):
             f"{formatar_percentual(kpis['perc_ating_prata'])} da meta prata",
             delta_color=dc,
         )
+        _progress_bar(kpis["perc_ating_prata"])
+        _status_badge(kpis["perc_ating_prata"])
 
     with col3:
         dc = (
@@ -2055,6 +2306,7 @@ def criar_cards_kpis_principais(kpis):
             f"{formatar_percentual(kpis['perc_proj'])} da meta prata",
             delta_color=dc,
         )
+        _progress_bar(kpis["perc_proj"])
 
     with col4:
         st.metric(
@@ -2086,6 +2338,7 @@ def criar_cards_kpis_principais(kpis):
             f"{formatar_percentual(kpis['perc_ating_ouro'])} atingido",
             delta_color=dc,
         )
+        _progress_bar(kpis["perc_ating_ouro"])
 
     with col2:
         mdr = kpis["meta_diaria_restante"]
@@ -2264,7 +2517,7 @@ def _template():
         "plot_bgcolor": "rgba(0,0,0,0)",
         "font": dict(
             family=(
-                "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif"
+                "Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif"
             ),
             size=12,
             color=ct["text"],
@@ -2621,6 +2874,125 @@ def criar_grafico_media_regiao(df_media):
     return _aplicar(fig, t)
 
 
+def criar_heatmap_regiao_produto(
+    df_ranking,
+    df_ating,
+    regioes_destaque=None,
+):
+    """Mapa de calor: ranking de regioes por produto.
+
+    Celulas mostram a posicao; hover exibe o % atingimento.
+    Escala: 1o lugar (verde) → ultimo (vermelho).
+    regioes_destaque: lista de regioes para destacar com
+    marcador visual (ex: regiao do gerente comercial).
+    """
+    t = _template()
+    ct = _chart_theme()
+
+    regioes = df_ranking.index.tolist()
+    produtos = df_ranking.columns.tolist()
+
+    z = df_ranking.values
+    n_regioes = len(regioes)
+
+    destaque = set(regioes_destaque or [])
+
+    # Labels do eixo Y com marcador para regioes destacadas
+    y_labels = [
+        f"★ {r}" if r in destaque else r
+        for r in regioes
+    ]
+
+    # Texto de hover com % atingimento
+    hover = []
+    for i, reg in enumerate(regioes):
+        row = []
+        for j, prod in enumerate(produtos):
+            ating = df_ating.iloc[i, j]
+            pos = int(z[i][j])
+            marca = " (sua regiao)" if reg in destaque else ""
+            row.append(
+                f"<b>{reg}{marca}</b><br>"
+                f"Produto: {prod}<br>"
+                f"Posicao: {pos}º<br>"
+                f"Atingimento: {ating:.1f}%"
+            )
+        hover.append(row)
+
+    # Texto exibido nas celulas: posicao + % atingimento
+    text = []
+    for i in range(len(regioes)):
+        row = []
+        for j in range(len(produtos)):
+            pos = int(z[i][j])
+            ating = df_ating.iloc[i, j]
+            row.append(f"{pos}º<br>{ating:.1f}%")
+        text.append(row)
+
+    # Escala invertida: 1 (melhor) = verde, max = vermelho
+    colorscale = [
+        [0.0, "#059669"],
+        [0.5, "#fbbf24"],
+        [1.0, "#dc2626"],
+    ]
+
+    fig = go.Figure(
+        data=go.Heatmap(
+            z=z,
+            x=produtos,
+            y=y_labels,
+            text=text,
+            texttemplate="%{text}",
+            textfont=dict(size=13, color=ct["text"]),
+            hovertext=hover,
+            hoverinfo="text",
+            colorscale=colorscale,
+            zmin=1,
+            zmax=n_regioes,
+            showscale=True,
+            colorbar=dict(
+                title="Posicao",
+                titlefont=dict(color=ct["text"]),
+                tickfont=dict(color=ct["text"]),
+                tickvals=list(range(1, n_regioes + 1)),
+                ticktext=[
+                    f"{i}º" for i in range(1, n_regioes + 1)
+                ],
+            ),
+            xgap=3,
+            ygap=3,
+        )
+    )
+
+    # Bordas de destaque nas linhas do usuario
+    if destaque:
+        for i, reg in enumerate(regioes):
+            if reg in destaque:
+                fig.add_shape(
+                    type="rect",
+                    x0=-0.5,
+                    x1=len(produtos) - 0.5,
+                    y0=i - 0.5,
+                    y1=i + 0.5,
+                    line=dict(
+                        color="#2563eb",
+                        width=3,
+                    ),
+                    layer="above",
+                )
+
+    fig.update_layout(
+        title="Mapa de Calor: Ranking por Produto x Regiao",
+        xaxis_title="Produto",
+        yaxis_title="Regiao",
+        height=max(380, 80 * n_regioes),
+        autosize=True,
+        yaxis=dict(autorange="reversed"),
+    )
+
+    return _aplicar(fig, t)
+
+
 # ══════════════════════════════════════════════════════
 # TAB RENDERERS
 # ══════════════════════════════════════════════════════
@@ -2742,7 +3114,13 @@ def _render_tab_produtos(
                         )
 
     fig = criar_grafico_produtos(df_prod)
+    _chart_card_open(
+        "Analise Completa de Produtos",
+        icon="📦",
+        subtitle="Realizado vs Meta, Atingimento, Projecao e Ticket Medio",
+    )
     st.plotly_chart(fig, width="stretch")
+    _chart_card_close()
 
     sac.divider(
         label="KPIs por Produto",
@@ -2761,6 +3139,10 @@ def _render_tab_regioes(
     mes,
     dia_atual,
     df_sup,
+    df_metas_produto=None,
+    categorias=None,
+    df_full=None,
+    df_metas_produto_full=None,
 ):
     """Renderiza aba de Regioes."""
     sac.divider(
@@ -2781,7 +3163,13 @@ def _render_tab_regioes(
 
     if not df_reg.empty:
         fig = criar_grafico_regional(df_reg)
+        _chart_card_open(
+            "Performance Regional",
+            icon="📍",
+            subtitle="Valor realizado, meta e atingimento por regiao",
+        )
         st.plotly_chart(fig, width="stretch")
+        _chart_card_close()
 
         sac.divider(
             label="KPIs por Regiao",
@@ -2792,6 +3180,66 @@ def _render_tab_regioes(
         exibir_tabela(df_reg)
     else:
         st.warning("Dados regionais nao disponiveis")
+
+    # ── Mapa de calor: ranking regiao x produto ───
+    # Visivel para admin, gestor e gerente_comercial
+    # Gerente comercial ve TODAS as regioes (dados pre-RLS)
+    # com destaque na(s) sua(s) regiao(oes)
+    from src.dashboard.rls import _obter_perfil_efetivo
+
+    perfil = _obter_perfil_efetivo()
+    perfil_role = perfil["perfil"] if perfil else None
+    pode_ver_heatmap = perfil_role in (
+        "admin", "gestor", "gerente_comercial",
+    )
+
+    if (
+        pode_ver_heatmap
+        and df_metas_produto is not None
+        and categorias is not None
+        and not df_metas_produto.empty
+    ):
+        # Usar dados completos (pre-RLS) para o heatmap
+        # comparativo, quando disponiveis
+        df_hm = (
+            df_full
+            if df_full is not None and not df_full.empty
+            else df
+        )
+        df_mp_hm = (
+            df_metas_produto_full
+            if df_metas_produto_full is not None
+            and not df_metas_produto_full.empty
+            else df_metas_produto
+        )
+
+        # Regioes do usuario (para destaque)
+        regioes_usuario = None
+        if perfil_role == "gerente_comercial":
+            regioes_usuario = perfil.get("escopo", [])
+
+        df_ranking, df_ating = calcular_heatmap_regiao_produto(
+            df_hm, df_mp_hm, categorias,
+        )
+
+        if not df_ranking.empty:
+            sac.divider(
+                label="Ranking por Produto x Regiao",
+                icon="grid-3x3",
+                align="left",
+                color="blue",
+            )
+            fig_hm = criar_heatmap_regiao_produto(
+                df_ranking, df_ating,
+                regioes_destaque=regioes_usuario,
+            )
+            _chart_card_open(
+                "Ranking Regiao x Produto",
+                icon="🗺️",
+                subtitle="Mapa de calor comparativo de atingimento",
+            )
+            st.plotly_chart(fig_hm, width="stretch")
+            _chart_card_close()
 
 
 def _render_tab_rankings(df, df_metas, df_sup, du_decorridos):
@@ -3457,9 +3905,14 @@ def _render_tab_analiticos(
     elif menu == "Producao por Regiao":
         df_mr = calcular_media_producao_regiao(df, df_sup)
         if not df_mr.empty:
-            st.info("Comparativo de produtividade media entre regioes")
+            _chart_card_open(
+                "Produtividade Media por Regiao",
+                icon="📊",
+                subtitle="Comparativo de produtividade media entre regioes",
+            )
             fig = criar_grafico_media_regiao(df_mr)
             st.plotly_chart(fig, width="stretch")
+            _chart_card_close()
             sac.divider(
                 label="Estatisticas Detalhadas",
                 icon="table",
@@ -3510,7 +3963,13 @@ def _render_tab_evolucao(df, ano, mes, kpis):
 
     if not df_ev.empty:
         fig = criar_grafico_evolucao(df_ev, kpis)
+        _chart_card_open(
+            "Evolucao Diaria de Vendas",
+            icon="📈",
+            subtitle="Acompanhamento diario e acumulado vs meta",
+        )
         st.plotly_chart(fig, width="stretch")
+        _chart_card_close()
 
         col1, col2, col3 = st.columns(3)
         with col1:
@@ -3771,21 +4230,47 @@ def _render_sidebar_usuario():
     if not user:
         return
 
-    sac.divider(
-        label="Usuario",
-        icon="person-circle",
-        align="center",
-        color="gray",
+    # Mapa de perfil -> classe CSS do badge
+    _badge_map = {
+        "admin": ("mg-badge-admin", "Admin"),
+        "gestor": ("mg-badge-gestor", "Gestor"),
+        "gerente_comercial": ("mg-badge-gerente", "Gerente"),
+        "supervisor": ("mg-badge-supervisor", "Supervisor"),
+    }
+    badge_cls, badge_lbl = _badge_map.get(
+        user["perfil"], ("mg-badge-admin", user["perfil"])
     )
 
-    perfil_label = PERFIS.get(user["perfil"], user["perfil"])
+    # Iniciais do usuario para avatar
+    partes = user["nome"].split()
+    iniciais = (
+        (partes[0][0] + partes[-1][0]).upper()
+        if len(partes) > 1
+        else partes[0][:2].upper()
+    )
+
+    escopo_html = ""
+    if (
+        user["perfil"] not in ("admin", "gestor")
+        and user.get("escopo")
+    ):
+        escopo_txt = ", ".join(user["escopo"])
+        escopo_html = (
+            f'<div style="font-size:0.68rem;'
+            f"color:var(--mg-text-secondary);"
+            f'margin-top:2px">{escopo_txt}</div>'
+        )
+
     st.markdown(
-        f"**{user['nome']}**  \n<small style='opacity:0.6'>{perfil_label}</small>",
+        f'<div class="mg-sidebar-user">'
+        f'<div class="mg-avatar">{iniciais}</div>'
+        f'<div class="mg-user-info">'
+        f'<div class="mg-user-name">{user["nome"]}</div>'
+        f'<span class="mg-badge {badge_cls}">{badge_lbl}</span>'
+        f"{escopo_html}"
+        f"</div></div>",
         unsafe_allow_html=True,
     )
-
-    if user["perfil"] not in ("admin", "gestor") and user.get("escopo"):
-        st.caption(f"Escopo: {', '.join(user['escopo'])}")
 
     col_cfg, col_sair = st.columns(2)
 
@@ -3962,7 +4447,51 @@ def main():
             st.cache_data.clear()
             st.rerun()
 
+    # ── Config: renderiza sem carregar contratos ──────
+    if st.session_state.get("mostrar_config"):
+        if st.button("← Voltar ao Dashboard"):
+            st.session_state["mostrar_config"] = False
+            st.rerun()
+
+        user = usuario_logado()
+        lojas_cfg, regioes_cfg = carregar_lojas_regioes()
+
+        if user and user["perfil"] == "admin":
+            sac.divider(
+                label="Gerenciamento de Usuarios",
+                icon="people",
+                align="left",
+                color="blue",
+            )
+            render_pagina_usuarios(
+                regioes=regioes_cfg,
+                lojas=lojas_cfg,
+            )
+
+            sac.divider(
+                label="Gerenciamento de Feriados",
+                icon="calendar-event",
+                align="left",
+                color="blue",
+            )
+            render_pagina_feriados()
+        else:
+            sac.divider(
+                label="Minha Conta",
+                icon="person-gear",
+                align="left",
+                color="blue",
+            )
+            render_pagina_usuarios()
+        return
+
+    # ── Dashboard: carrega contratos apenas aqui ──────
     try:
+        skeleton_ph = st.empty()
+        skeleton_ph.container()
+        with skeleton_ph:
+            _render_skeleton()
+
         with st.status(
             "Carregando dados...", expanded=False
         ) as _status:
@@ -4034,6 +4563,9 @@ def main():
                 state="complete",
             )
 
+        # Limpar skeleton apos carregamento
+        skeleton_ph.empty()
+
         # ── Diagnostico de pontuacao ─────────────
         diag = st.session_state.get("_diag_pontuacao")
         if diag:
@@ -4089,44 +4621,6 @@ def main():
                         + ", ".join(sem_match)
                     )
 
-        # ── Configuracoes (toggle via sidebar) ────
-        if st.session_state.get("mostrar_config"):
-            if st.button("← Voltar ao Dashboard"):
-                st.session_state["mostrar_config"] = False
-                st.rerun()
-
-            user = usuario_logado()
-            if user and user["perfil"] == "admin":
-                sac.divider(
-                    label="Gerenciamento de Usuarios",
-                    icon="people",
-                    align="left",
-                    color="blue",
-                )
-                regioes_cfg = (
-                    sorted(df["REGIAO"].unique().tolist())
-                    if not df.empty and "REGIAO" in df.columns
-                    else []
-                )
-                lojas_cfg = (
-                    sorted(df["LOJA"].unique().tolist())
-                    if not df.empty and "LOJA" in df.columns
-                    else []
-                )
-                render_pagina_usuarios(
-                    regioes=regioes_cfg,
-                    lojas=lojas_cfg,
-                )
-            else:
-                sac.divider(
-                    label="Minha Conta",
-                    icon="person-gear",
-                    align="left",
-                    color="blue",
-                )
-                render_pagina_usuarios()
-            return
-
         if df.empty and df_analise.empty and df_cancelados.empty:
             st.warning("Nenhum dado encontrado para o periodo selecionado.")
             return
@@ -4142,6 +4636,10 @@ def main():
             })
             _render_tab_em_analise(df_analise, df_sup)
             return
+
+        # ── Copias pre-RLS para heatmap comparativo ──
+        df_full = df.copy()
+        df_metas_produto_full = df_metas_produto.copy()
 
         # ── RLS: filtrar dados por perfil ─────────
         df = aplicar_rls(df)
@@ -4301,6 +4799,10 @@ def main():
                 mes,
                 dia_atual,
                 df_sup_f,
+                df_metas_prod_f,
+                categorias,
+                df_full,
+                df_metas_produto_full,
             )
         elif tab == "Rankings":
             _render_tab_rankings(

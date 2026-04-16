@@ -4,6 +4,66 @@
  * definidas por _aplicar_tema() em app.py.
  */
 
+/* ── Typography: Inter ──────────────────────────── */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
+
+html, body, .stApp,
+[data-testid="stAppViewContainer"],
+.main, .main .block-container,
+section[data-testid="stSidebar"],
+[data-testid="stHeader"],
+input, select, textarea, button {
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont,
+        'Segoe UI', Roboto, sans-serif !important;
+}
+
+/* Numeros com feature tabular para alinhamento */
+[data-testid="stMetricValue"] > div,
+.mg-progress-label,
+table td {
+    font-feature-settings: 'tnum' 1;
+}
+
+/* ── Spacing Tokens ─────────────────────────────── */
+:root {
+    --mg-space-xs: 4px;
+    --mg-space-sm: 8px;
+    --mg-space-md: 12px;
+    --mg-space-lg: 16px;
+    --mg-space-xl: 24px;
+    --mg-space-2xl: 32px;
+    --mg-space-3xl: 48px;
+    --mg-radius-sm: 6px;
+    --mg-radius-md: 10px;
+    --mg-radius-lg: 14px;
+}
+
+/* ── Theme Transition ───────────────────────────── */
+html, body, .stApp,
+[data-testid="stAppViewContainer"],
+.main, .main .block-container,
+section[data-testid="stSidebar"],
+section[data-testid="stSidebar"] > div,
+[data-testid="stHeader"],
+[data-testid="stBottomBlockContainer"],
+[data-testid="stMetric"],
+[data-testid="stExpander"],
+[data-testid="stExpander"] > details,
+[data-testid="stAlert"],
+.stButton > button,
+[data-baseweb="select"] > div,
+[data-baseweb="input"],
+.status-bar,
+.mg-chart-card,
+.mg-sidebar-user,
+.mg-avatar {
+    transition:
+        background-color 0.3s ease,
+        color 0.3s ease,
+        border-color 0.3s ease,
+        box-shadow 0.3s ease !important;
+}
+
 /* ── Text ────────────────────────────────────────── */
 p, span, label, li, td, th,
 h1, h2, h3, h4, h5, h6,
@@ -15,21 +75,83 @@ h1, h2, h3, h4, h5, h6,
     color: var(--mg-text-secondary) !important;
 }
 
+/* ── Container Queries: KPI cards ────────────────── */
+/* Colunas do Streamlit viram container queries */
+div[data-testid="column"] {
+    container-type: inline-size;
+    container-name: kpi-col;
+}
+
+/* Card se adapta ao espaco da coluna, nao do viewport */
+@container kpi-col (max-width: 200px) {
+    [data-testid="stMetric"] {
+        padding: 0.75rem 0.5rem !important;
+    }
+    [data-testid="stMetricValue"] > div {
+        font-size: 1.1rem !important;
+    }
+    [data-testid="stMetricLabel"] > div,
+    [data-testid="stMetricLabel"] p {
+        font-size: 0.68rem !important;
+    }
+    [data-testid="stMetric"] [data-testid="stMetricDelta"] {
+        font-size: 0.68rem !important;
+    }
+}
+
+@container kpi-col (min-width: 201px) and (max-width: 280px) {
+    [data-testid="stMetricValue"] > div {
+        font-size: 1.3rem !important;
+    }
+    [data-testid="stMetricLabel"] > div,
+    [data-testid="stMetricLabel"] p {
+        font-size: 0.75rem !important;
+    }
+}
+
+@container kpi-col (min-width: 350px) {
+    [data-testid="stMetricValue"] > div {
+        font-size: 1.6rem !important;
+    }
+}
+
 /* ── KPI Metric Cards ────────────────────────────── */
 [data-testid="stMetric"] {
     background-color: var(--mg-secondary-bg) !important;
     border-color: var(--mg-card-border) !important;
     box-shadow: 0 2px 8px var(--mg-shadow) !important;
     padding: 1.25rem 1rem;
-    border-radius: 10px;
+    border-radius: var(--mg-radius-md);
     border-width: 1px;
     border-style: solid;
     transition: transform 0.2s ease, box-shadow 0.2s ease;
 }
 
 [data-testid="stMetric"]:hover {
-    transform: translateY(-2px);
+    transform: translateY(-3px) scale(1.01);
     box-shadow: 0 8px 24px var(--mg-shadow-hover) !important;
+}
+
+/* Glow sutil na faixa lateral colorida ao hover */
+div[data-testid="column"]:nth-child(1) [data-testid="stMetric"]:hover {
+    box-shadow:
+        0 8px 24px var(--mg-shadow-hover),
+        -3px 0 12px rgba(59, 130, 246, 0.15) !important;
+}
+div[data-testid="column"]:nth-child(2) [data-testid="stMetric"]:hover {
+    box-shadow:
+        0 8px 24px var(--mg-shadow-hover),
+        -3px 0 12px rgba(13, 148, 136, 0.15) !important;
+}
+div[data-testid="column"]:nth-child(3) [data-testid="stMetric"]:hover {
+    box-shadow:
+        0 8px 24px var(--mg-shadow-hover),
+        -3px 0 12px rgba(217, 119, 6, 0.15) !important;
+}
+div[data-testid="column"]:nth-child(4) [data-testid="stMetric"]:hover {
+    box-shadow:
+        0 8px 24px var(--mg-shadow-hover),
+        -3px 0 12px rgba(5, 150, 105, 0.15) !important;
 }
 
 /* Label */
@@ -154,7 +276,7 @@ button[kind="secondary"]:hover {
     background-color: var(--mg-secondary-bg) !important;
     border-color: var(--mg-card-border) !important;
     color: var(--mg-text) !important;
-    border-radius: 10px !important;
+    border-radius: var(--mg-radius-md) !important;
 }
 
 [data-testid="stExpander"] summary {
@@ -169,7 +291,7 @@ button[kind="secondary"]:hover {
 }
 
 [data-testid="stDataFrame"] {
-    border-radius: 10px;
+    border-radius: var(--mg-radius-md);
     overflow: hidden;
 }
 
@@ -177,10 +299,84 @@ table th {
     background-color: var(--mg-secondary-bg) !important;
 }
 
-/* ── Plotly Charts ───────────────────────────────── */
+/* Zebra-striping: linhas alternadas */
+table tbody tr:nth-child(even) {
+    background-color: var(--mg-hover-bg) !important;
+}
+
+table tbody tr:hover {
+    background-color: var(--mg-hover-bg) !important;
+    filter: brightness(0.97);
+}
+
+/* Glide DataEditor (st.dataframe interno) */
+[data-testid="stDataFrame"] [role="row"]:nth-child(even) {
+    background-color: var(--mg-hover-bg) !important;
+}
+
+/* ── Chart Card Container ───────────────────────── */
+.mg-chart-card {
+    background: var(--mg-secondary-bg);
+    border: 1px solid var(--mg-card-border);
+    border-radius: var(--mg-radius-lg);
+    box-shadow: 0 2px 8px var(--mg-shadow);
+    padding: var(--mg-space-xl) var(--mg-space-xl) var(--mg-space-lg);
+    margin-bottom: var(--mg-space-lg);
+    transition: box-shadow 0.2s ease;
+}
+
+.mg-chart-card:hover {
+    box-shadow: 0 4px 16px var(--mg-shadow-hover);
+}
+
+.mg-chart-header {
+    display: flex;
+    align-items: center;
+    gap: var(--mg-space-sm);
+    margin-bottom: var(--mg-space-lg);
+    padding-bottom: var(--mg-space-md);
+    border-bottom: 1px solid var(--mg-border);
+}
+
+.mg-chart-icon {
+    width: 32px;
+    height: 32px;
+    border-radius: var(--mg-radius-sm);
+    background: var(--mg-hover-bg);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 1rem;
+    flex-shrink: 0;
+}
+
+.mg-chart-title {
+    font-size: 0.88rem !important;
+    font-weight: 700 !important;
+    color: var(--mg-text) !important;
+    letter-spacing: -0.01em;
+    margin: 0 !important;
+    line-height: 1.3;
+}
+
+.mg-chart-subtitle {
+    font-size: 0.72rem;
+    color: var(--mg-text-secondary);
+    margin-top: 2px;
+}
+
+/* Plotly dentro de chart-card: remover borda/shadow duplicado */
+.mg-chart-card [data-testid="stPlotlyChart"] {
+    border: none !important;
+    box-shadow: none !important;
+    border-radius: 0 !important;
+    padding: 0 !important;
+}
+
+/* ── Plotly Charts (standalone, fora de chart-card) ─ */
 [data-testid="stPlotlyChart"] {
-    border-radius: 10px;
-    padding: 0.5rem;
+    border-radius: var(--mg-radius-md);
+    padding: var(--mg-space-sm);
     border-color: var(--mg-card-border) !important;
     box-shadow: 0 1px 3px var(--mg-shadow) !important;
 }
@@ -287,7 +483,7 @@ table th {
 [data-testid="stAlert"] {
     background-color: var(--mg-secondary-bg) !important;
     color: var(--mg-text) !important;
-    border-radius: 10px !important;
+    border-radius: var(--mg-radius-md) !important;
 }
 
 /* ── Section Titles ──────────────────────────────── */
@@ -313,9 +509,9 @@ hr {
     background-color: var(--mg-secondary-bg) !important;
     border-color: var(--mg-card-border) !important;
     color: var(--mg-text) !important;
-    border-radius: 10px;
-    padding: 0.75rem 1rem;
-    margin-bottom: 1rem;
+    border-radius: var(--mg-radius-md);
+    padding: var(--mg-space-md) var(--mg-space-lg);
+    margin-bottom: var(--mg-space-lg);
     display: flex;
     align-items: center;
     gap: 0.75rem;
@@ -353,6 +549,121 @@ hr {
     color: var(--mg-text-secondary) !important;
     opacity: 1 !important;
     font-size: 0.875rem !important;
+}
+
+/* ── Sidebar: avatar + badge ────────────────────── */
+.mg-sidebar-user {
+    display: flex;
+    align-items: center;
+    gap: var(--mg-space-md);
+    padding: var(--mg-space-md) 0;
+}
+
+.mg-avatar {
+    width: 40px;
+    height: 40px;
+    border-radius: 50%;
+    background: linear-gradient(135deg, var(--mg-primary), #60a5fa);
+    color: #ffffff;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 700;
+    font-size: 0.9rem;
+    letter-spacing: 0.02em;
+    flex-shrink: 0;
+    box-shadow: 0 2px 8px rgba(37, 99, 235, 0.25);
+}
+
+.mg-user-info {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+}
+
+.mg-user-name {
+    font-weight: 700;
+    font-size: 0.88rem;
+    color: var(--mg-text);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.mg-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--mg-space-xs);
+    padding: 2px var(--mg-space-sm);
+    border-radius: 999px;
+    font-size: 0.65rem;
+    font-weight: 600;
+    letter-spacing: 0.03em;
+    text-transform: uppercase;
+    width: fit-content;
+}
+
+.mg-badge-admin {
+    background: rgba(37, 99, 235, 0.12);
+    color: var(--mg-primary);
+}
+
+.mg-badge-gestor {
+    background: rgba(124, 58, 237, 0.12);
+    color: #7c3aed;
+}
+
+.mg-badge-gerente {
+    background: rgba(13, 148, 136, 0.12);
+    color: #0d9488;
+}
+
+.mg-badge-supervisor {
+    background: rgba(217, 119, 6, 0.12);
+    color: #d97706;
+}
+
+/* Sidebar: secoes com separador sutil */
+.mg-sidebar-section {
+    padding-top: var(--mg-space-md);
+    margin-top: var(--mg-space-md);
+    border-top: 1px solid var(--mg-border);
+}
+
+/* ── Focus / Accessibility ──────────────────────── */
+/* Ring visivel para navegacao por teclado */
+.stButton > button:focus-visible,
+button[kind="secondary"]:focus-visible,
+[data-baseweb="select"] > div:focus-visible,
+[data-baseweb="input"]:focus-visible,
+[data-testid="stSelectbox"] > div > div:focus-visible,
+[data-testid="stTextInput"] input:focus-visible,
+[data-testid="stNumberInput"] input:focus-visible {
+    outline: 2px solid var(--mg-primary) !important;
+    outline-offset: 2px !important;
+    box-shadow: 0 0 0 4px rgba(37, 99, 235, 0.15) !important;
+}
+
+/* Tabs: focus visivel */
+[data-testid="stTabs"] button:focus-visible {
+    outline: 2px solid var(--mg-primary) !important;
+    outline-offset: -2px !important;
+    border-radius: 4px;
+}
+
+/* Expander summary: focus visivel */
+[data-testid="stExpander"] summary:focus-visible {
+    outline: 2px solid var(--mg-primary) !important;
+    outline-offset: 2px !important;
+    border-radius: 8px;
+}
+
+/* Botao ativo (pressed) */
+.stButton > button:active,
+button[kind="secondary"]:active {
+    transform: translateY(0px) scale(0.98) !important;
+    transition: transform 0.1s ease !important;
 }
 
 /* ── Scrollbar ───────────────────────────────────── */
@@ -469,9 +780,40 @@ iframe[title*="streamlit_antd_components"] {
         margin: 1rem 0 !important;
     }
 
-    /* Tabelas com scroll horizontal */
+    /* Tabelas com scroll horizontal + fade indicator */
     [data-testid="stDataFrame"] {
         overflow-x: auto;
+        position: relative;
+    }
+
+    /* Gradiente sutil indicando conteudo a direita */
+    [data-testid="stDataFrame"]::after {
+        content: "";
+        position: absolute;
+        top: 0;
+        right: 0;
+        bottom: 0;
+        width: 32px;
+        background: linear-gradient(
+            to right,
+            transparent,
+            var(--mg-secondary-bg)
+        );
+        pointer-events: none;
+        border-radius: 0 var(--mg-radius-md) var(--mg-radius-md) 0;
+        opacity: 0.8;
+    }
+
+    /* Hint de scroll abaixo da tabela */
+    [data-testid="stDataFrame"]::before {
+        content: "← deslize para ver mais →";
+        display: block;
+        text-align: center;
+        font-size: 0.65rem;
+        color: var(--mg-text-secondary);
+        padding: var(--mg-space-xs) 0;
+        letter-spacing: 0.04em;
+        opacity: 0.7;
     }
 
     /* Expanders */
@@ -484,6 +826,227 @@ iframe[title*="streamlit_antd_components"] {
         font-size: 0.82rem !important;
         padding: 0.4rem 0.75rem !important;
     }
+}
+
+/* ── Status Badges (KPI) ────────────────────────── */
+.mg-status {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--mg-space-xs);
+    padding: 3px var(--mg-space-sm);
+    border-radius: 999px;
+    font-size: 0.7rem;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+    margin-top: var(--mg-space-xs);
+    line-height: 1;
+}
+
+.mg-status-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    flex-shrink: 0;
+}
+
+.mg-status-success {
+    background: rgba(5, 150, 105, 0.1);
+    color: #059669;
+}
+.mg-status-success .mg-status-dot {
+    background: #059669;
+    box-shadow: 0 0 4px rgba(5, 150, 105, 0.4);
+}
+
+.mg-status-warning {
+    background: rgba(217, 119, 6, 0.1);
+    color: #d97706;
+}
+.mg-status-warning .mg-status-dot {
+    background: #d97706;
+    box-shadow: 0 0 4px rgba(217, 119, 6, 0.4);
+}
+
+.mg-status-danger {
+    background: rgba(220, 38, 38, 0.1);
+    color: #dc2626;
+}
+.mg-status-danger .mg-status-dot {
+    background: #dc2626;
+    box-shadow: 0 0 4px rgba(220, 38, 38, 0.4);
+}
+
+/* ── Progress Bar (KPI cards) ───────────────────── */
+.mg-progress {
+    width: 100%;
+    height: 4px;
+    background: var(--mg-border);
+    border-radius: 2px;
+    margin-top: 0.5rem;
+    overflow: hidden;
+}
+
+.mg-progress-fill {
+    height: 100%;
+    border-radius: 2px;
+    transition: width 0.6s cubic-bezier(0.22, 1, 0.36, 1);
+    min-width: 2px;
+}
+
+.mg-progress-fill.mg-success {
+    background: linear-gradient(90deg, #059669, #34d399);
+}
+
+.mg-progress-fill.mg-warning {
+    background: linear-gradient(90deg, #d97706, #fbbf24);
+}
+
+.mg-progress-fill.mg-danger {
+    background: linear-gradient(90deg, #dc2626, #f87171);
+}
+
+.mg-progress-fill.mg-primary {
+    background: linear-gradient(90deg, var(--mg-primary), #60a5fa);
+}
+
+/* Label de percentual sobre a barra */
+.mg-progress-label {
+    font-size: 0.68rem;
+    font-weight: 600;
+    color: var(--mg-text-secondary);
+    margin-top: 0.2rem;
+    text-align: right;
+}
+
+/* ── Skeleton Loading (shimmer) ─────────────────── */
+@keyframes shimmer {
+    0% { background-position: -400px 0; }
+    100% { background-position: 400px 0; }
+}
+
+.mg-skeleton {
+    display: flex;
+    flex-direction: column;
+    gap: var(--mg-space-lg);
+}
+
+.mg-skeleton-row {
+    display: flex;
+    gap: var(--mg-space-lg);
+}
+
+.mg-skeleton-card {
+    flex: 1;
+    background: var(--mg-secondary-bg);
+    border: 1px solid var(--mg-card-border);
+    border-radius: var(--mg-radius-md);
+    padding: 1.25rem 1rem;
+    border-left: 4px solid var(--mg-border);
+}
+
+.mg-skeleton-line {
+    height: 12px;
+    border-radius: 4px;
+    background: linear-gradient(
+        90deg,
+        var(--mg-border) 25%,
+        var(--mg-hover-bg) 50%,
+        var(--mg-border) 75%
+    );
+    background-size: 800px 100%;
+    animation: shimmer 1.8s ease-in-out infinite;
+}
+
+.mg-skeleton-line.lg {
+    height: 24px;
+    width: 60%;
+    margin-bottom: var(--mg-space-sm);
+}
+
+.mg-skeleton-line.sm {
+    height: 10px;
+    width: 80%;
+}
+
+.mg-skeleton-line.xs {
+    height: 8px;
+    width: 45%;
+    margin-top: var(--mg-space-sm);
+}
+
+.mg-skeleton-chart {
+    background: var(--mg-secondary-bg);
+    border: 1px solid var(--mg-card-border);
+    border-radius: var(--mg-radius-lg);
+    height: 300px;
+    overflow: hidden;
+}
+
+.mg-skeleton-chart-inner {
+    width: 100%;
+    height: 100%;
+    background: linear-gradient(
+        90deg,
+        var(--mg-border) 25%,
+        var(--mg-hover-bg) 50%,
+        var(--mg-border) 75%
+    );
+    background-size: 800px 100%;
+    animation: shimmer 1.8s ease-in-out infinite;
+    opacity: 0.4;
+}
+
+/* ── Animations: fade-in / slide-up ─────────────── */
+@keyframes fadeSlideUp {
+    from {
+        opacity: 0;
+        transform: translateY(12px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+/* KPI cards — stagger por coluna */
+[data-testid="stMetric"] {
+    animation: fadeSlideUp 0.4s ease-out both;
+}
+
+div[data-testid="column"]:nth-child(1) [data-testid="stMetric"] {
+    animation-delay: 0s;
+}
+div[data-testid="column"]:nth-child(2) [data-testid="stMetric"] {
+    animation-delay: 0.06s;
+}
+div[data-testid="column"]:nth-child(3) [data-testid="stMetric"] {
+    animation-delay: 0.12s;
+}
+div[data-testid="column"]:nth-child(4) [data-testid="stMetric"] {
+    animation-delay: 0.18s;
+}
+
+/* Charts */
+[data-testid="stPlotlyChart"] {
+    animation: fadeSlideUp 0.45s ease-out both;
+    animation-delay: 0.1s;
+}
+
+/* Tables */
+[data-testid="stDataFrame"],
+[data-testid="stTable"] {
+    animation: fadeSlideUp 0.4s ease-out both;
+    animation-delay: 0.08s;
+}
+
+/* Expanders */
+[data-testid="stExpander"] {
+    animation: fadeSlideUp 0.35s ease-out both;
+}
+
+/* Status bar */
+.status-bar {
+    animation: fadeSlideUp 0.35s ease-out both;
 }
 
 /* ── Responsive: Small mobile (<=480px) ──────────── */
@@ -503,5 +1066,108 @@ iframe[title*="streamlit_antd_components"] {
 
     .dashboard-header h1 {
         font-size: 1.1rem !important;
+    }
+}
+
+/* ── Print Stylesheet ───────────────────────────── */
+@media print {
+    /* Ocultar elementos interativos */
+    section[data-testid="stSidebar"],
+    [data-testid="stSidebarCollapsedControl"],
+    [data-testid="stHeader"],
+    [data-testid="stBottomBlockContainer"],
+    [data-testid="stStatusWidget"],
+    .stButton,
+    iframe,
+    .mg-skeleton {
+        display: none !important;
+    }
+
+    /* Layout full width */
+    .main .block-container {
+        max-width: 100% !important;
+        padding: 0 !important;
+        margin: 0 !important;
+    }
+
+    /* Forcar cores claras para impressao */
+    html, body, .stApp,
+    [data-testid="stAppViewContainer"],
+    .main {
+        background: #ffffff !important;
+        color: #1a1a2e !important;
+    }
+
+    /* Cards sem shadow, com borda fina */
+    [data-testid="stMetric"] {
+        box-shadow: none !important;
+        border: 1px solid #ddd !important;
+        break-inside: avoid;
+        page-break-inside: avoid;
+    }
+
+    /* KPI grid: 4 colunas por linha */
+    [data-testid="stHorizontalBlock"] {
+        display: flex !important;
+        flex-wrap: wrap !important;
+        gap: 8px !important;
+    }
+
+    [data-testid="column"] {
+        flex: 1 1 22% !important;
+        min-width: 0 !important;
+    }
+
+    /* Graficos: forcar background branco */
+    [data-testid="stPlotlyChart"],
+    .mg-chart-card {
+        box-shadow: none !important;
+        border: 1px solid #ddd !important;
+        break-inside: avoid;
+        page-break-inside: avoid;
+    }
+
+    /* Tabelas: page-break seguro */
+    [data-testid="stDataFrame"],
+    table {
+        break-inside: avoid;
+        page-break-inside: avoid;
+    }
+
+    /* Desabilitar animacoes */
+    * {
+        animation: none !important;
+        transition: none !important;
+    }
+
+    /* Header imprimivel */
+    .dashboard-header {
+        text-align: center;
+        border-bottom: 2px solid #1a1a2e;
+        padding-bottom: 8px;
+        margin-bottom: 16px;
+    }
+
+    .dashboard-header h1 {
+        color: #1a1a2e !important;
+        font-size: 1.5rem !important;
+    }
+
+    /* Status bar estilizada para print */
+    .status-bar {
+        background: #f5f5f5 !important;
+        border: 1px solid #ddd !important;
+        box-shadow: none !important;
+    }
+
+    /* Progress bar visivel no print */
+    .mg-progress-fill {
+        -webkit-print-color-adjust: exact;
+        print-color-adjust: exact;
+    }
+
+    .mg-status {
+        -webkit-print-color-adjust: exact;
+        print-color-adjust: exact;
     }
 }
