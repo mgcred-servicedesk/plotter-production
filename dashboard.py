@@ -376,7 +376,7 @@ def main():
         with tab1:
             st.markdown("### Análise de Produtos")
             fig_produtos = criar_grafico_produtos(df, df_metas, ano, mes, dia_atual)
-            st.plotly_chart(fig_produtos, use_container_width=True)
+            st.plotly_chart(fig_produtos, width="stretch")
             
             st.markdown("### Detalhamento por Produto")
             col1, col2 = st.columns(2)
@@ -412,13 +412,13 @@ def main():
                 height=400
             )
             
-            st.plotly_chart(fig_produto_lojas, use_container_width=True)
+            st.plotly_chart(fig_produto_lojas, width="stretch")
         
         with tab2:
             st.markdown("### Análise por Região")
             fig_regional = criar_grafico_regional(df, df_metas)
             if fig_regional:
-                st.plotly_chart(fig_regional, use_container_width=True)
+                st.plotly_chart(fig_regional, width="stretch")
             
             if 'REGIAO' in df.columns:
                 st.markdown("### Detalhamento Regional")
@@ -451,7 +451,7 @@ def main():
                     height=400
                 )
                 
-                st.plotly_chart(fig_lojas_regiao, use_container_width=True)
+                st.plotly_chart(fig_lojas_regiao, width="stretch")
         
         with tab3:
             st.markdown("### 🏆 Rankings")
@@ -461,12 +461,12 @@ def main():
             with col1:
                 st.markdown("#### Top 20 Lojas")
                 ranking_lojas = criar_tabela_ranking_lojas(df, df_metas, top_n=20)
-                st.dataframe(ranking_lojas, use_container_width=True, hide_index=True)
+                st.dataframe(ranking_lojas, width="stretch", hide_index=True)
             
             with col2:
                 st.markdown("#### Top 20 Consultores")
                 ranking_consultores = criar_tabela_ranking_consultores(df, top_n=20)
-                st.dataframe(ranking_consultores, use_container_width=True, hide_index=True)
+                st.dataframe(ranking_consultores, width="stretch", hide_index=True)
         
         with tab4:
             st.markdown("### 📋 Dados Detalhados")
@@ -510,7 +510,7 @@ def main():
             df_exibir['VALOR'] = df_exibir['VALOR'].apply(lambda x: f"R$ {x:,.2f}")
             df_exibir['pontos'] = df_exibir['pontos'].apply(lambda x: f"{x:,.0f}")
             
-            st.dataframe(df_exibir, use_container_width=True, hide_index=True)
+            st.dataframe(df_exibir, width="stretch", hide_index=True)
     
     except FileNotFoundError as e:
         st.error(f"❌ Erro ao carregar dados: {e}")

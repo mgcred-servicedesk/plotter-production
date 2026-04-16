@@ -857,7 +857,7 @@ def _render_tab_produtos(
     )
 
     fig_produtos = criar_grafico_produtos_completo(df_produtos)
-    st.plotly_chart(fig_produtos, use_container_width=True)
+    st.plotly_chart(fig_produtos, width="stretch")
 
     sac.divider(
         label="KPIs por Produto",
@@ -897,7 +897,7 @@ def _render_tab_regioes(
 
     if not df_regioes.empty:
         fig_regional = criar_grafico_regional(df_regioes)
-        st.plotly_chart(fig_regional, use_container_width=True)
+        st.plotly_chart(fig_regional, width="stretch")
 
         sac.divider(
             label="KPIs por Regiao",
@@ -1146,7 +1146,7 @@ def _render_tab_analiticos(
             st.info("Comparativo de produtividade media entre regioes")
 
             fig = criar_grafico_media_regiao(df_media_regiao)
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width="stretch")
 
             sac.divider(
                 label="Estatisticas Detalhadas",
@@ -1197,7 +1197,7 @@ def _render_tab_evolucao(df_filtrado, ano, mes, kpis):
 
     if not df_evolucao.empty:
         fig_evolucao = criar_grafico_evolucao_diaria(df_evolucao, kpis)
-        st.plotly_chart(fig_evolucao, use_container_width=True)
+        st.plotly_chart(fig_evolucao, width="stretch")
 
         col1, col2, col3 = st.columns(3)
 
@@ -1343,7 +1343,7 @@ def _render_sidebar_usuario():
             f"Escopo: {', '.join(user['escopo'])}"
         )
 
-    if st.button("Sair", use_container_width=True):
+    if st.button("Sair", width="stretch"):
         fazer_logout()
         st.rerun()
 

@@ -4099,6 +4099,54 @@ def _render_tab_em_analise(df_analise, df_sup):
         )
         exibir_tabela(df_prod, colunas_moeda=["Valor", "Ticket Medio"])
 
+    # ── Breakdown BMG Med e Vida Familiar ───────
+    sac.divider(
+        label="BMG Med e Vida Familiar (Em Análise)",
+        icon="heart-pulse",
+        align="left",
+        color="gray",
+    )
+
+    if "TIPO OPER." in df_a.columns:
+        # Contar BMG MED e Seguro em análise
+        mask_bmg_med = df_a["TIPO OPER."] == "BMG MED"
+        mask_seguro = df_a["TIPO OPER."] == "Seguro"
+
+        # Breakdown por status para BMG MED
+        if mask_bmg_med.any():
+            st.markdown("**BMG Med - Status:**")
+            df_bmg_status = (
+                df_a[mask_bmg_med]
+                .groupby("STATUS_BANCO")
+                .size()
+                .reset_index(name="Quantidade")
+            )
+            st.dataframe(df_bmg_status, width="stretch", hide_index=True)
+
+        # Breakdown por sub-status para Seguro
+        if mask_seguro.any():
+            st.markdown("**Vida Familiar (Seguro) - Status:**")
+            df_seg_status = (
+                df_a[mask_seguro]
+                .groupby("STATUS_BANCO")
+                .size()
+                .reset_index(name="Quantidade")
+            )
+            st.dataframe(df_seg_status, width="stretch", hide_index=True)
+
+        # Resumo geral
+        total_bmg = int(mask_bmg_med.sum())
+        total_seguro = int(mask_seguro.sum())
+
+        if total_bmg > 0 or total_seguro > 0:
+            st.info(
+                f"📌 **Resumo:** {total_bmg} BMG Med + {total_seguro} "
+                f"Vida Familiar em análise. "
+                f"Estes contratos aparecerão nos 'Contratos Pagos' "
+                f"quando o Sub-Status mudar para 'Liquidada'. "
+                f"Valor não é contabilizado (apenas quantidade)."
+            )
+
     # ── Breakdown por loja ────────────────────────
     sac.divider(
         label="Por Loja",

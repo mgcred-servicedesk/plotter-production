@@ -132,7 +132,7 @@ def _render_lista_feriados(ano: int):
     st.dataframe(
         df_exibir,
         hide_index=True,
-        use_container_width=True,
+        width="stretch",
     )
 
     # Botao de remover
