@@ -33,12 +33,14 @@ from src.dashboard.auth import (
     usuario_logado,
 )
 from src.dashboard.components.tables import exibir_tabela
+from src.dashboard.permissions import pode_ver
 from src.dashboard.rls import (
     aplicar_rls,
     aplicar_rls_metas,
     aplicar_rls_supervisores,
     obter_regioes_permitidas,
 )
+from src.dashboard.tabs.consultor import render_tab_consultor
 from src.dashboard.user_mgmt import render_pagina_usuarios
 from src.dashboard.feriados_mgmt import render_pagina_feriados
 from src.shared.dias_uteis import calcular_dias_uteis
@@ -869,6 +871,99 @@ def carregar_lojas_regioes() -> tuple[list[str], list[str]]:
         if reg:
             regioes_set.add(reg)
     return sorted(lojas), sorted(regioes_set)
+
+
+def _fetch_metas_consultor(
+    mes: int, ano: int, loja: str,
+) -> dict:
+    """
+    Carrega Meta Prata/Ouro individuais (escopo CONSULTOR)
+    da loja informada.
+    """
+    periodo = carregar_periodo(mes, ano)
+    if not periodo or not loja:
+        return {"meta_prata": 0.0, "meta_ouro": 0.0}
+
+    resp = (
+        _sb()
+        .table("metas")
+        .select("produto, escopo, nivel, valor, lojas(nome)")
+        .eq("periodo_id", periodo["id"])
+        .eq("escopo", "CONSULTOR")
+        .eq("produto", "GERAL")
+        .in_("nivel", ["PRATA", "OURO"])
+        .execute()
+    )
+
+    meta_prata = 0.0
+    meta_ouro = 0.0
+    for m in resp.data or []:
+        loja_m = (m.get("lojas") or {}).get("nome", "")
+        if loja_m != loja:
+            continue
+        valor = float(m.get("valor", 0) or 0)
+        if m.get("nivel") == "PRATA":
+            meta_prata = valor
+        elif m.get("nivel") == "OURO":
+            meta_ouro = valor
+
+    return {"meta_prata": meta_prata, "meta_ouro": meta_ouro}
+
+
+@st.cache_data(ttl=21600)
+def _metas_consultor_atual(
+    mes: int, ano: int, loja: str,
+) -> dict:
+    """Metas CONSULTOR — mes corrente. TTL 6h."""
+    return _fetch_metas_consultor(mes, ano, loja)
+
+
+@st.cache_data(ttl=86400)
+def _metas_consultor_historico(
+    mes: int, ano: int, loja: str,
+) -> dict:
+    """Metas CONSULTOR — historico. TTL 24h."""
+    return _fetch_metas_consultor(mes, ano, loja)
+
+
+def carregar_metas_consultor(
+    mes: int, ano: int, loja: str,
+) -> dict:
+    """
+    Retorna ``{"meta_prata": float, "meta_ouro": float}``
+    com as metas individuais (escopo CONSULTOR) para a
+    loja do consultor logado.
+    """
+    if _eh_mes_atual(mes, ano):
+        return _metas_consultor_atual(mes, ano, loja)
+    return _metas_consultor_historico(mes, ano, loja)
+
+
+@st.cache_data(ttl=86400)
+def carregar_consultores_cadastro() -> list[str]:
+    """
+    Retorna lista ordenada de nomes de consultores
+    cadastrados em ``consultores`` (ativos).
+
+    Usado em selects de configuracao (cadastro de
+    usuario e 'Visualizar Como'). TTL 24h.
+    """
+    resp = (
+        _sb()
+        .table("consultores")
+        .select("nome, status")
+        .order("nome")
+        .execute()
+    )
+    nomes: list[str] = []
+    for row in resp.data or []:
+        status = (row.get("status") or "").lower()
+        if status and "ativo" not in status:
+            continue
+        nome = row.get("nome", "")
+        if nome:
+            nomes.append(nome)
+    return sorted(set(nomes))
 
 
 @st.cache_data(ttl=21600)
@@ -4360,6 +4455,7 @@ def _render_sidebar_visualizar_como(df):
         "Admin (padrao)",
         "Gerente Comercial",
         "Supervisor",
+        "Consultor",
     ]
     sel = st.selectbox(
         "Simular perfil",
@@ -4396,6 +4492,25 @@ def _render_sidebar_visualizar_como(df):
             st.session_state["visualizar_como"] = {
                 "perfil": "supervisor",
                 "escopo": escopo,
+            }
+        else:
+            st.session_state.pop("visualizar_como", None)
+    elif sel == "Consultor":
+        consultores = (
+            sorted(df["CONSULTOR"].dropna().unique().tolist())
+            if "CONSULTOR" in df.columns
+            else []
+        )
+        sel_cons = st.selectbox(
+            "Consultor",
+            [""] + consultores,
+            key="sel_visualizar_consultor",
+            help="Digite parte do nome para filtrar.",
+        )
+        if sel_cons:
+            st.session_state["visualizar_como"] = {
+                "perfil": "consultor",
+                "escopo": [sel_cons],
             }
         else:
             st.session_state.pop("visualizar_como", None)
@@ -4503,6 +4618,7 @@ def main():
 
         user = usuario_logado()
         lojas_cfg, regioes_cfg = carregar_lojas_regioes()
+        consultores_cfg = carregar_consultores_cadastro()
 
         if user and user["perfil"] == "admin":
             sac.divider(
@@ -4514,6 +4630,7 @@ def main():
             render_pagina_usuarios(
                 regioes=regioes_cfg,
                 lojas=lojas_cfg,
+                consultores=consultores_cfg,
             )
 
             sac.divider(
@@ -4799,29 +4916,46 @@ def main():
             dia_atual,
             df_sup_f,
         )
-        criar_cards_kpis_principais(kpis)
-        criar_cards_pipeline(df_analise_f, kpis)
+
+        # ── Perfil efetivo (para gating de UI) ────
+        from src.dashboard.rls import _obter_perfil_efetivo
+        perfil_efetivo = _obter_perfil_efetivo()
+        role = (
+            perfil_efetivo["perfil"]
+            if perfil_efetivo
+            else None
+        )
+
+        # Consultor nao ve cards gerenciais; sua aba
+        # renderiza os cards pessoais
+        if pode_ver("cards_gerenciais", role):
+            criar_cards_kpis_principais(kpis)
+            criar_cards_pipeline(df_analise_f, kpis)
 
         # ── Navegacao principal ───────────────────
-        user = usuario_logado()
-        tab_items = [
-            sac.TabsItem(label="Produtos", icon="box"),
-            sac.TabsItem(label="Regioes", icon="geo-alt"),
-            sac.TabsItem(label="Rankings", icon="trophy"),
-            sac.TabsItem(label="Analiticos", icon="graph-up"),
-            sac.TabsItem(
-                label="Evolucao",
-                icon="calendar-range",
-            ),
-            sac.TabsItem(
-                label="Em Analise",
-                icon="hourglass-split",
-            ),
-            sac.TabsItem(
-                label="Detalhes",
-                icon="clipboard-data",
-            ),
+
+        # Monta abas conforme a matriz de permissoes
+        abas_disponiveis = [
+            ("tab_consultor", "Meu Dashboard", "person-badge"),
+            ("tab_produtos", "Produtos", "box"),
+            ("tab_regioes", "Regioes", "geo-alt"),
+            ("tab_rankings_lojas", "Rankings", "trophy"),
+            ("tab_analiticos", "Analiticos", "graph-up"),
+            ("tab_evolucao", "Evolucao", "calendar-range"),
+            ("tab_em_analise", "Em Analise", "hourglass-split"),
+            ("tab_detalhes", "Detalhes", "clipboard-data"),
         ]
+        tab_items = [
+            sac.TabsItem(label=rotulo, icon=icone)
+            for chave, rotulo, icone in abas_disponiveis
+            if pode_ver(chave, role)
+        ]
+
+        if not tab_items:
+            st.warning(
+                "Nenhuma aba disponivel para seu perfil."
+            )
+            return
 
         tab = sac.tabs(
             items=tab_items,
@@ -4829,7 +4963,52 @@ def main():
             variant="outline",
         )
 
-        if tab == "Produtos":
+        if tab == "Meu Dashboard":
+            # Escopo do consultor (nome vindo do escopo)
+            escopo = (
+                perfil_efetivo.get("escopo", [])
+                if perfil_efetivo
+                else []
+            )
+            consultor_nome = escopo[0] if escopo else ""
+            loja_consultor = None
+            if (
+                not df_f.empty
+                and "LOJA" in df_f.columns
+                and not df_f["LOJA"].isna().all()
+            ):
+                loja_consultor = df_f["LOJA"].iloc[0]
+            elif (
+                consultor_nome
+                and not df_full.empty
+                and "CONSULTOR" in df_full.columns
+            ):
+                sub = df_full[
+                    df_full["CONSULTOR"] == consultor_nome
+                ]
+                if not sub.empty and "LOJA" in sub.columns:
+                    loja_consultor = sub["LOJA"].iloc[0]
+
+            metas_cons = (
+                carregar_metas_consultor(
+                    mes, ano, loja_consultor,
+                )
+                if loja_consultor
+                else {"meta_prata": 0.0, "meta_ouro": 0.0}
+            )
+
+            render_tab_consultor(
+                df_meu=df_f,
+                df_analise_meu=df_analise_f,
+                df_cancelados_meu=df_cancelados_f,
+                df_full=df_full,
+                metas_consultor=metas_cons,
+                consultor_nome=consultor_nome,
+                ano=ano,
+                mes=mes,
+                dia_atual=dia_atual,
+            )
+        elif tab == "Produtos":
             _render_tab_produtos(
                 df_f,
                 df_metas_prod_f,

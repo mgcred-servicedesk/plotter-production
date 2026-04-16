@@ -6,10 +6,11 @@ usuário logado, garantindo que cada papel veja apenas
 os dados autorizados.
 
 Perfis:
-    admin            → sem filtro (todos os dados)
-    gestor           → sem filtro (visao global)
+    admin             → sem filtro (todos os dados)
+    gestor            → sem filtro (visao global)
     gerente_comercial → filtra por REGIAO (escopo = regiões)
-    supervisor       → filtra por LOJA (escopo = lojas)
+    supervisor        → filtra por LOJA (escopo = lojas)
+    consultor         → filtra por CONSULTOR (escopo = nomes)
 """
 
 from typing import Optional
@@ -38,6 +39,7 @@ def aplicar_rls(
     df: pd.DataFrame,
     coluna_regiao: str = "REGIAO",
     coluna_loja: str = "LOJA",
+    coluna_consultor: str = "CONSULTOR",
 ) -> pd.DataFrame:
     """
     Aplica filtro de segurança por linha no DataFrame.
@@ -46,6 +48,7 @@ def aplicar_rls(
         df: DataFrame a ser filtrado.
         coluna_regiao: Nome da coluna de região.
         coluna_loja: Nome da coluna de loja.
+        coluna_consultor: Nome da coluna de consultor.
 
     Returns:
         DataFrame filtrado conforme o perfil do usuário.
@@ -67,6 +70,10 @@ def aplicar_rls(
     if role == "supervisor" and escopo:
         if coluna_loja in df.columns:
             return df[df[coluna_loja].isin(escopo)].copy()
+
+    if role == "consultor" and escopo:
+        if coluna_consultor in df.columns:
+            return df[df[coluna_consultor].isin(escopo)].copy()
 
     return df
 
@@ -119,6 +126,17 @@ def aplicar_rls_supervisores(
                 df_supervisores[coluna_loja].isin(lojas_permitidas)
             ].copy()
 
+    if role == "consultor" and escopo:
+        # Consultor vê apenas supervisores da(s) loja(s)
+        # onde ele tem contratos.
+        if coluna_loja in df_supervisores.columns and (
+            coluna_loja in df_dados.columns
+        ):
+            lojas_permitidas = df_dados[coluna_loja].unique()
+            return df_supervisores[
+                df_supervisores[coluna_loja].isin(lojas_permitidas)
+            ].copy()
+
     return df_supervisores
 
 
@@ -148,5 +166,5 @@ def obter_regioes_permitidas(
             return ["Todas"] + filtradas
         return filtradas
 
-    # Supervisor: não exibe filtro de região
+    # Supervisor e consultor: não exibem filtro de região
     return []
