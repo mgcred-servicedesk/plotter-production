@@ -762,10 +762,11 @@ def consolidar_dados(
     Returns:
         (df_consolidado, df_metas, df_supervisores)
     """
+    # Cache version bump = 3 (forca recalculo apos fix super_conta)
     if _eh_mes_atual(mes, ano):
-        resultado = _consolidar_atual(mes, ano)
+        resultado = _consolidar_atual(mes, ano, _cache_version=3)
     else:
-        resultado = _consolidar_historico(mes, ano)
+        resultado = _consolidar_historico(mes, ano, _cache_version=3)
 
     df, df_metas, df_supervisores, diag = resultado
 
@@ -780,6 +781,7 @@ def consolidar_dados(
 def _consolidar_atual(
     mes: int,
     ano: int,
+    _cache_version: int = 3,  # bump v3: fix super conta
 ) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, Optional[dict]]:
     """Consolidacao — mes corrente. TTL 30min."""
     return _executar_consolidacao(mes, ano)
@@ -789,6 +791,7 @@ def _consolidar_atual(
 def _consolidar_historico(
     mes: int,
     ano: int,
+    _cache_version: int = 3,  # bump v3: fix super conta
 ) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, Optional[dict]]:
     """Consolidacao — historico. TTL 24h."""
     return _executar_consolidacao(mes, ano)
@@ -914,7 +917,13 @@ def _executar_consolidacao(
 
     # Super Conta: CNC com subtipo especifico — conta valor/pontos
     # como CNC e tambem e contado como producao Super Conta
-    df["is_super_conta"] = df["SUBTIPO"] == "SUPER CONTA"
+    # Usar strip() e upper() para ser robusto contra espacos
+    df["is_super_conta"] = (
+        df["SUBTIPO"]
+        .astype(str)
+        .str.strip()
+        .str.upper() == "SUPER CONTA"
+    )
 
     # Classificacoes por TIPO OPER. (mesma logica do dashboard original)
     col_tipo_oper = "TIPO OPER."

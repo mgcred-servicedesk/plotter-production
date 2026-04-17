@@ -120,11 +120,40 @@ div[data-testid="column"] {
     background-color: var(--mg-secondary-bg) !important;
     border-color: var(--mg-card-border) !important;
     box-shadow: 0 2px 8px var(--mg-shadow) !important;
-    padding: 1.25rem 1rem;
+    padding: 1rem 0.875rem;
     border-radius: var(--mg-radius-md);
     border-width: 1px;
     border-style: solid;
     transition: transform 0.2s ease, box-shadow 0.2s ease;
+    margin-bottom: 0;
+}
+
+/* Container interno dos cards para alinhamento */
+[data-testid="stMetric"] + div {
+    margin-top: 0 !important;
+}
+
+/* Espaçamento entre linhas de cards */
+.row-spacing {
+    height: 16px;
+}
+
+/* Compactação de margens nos cards */
+[data-testid="stMetric"] [data-testid="stMetricDelta"] {
+    margin-top: 2px !important;
+}
+
+/* Elementos small dentro dos cards KPI */
+[data-testid="stMetric"] ~ div small,
+[data-testid="stMetric"] + div small {
+    display: block;
+    margin-top: 4px;
+    line-height: 1.3;
+}
+
+/* Container interno do card para agrupamento visual */
+[data-testid="stMetric"] > div[data-testid="stVerticalBlock"] {
+    gap: 0 !important;
 }
 
 [data-testid="stMetric"]:hover {

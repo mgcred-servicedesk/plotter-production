@@ -29,7 +29,13 @@ from src.dashboard.auth import (
     usuario_logado,
 )
 from src.dashboard.components.tables import exibir_tabela
-from src.dashboard.kpis.gerais import calcular_kpis_gerais
+from src.dashboard.kpis.gerais import (
+    calcular_kpis_gerais,
+    calcular_kpis_analise,
+    calcular_kpis_cancelados,
+    calcular_medias_du_por_nivel,
+    calcular_metas_produto_diarias,
+)
 from src.dashboard.loaders import (
     carregar_categorias,
     carregar_consultores_cadastro,
@@ -62,8 +68,8 @@ from src.dashboard.ui.header import (
     render_status_bar,
 )
 from src.dashboard.ui.kpi_cards import (
-    criar_cards_kpis_principais,
-    criar_cards_pipeline,
+    criar_cards_indicadores_principais,
+    criar_cards_metas_produto,
 )
 from src.dashboard.ui.skeleton import render_skeleton
 from src.dashboard.ui.theme import (
@@ -322,7 +328,11 @@ def main():
 
         _ano_padrao = st.session_state.get("ano_padrao", 2026)
         _mes_padrao = st.session_state.get("mes_padrao", 1)
-        _idx_ano = _anos.index(_ano_padrao) if _ano_padrao in _anos else len(_anos) - 1
+        _idx_ano = (
+            _anos.index(_ano_padrao)
+            if _ano_padrao in _anos
+            else len(_anos) - 1
+        )
 
         ano = st.selectbox("Ano", _anos, index=_idx_ano)
         mes = st.selectbox(
@@ -478,6 +488,22 @@ def main():
                     ),
                     "VALOR",
                 ] = 0
+            # Aplicar filtro de 30 dias para analise e cancelados
+            from datetime import datetime, timedelta
+
+            data_corte = datetime.now() - timedelta(days=30)
+
+            if not df_analise.empty and "DATA_CADASTRO" in df_analise.columns:
+                df_analise = df_analise[
+                    df_analise["DATA_CADASTRO"] >= data_corte
+                ].copy()
+
+            if not df_cancelados.empty and \
+                    "DATA_CADASTRO" in df_cancelados.columns:
+                df_cancelados = df_cancelados[
+                    df_cancelados["DATA_CADASTRO"] >= data_corte
+                ].copy()
+
             if _is_admin:
                 n_pagos = len(df)
                 n_analise = len(df_analise)
@@ -577,6 +603,12 @@ def main():
                         + ", ".join(sem_match)
                     )
 
+        # Calcular dias uteis do periodo (para usar nos KPIs)
+        from datetime import datetime
+        hoje = datetime.now()
+        dia_ref = hoje.day if (ano == hoje.year and mes == hoje.month) else 1
+        _, du_decorridos, _ = calcular_dias_uteis(ano, mes, dia_ref)
+
         if df.empty and df_analise.empty and df_cancelados.empty:
             st.warning("Nenhum dado encontrado para o periodo selecionado.")
             return
@@ -587,9 +619,27 @@ def main():
                 "Exibindo apenas propostas em analise."
             )
             df_analise = aplicar_rls(df_analise)
-            criar_cards_pipeline(df_analise, {
+            # Sem contratos pagos, mostrar apenas card de analise
+            kpis_analise = calcular_kpis_analise(
+                df_analise, pd.DataFrame(), du_decorridos
+            )
+            kpis_vazio = {
                 "total_vendas": 0,
-            })
+                "projecao": 0,
+                "meta_diaria_pts": 0,
+                "media_du": 0,
+                "media_du_pontos": 1,
+            }
+            criar_cards_indicadores_principais(
+                kpis_vazio,
+                kpis_analise,
+                {
+                    "valor_cancelados": 0,
+                    "qtd_cancelados": 0,
+                    "indice_perda": 0,
+                },
+                {"media_du_loja": 0, "media_du_consultor": 0},
+            )
             render_tab_em_analise(df_analise, df_sup)
             return
 
@@ -607,11 +657,13 @@ def main():
         if not df_cancelados.empty:
             df_cancelados = aplicar_rls(df_cancelados)
 
-        ultima_data = df["DATA"].max()
-        dia_atual = ultima_data.day if hasattr(ultima_data, "day") else None
-        _, du_decorridos, _ = calcular_dias_uteis(
-            ano, mes, dia_atual,
-        )
+        # Calcular dias uteis (usar data atual se df vazio)
+        if not df.empty:
+            ultima_data = df["DATA"].max()
+            dia_atual = ultima_data.day if hasattr(ultima_data, "day") else None
+        else:
+            dia_atual = datetime.now().day
+        _, du_decorridos, _ = calcular_dias_uteis(ano, mes, dia_atual)
 
         # ── Regioes permitidas pelo RLS ───────────
         regioes_todas = ["Todas"]
@@ -699,13 +751,40 @@ def main():
                         )
                     )
 
+        # ── Calculos de KPIs ─────────────────────
         kpis = calcular_kpis_gerais(
             df_f,
             df_metas_f,
+            df_metas_prod_f,
             ano,
             mes,
             dia_atual,
             df_sup_f,
+        )
+
+        kpis_analise = calcular_kpis_analise(
+            df_analise_f,
+            df_f,
+            du_decorridos,
+        )
+
+        kpis_cancel = calcular_kpis_cancelados(
+            df_cancelados_f,
+            df_f,
+            df_analise_f,
+        )
+
+        medias = calcular_medias_du_por_nivel(
+            df_f,
+            du_decorridos,
+            df_sup_f,
+        )
+
+        metas_prod_diarias = calcular_metas_produto_diarias(
+            df_f,
+            df_metas_prod_f,
+            kpis.get("du_total", 0),
+            du_decorridos,
         )
 
         # ── Perfil efetivo (para gating de UI) ────
@@ -720,8 +799,13 @@ def main():
         # Consultor nao ve cards gerenciais; sua aba
         # renderiza os cards pessoais
         if pode_ver("cards_gerenciais", role):
-            criar_cards_kpis_principais(kpis)
-            criar_cards_pipeline(df_analise_f, kpis)
+            criar_cards_indicadores_principais(
+                kpis,
+                kpis_analise,
+                kpis_cancel,
+                medias,
+            )
+            criar_cards_metas_produto(metas_prod_diarias)
 
         # ── Navegacao principal ───────────────────
 
