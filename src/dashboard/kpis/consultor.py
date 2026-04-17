@@ -159,7 +159,8 @@ def calcular_breakdown_produtos_consultor(
     Agrega a producao do consultor por grupo de produto.
 
     Produtos com ``grupo_dashboard`` preenchido (CNC, SAQUE,
-    CLT, CONSIGNADO, PACK) contam para valor e pontos.
+    CLT, CONSIGNADO, FGTS/Ant. Ben./CNC 13o) contam para valor
+    e pontos.
     Emissoes (BMG Med, Vida Familiar, Cartao) entram numa
     linha separada com apenas quantidade.
 

@@ -97,3 +97,10 @@ MAPEAMENTO_COLUNAS_META = {
 PRODUTOS_EMISSAO = ['EMISSAO', 'EMISSAO CC', 'EMISSAO CB']
 
 LISTA_PRODUTOS = ['CNC', 'SAQUE', 'CLT', 'CONSIGNADO', 'PACK']
+
+# Mapeamento de nomes de display para grupo_dashboard.
+# Usado para substituir labels internos por nomes amigaveis
+# na interface sem alterar chaves de dados ou banco.
+NOMES_DISPLAY_PRODUTO = {
+    'PACK': 'FGTS/Ant. Ben./CNC 13o',
+}

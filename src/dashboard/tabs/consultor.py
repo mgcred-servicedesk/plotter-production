@@ -82,7 +82,7 @@ def _render_cards_principais(kpis: dict) -> None:
     """Renderiza os 4 cards principais do consultor."""
     sac.divider(
         label="Indicadores Principais",
-        icon="bar-chart-line",
+        icon="bar-chart-fill",
         align="left",
         color="blue",
     )
@@ -210,7 +210,7 @@ def _render_breakdown_produtos(
     """Grid de cards por produto + linha de emissoes."""
     sac.divider(
         label="Producao por Produto",
-        icon="box-seam",
+        icon="tags-fill",
         align="left",
         color="blue",
     )
@@ -315,7 +315,7 @@ def _render_rankings(
     """Rankings regional e global, lado a lado."""
     sac.divider(
         label="Rankings",
-        icon="trophy",
+        icon="trophy-fill",
         align="left",
         color="blue",
     )
