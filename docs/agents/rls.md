@@ -59,13 +59,36 @@ PERFIS  # dict: perfil_key → label legível
 
 ## Estado atual da implementação
 
-O código em [src/dashboard/auth.py](../../src/dashboard/auth.py) e
-[src/dashboard/rls.py](../../src/dashboard/rls.py) atualmente suporta
-`admin`, `gestor`, `gerente_comercial`, `supervisor`. O perfil
-`consultor` **está documentado aqui como parte da hierarquia esperada**
-mas ainda não está implementado no código — adicionar exige:
+Os cinco perfis estão implementados no código em
+[src/dashboard/auth.py](../../src/dashboard/auth.py) e
+[src/dashboard/rls.py](../../src/dashboard/rls.py).
 
-1. Entrada no dict `PERFIS` em `auth.py`.
-2. Ramo em `aplicar_rls` filtrando `df[df["CONSULTOR"] == user["nome"]]`
-   (ou via `escopo`).
-3. Definir comportamento de `aplicar_rls_metas` e `aplicar_rls_supervisores` para esse perfil.
+### Perfil `consultor`
+
+Adicionado pela migration `006_perfil_consultor.sql`:
+
+- Coluna `consultor_id` em `usuario_escopos` (FK → `consultores.id`).
+- `CHECK` de exclusividade: cada escopo referencia exatamente **um** de
+  `regiao_id` / `loja_id` / `consultor_id`.
+- Policies RLS no Postgres: `pol_contratos_consultor` e
+  `pol_metas_consultor` restringem o consultor aos próprios contratos e
+  às metas da sua loja.
+
+Na aplicação:
+
+- `aplicar_rls(df, coluna_consultor="CONSULTOR")` filtra
+  `df[df["CONSULTOR"].isin(escopo)]`.
+- `aplicar_rls_supervisores` filtra supervisores pelas lojas onde o
+  consultor tem contratos (derivado de `df[coluna_loja].unique()`).
+- `obter_regioes_permitidas` retorna `[]` para `consultor` (sem filtro
+  de região na sidebar).
+- `carregar_metas_consultor(mes, ano, loja)` em `loaders.py` (com split
+  `_atual`/`_historico`) carrega metas `CONSULTOR-sc` da loja.
+
+### Matriz de permissões de UI
+
+A decisão de **quais abas e cards renderizar** por perfil vive em
+[src/dashboard/permissions.py](../../src/dashboard/permissions.py) via
+`pode_ver(chave, role)`. Consultor, por exemplo, não vê
+`cards_gerenciais` nem a maioria das abas — apenas `tab_consultor`
+(Meu Dashboard) com os cards pessoais.

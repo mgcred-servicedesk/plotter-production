@@ -70,15 +70,21 @@ Exceção: fora de renderers de tab (ex.: breakdowns rápidos em
 
 ## Tab renderer pattern
 
-Cada aba é uma função privada `_render_tab_*`. Contrato:
+Cada aba é uma função pública `render_tab_*` em `src/dashboard/tabs/*.py`
+(um arquivo por aba: `produtos.py`, `regioes.py`, `rankings.py`,
+`analiticos.py`, `evolucao.py`, `em_analise.py`, `detalhes.py`,
+`consultor.py`). `app.py` importa e despacha conforme o item
+selecionado em `sac.tabs`. Contrato:
 
-- Recebe todos os DataFrames já filtrados e os parâmetros de período.
-- Chama `calcular_*` para KPIs e `criar_grafico_*` para figuras.
+- Recebe todos os DataFrames já filtrados (pós-RLS) e os parâmetros de período.
+- Chama funções de `src/dashboard/kpis/*.py` para KPIs e
+  `src/dashboard/ui/charts.py` para figuras.
 - Renderiza com `sac.divider` → gráfico → divider → tabela.
-- **Não** executa queries nem aplica RLS (já foi feito antes).
+- **Não** executa queries nem aplica RLS (já foi feito em `app.py`).
 
 ```python
-def _render_tab_produtos(df, df_metas_produto, categorias, ano, mes, dia_atual, df_sup):
+# src/dashboard/tabs/produtos.py
+def render_tab_produtos(df, df_metas_produto, categorias, ano, mes, dia_atual, df_sup, ...):
     sac.divider(label="Analise de Produtos", icon="box", align="left", color="blue")
 
     df_prod = calcular_kpis_por_produto(df, df_metas_produto, categorias, ano, mes, dia_atual, df_sup)
@@ -88,6 +94,10 @@ def _render_tab_produtos(df, df_metas_produto, categorias, ano, mes, dia_atual, 
     sac.divider(label="KPIs por Produto", icon="table", align="left", color="gray")
     exibir_tabela(df_prod)
 ```
+
+Gating de render é centralizado em `src/dashboard/permissions.py`:
+`app.py` só inclui uma aba em `sac.tabs` se `pode_ver(chave, role)`
+retorna `True`.
 
 ## Messages
 
@@ -113,7 +123,15 @@ st.rerun()  # força rerun após mudança de estado
 
 ## Tema
 
-Sistema de tema via CSS custom properties + localStorage (commit `267734a`).
-Detecção automática do tema do sistema (commit `1daa894`). Toda cor de
-gráfico **deve** vir de `CHART_COLORS` (ver [conventions.md](conventions.md))
-para adaptar ao tema ativo.
+Sistema de tema via CSS custom properties + localStorage, implementado
+em `src/dashboard/ui/theme.py`:
+
+- `aplicar_tema()` — injeta variáveis CSS `--mg-*` e `--st-*` conforme o tema ativo.
+- `get_theme()` — lê `st.session_state["theme"]` (`"light"` | `"dark"`).
+- `carregar_estilos_customizados()` — carrega `assets/dashboard_style.css`.
+- `CHART_THEME` / `NATIVE_THEME` — paletas para Plotly e para o tema nativo do Streamlit.
+
+`app.py` chama `carregar_estilos_customizados()` e `aplicar_tema()` no
+início de `main()`; o toggle na sidebar alterna entre `light`/`dark` e
+chama `st.rerun()`. Toda cor de gráfico **deve** vir do `CHART_THEME`
+associado ao tema ativo (ver [conventions.md](conventions.md)).

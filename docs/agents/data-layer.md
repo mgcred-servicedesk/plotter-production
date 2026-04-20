@@ -17,9 +17,29 @@ def _sb():
 | `v_contratos_cancelados` | view | contratos cancelados agregados |
 | `obter_pontuacao_periodo(p_mes, p_ano)` | RPC | pontuação final por consultor/loja/região |
 
-Migrações em `database/migrations/` (numeradas 001–005). Nunca consultar
+Migrações em `database/migrations/` (numeradas 001–006). Nunca consultar
 `contratos` diretamente quando uma view cobre o caso — a view já
 encapsula joins, filtros de status e resolução de `grupo_dashboard`/`grupo_meta`.
+
+## Loaders (`src/dashboard/loaders.py`)
+
+Todas as funções `carregar_*` consumidas pelo `app.py` vivem em um
+único módulo `src/dashboard/loaders.py`. Cada uma segue o padrão
+descrito abaixo (`_fetch_*` + `_*_atual` + `_*_historico` + wrapper
+público). Principais:
+
+| Função | Retorno | Cache `_atual` / `_historico` |
+|---|---|---|
+| `consolidar_dados(mes, ano)` | `(df, df_metas, df_sup)` pagos | 30 min / 24 h |
+| `carregar_contratos_em_analise(mes, ano)` | DataFrame pipeline | 30 min / 24 h |
+| `carregar_contratos_cancelados(mes, ano)` | DataFrame cancelados | 30 min / 24 h |
+| `carregar_metas_produto(mes, ano)` | DataFrame metas por produto | 6 h / 24 h |
+| `carregar_metas_consultor(mes, ano, loja)` | dict `{meta_prata, meta_ouro}` | 6 h / 24 h |
+| `carregar_pontuacao_efetiva(mes, ano)` | DataFrame via RPC | 6 h / 24 h |
+| `carregar_categorias()` | DataFrame estático | 24 h |
+| `carregar_lojas_regioes()` | `(lojas, regioes)` | 24 h |
+| `carregar_consultores_cadastro()` | lista de nomes | 24 h |
+| `carregar_ultimo_periodo()` | `{mes, ano}` mais recente | 24 h |
 
 ### Exemplo — view
 
