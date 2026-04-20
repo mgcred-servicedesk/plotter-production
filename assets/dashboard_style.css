@@ -120,11 +120,40 @@ div[data-testid="column"] {
     background-color: var(--mg-secondary-bg) !important;
     border-color: var(--mg-card-border) !important;
     box-shadow: 0 2px 8px var(--mg-shadow) !important;
-    padding: 1.25rem 1rem;
+    padding: 1rem 0.875rem;
     border-radius: var(--mg-radius-md);
     border-width: 1px;
     border-style: solid;
     transition: transform 0.2s ease, box-shadow 0.2s ease;
+    margin-bottom: 0;
+}
+
+/* Container interno dos cards para alinhamento */
+[data-testid="stMetric"] + div {
+    margin-top: 0 !important;
+}
+
+/* Espaçamento entre linhas de cards */
+.row-spacing {
+    height: 16px;
+}
+
+/* Compactação de margens nos cards */
+[data-testid="stMetric"] [data-testid="stMetricDelta"] {
+    margin-top: 2px !important;
+}
+
+/* Elementos small dentro dos cards KPI */
+[data-testid="stMetric"] ~ div small,
+[data-testid="stMetric"] + div small {
+    display: block;
+    margin-top: 4px;
+    line-height: 1.3;
+}
+
+/* Container interno do card para agrupamento visual */
+[data-testid="stMetric"] > div[data-testid="stVerticalBlock"] {
+    gap: 0 !important;
 }
 
 [data-testid="stMetric"]:hover {
@@ -1067,6 +1096,221 @@ div[data-testid="column"]:nth-child(4) [data-testid="stMetric"] {
     .dashboard-header h1 {
         font-size: 1.1rem !important;
     }
+}
+
+/* ── Product Meta Cards (mg-prod-card) ─────────── */
+.mg-prod-card {
+    background-color: var(--mg-secondary-bg);
+    border: 1px solid var(--mg-card-border);
+    box-shadow: 0 2px 8px var(--mg-shadow);
+    border-radius: var(--mg-radius-md);
+    padding: 0.7rem 0.875rem 0.6rem;
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.mg-prod-card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 6px 20px var(--mg-shadow-hover);
+}
+
+.mg-prod-card--success { border-left: 3px solid #059669; }
+.mg-prod-card--warning { border-left: 3px solid #d97706; }
+.mg-prod-card--danger  { border-left: 3px solid #dc2626; }
+.mg-prod-card--mix          { border-left: 4px solid var(--mg-primary); }
+.mg-prod-card--accent-teal  { border-left: 3px solid #0d9488; }
+.mg-prod-card--accent-indigo { border-left: 3px solid #6366f1; }
+
+.mg-prod-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 0.25rem;
+}
+
+.mg-prod-name {
+    font-size: 0.82rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--mg-text-secondary);
+}
+
+.mg-prod-badge {
+    font-size: 0.78rem;
+    font-weight: 700;
+    padding: 2px 8px;
+    border-radius: 20px;
+    line-height: 1.5;
+    white-space: nowrap;
+}
+
+.mg-prod-badge--success {
+    background: rgba(5, 150, 105, 0.15);
+    color: #059669;
+}
+
+.mg-prod-badge--warning {
+    background: rgba(217, 119, 6, 0.15);
+    color: #d97706;
+}
+
+.mg-prod-badge--danger {
+    background: rgba(220, 38, 38, 0.12);
+    color: #dc2626;
+}
+
+.mg-prod-badge--mix {
+    background: rgba(25, 118, 210, 0.12);
+    color: var(--mg-primary);
+}
+
+.mg-prod-value {
+    font-size: 1.6rem;
+    font-weight: 800;
+    color: var(--mg-text);
+    letter-spacing: -0.02em;
+    line-height: 1.2;
+    margin-bottom: 0.45rem;
+    font-feature-settings: 'tnum' 1;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.mg-prod-track {
+    width: 100%;
+    height: 3px;
+    background: var(--mg-border);
+    border-radius: 2px;
+    overflow: hidden;
+    margin-bottom: 0.35rem;
+}
+
+.mg-prod-fill {
+    height: 100%;
+    border-radius: 2px;
+    transition: width 0.6s cubic-bezier(0.22, 1, 0.36, 1);
+    min-width: 2px;
+}
+
+.mg-prod-fill.mg-success {
+    background: linear-gradient(90deg, #059669, #34d399);
+}
+
+.mg-prod-fill.mg-warning {
+    background: linear-gradient(90deg, #d97706, #fbbf24);
+}
+
+.mg-prod-fill.mg-danger {
+    background: linear-gradient(90deg, #dc2626, #f87171);
+}
+
+.mg-prod-footer {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    margin-top: 0.1rem;
+    font-feature-settings: 'tnum' 1;
+}
+
+/* Meta Diária — linha de destaque (~75% do valor principal) */
+.mg-prod-footer-meta {
+    font-size: 1.2rem;
+    font-weight: 700;
+    line-height: 1.3;
+}
+
+.mg-prod-footer-meta small {
+    font-size: 0.82rem;
+    font-weight: 500;
+    opacity: 0.85;
+}
+
+/* Ritmo — linha secundária */
+.mg-prod-footer-ritmo {
+    font-size: 0.78rem;
+    color: var(--mg-text-secondary);
+    line-height: 1.3;
+}
+
+.mg-prod-footer-ok  { color: #059669; }
+.mg-prod-footer-gap { color: #dc2626; }
+
+.mg-evol-pos { color: #059669; font-weight: 700; }
+.mg-evol-neg { color: #dc2626; font-weight: 700; }
+.mg-evol-neu { color: var(--mg-text-secondary); }
+
+/* ── Tabela Regional (Análise por Produto) ───────── */
+.mg-rt-wrap {
+    margin-bottom: 1rem;
+    border-radius: var(--mg-radius-md);
+    overflow: hidden;
+    border: 1px solid var(--mg-card-border);
+    box-shadow: 0 1px 4px var(--mg-shadow);
+}
+
+.mg-rt-header {
+    background: var(--mg-primary);
+    color: #fff;
+    font-size: 0.72rem;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    padding: 5px 10px;
+}
+
+.mg-rt-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.78rem;
+    background: var(--mg-secondary-bg);
+}
+
+.mg-rt-th {
+    background: var(--mg-bg);
+    color: var(--mg-text-secondary);
+    font-size: 0.7rem;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    padding: 5px 8px;
+    text-align: right;
+    border-bottom: 1px solid var(--mg-border);
+    white-space: nowrap;
+}
+
+.mg-rt-th:first-child { text-align: left; }
+
+.mg-rt-td {
+    padding: 4px 8px;
+    color: var(--mg-text);
+    text-align: right;
+    border-bottom: 1px solid var(--mg-border);
+    font-feature-settings: 'tnum' 1;
+    white-space: nowrap;
+}
+
+.mg-rt-td--loja {
+    text-align: left;
+    font-weight: 500;
+    max-width: 180px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.mg-rt-td--analise {
+    color: var(--mg-primary);
+    font-weight: 600;
+}
+
+.mg-rt-tr--odd td { background: rgba(0,0,0,0.02); }
+
+.mg-rt-tr--total td {
+    background: var(--mg-bg);
+    font-weight: 700;
+    color: var(--mg-text);
+    border-top: 2px solid var(--mg-border);
+    border-bottom: none;
 }
 
 /* ── Print Stylesheet ───────────────────────────── */

@@ -124,8 +124,13 @@ def _render_lista_usuarios():
                     st.error(msg)
 
 
-def _render_criar_usuario(regioes: list[str], lojas: list[str]):
+def _render_criar_usuario(
+    regioes: list[str],
+    lojas: list[str],
+    consultores: list[str] | None = None,
+):
     """Formulário para criar novo usuário."""
+    consultores = consultores or []
     st.subheader("Criar Novo Usuario")
 
     with st.form("form_criar_usuario"):
@@ -151,7 +156,7 @@ def _render_criar_usuario(regioes: list[str], lojas: list[str]):
                 format_func=lambda x: PERFIS[x],
             )
 
-            escopo = []
+            escopo: list[str] = []
             if perfil == "gerente_comercial":
                 escopo = st.multiselect(
                     "Regioes de acesso",
@@ -162,6 +167,17 @@ def _render_criar_usuario(regioes: list[str], lojas: list[str]):
                     "Lojas de acesso",
                     lojas,
                 )
+            elif perfil == "consultor":
+                sel = st.selectbox(
+                    "Consultor vinculado",
+                    options=[""] + consultores,
+                    help=(
+                        "Digite parte do nome para "
+                        "filtrar a lista."
+                    ),
+                )
+                if sel:
+                    escopo = [sel]
 
         submit = st.form_submit_button(
             "Criar Usuario", width="stretch",
@@ -189,6 +205,7 @@ def _render_criar_usuario(regioes: list[str], lojas: list[str]):
 def render_pagina_usuarios(
     regioes: list[str] = None,
     lojas: list[str] = None,
+    consultores: list[str] = None,
 ):
     """
     Renderiza pagina de gerenciamento de usuarios.
@@ -209,7 +226,7 @@ def render_pagina_usuarios(
 
         with tab2:
             _render_criar_usuario(
-                regioes or [], lojas or [],
+                regioes or [], lojas or [], consultores or [],
             )
 
         with tab3:

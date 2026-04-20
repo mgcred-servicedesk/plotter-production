@@ -25,6 +25,7 @@ PERFIS = {
     "gestor": "Gestor — visão global das operações",
     "gerente_comercial": "Gerente Comercial — acesso por região",
     "supervisor": "Supervisor — acesso por loja",
+    "consultor": "Consultor — acesso aos próprios dados",
 }
 
 
@@ -38,13 +39,16 @@ def _supabase():
 
 def _carregar_escopo(usuario_id: str) -> list[str]:
     """
-    Carrega nomes do escopo (regioes ou lojas) de um
-    usuario a partir de ``usuario_escopos``.
+    Carrega nomes do escopo (regioes, lojas ou consultores)
+    de um usuario a partir de ``usuario_escopos``.
     """
     resp = (
         _supabase()
         .table("usuario_escopos")
-        .select("regiao_id, loja_id, regioes(nome), lojas(nome)")
+        .select(
+            "regiao_id, loja_id, consultor_id, "
+            "regioes(nome), lojas(nome), consultores(nome)"
+        )
         .eq("usuario_id", usuario_id)
         .execute()
     )
@@ -54,6 +58,8 @@ def _carregar_escopo(usuario_id: str) -> list[str]:
             escopo.append(row["regioes"]["nome"])
         elif row.get("lojas") and row["lojas"].get("nome"):
             escopo.append(row["lojas"]["nome"])
+        elif row.get("consultores") and row["consultores"].get("nome"):
+            escopo.append(row["consultores"]["nome"])
     return escopo
 
 
@@ -98,12 +104,31 @@ def _salvar_escopos(
         ]
     elif perfil == "supervisor":
         resp = (
-            _supabase().table("lojas").select("id, nome").in_("nome", escopo).execute()
+            _supabase()
+            .table("lojas")
+            .select("id, nome")
+            .in_("nome", escopo)
+            .execute()
         )
         registros = [
             {
                 "usuario_id": usuario_id,
                 "loja_id": r["id"],
+            }
+            for r in (resp.data or [])
+        ]
+    elif perfil == "consultor":
+        resp = (
+            _supabase()
+            .table("consultores")
+            .select("id, nome")
+            .in_("nome", escopo)
+            .execute()
+        )
+        registros = [
+            {
+                "usuario_id": usuario_id,
+                "consultor_id": r["id"],
             }
             for r in (resp.data or [])
         ]

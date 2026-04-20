@@ -14,30 +14,70 @@ tabelas via st.dataframe, CSS design system customizado.
 
 import sys
 import warnings
-from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
 
 import pandas as pd
-import plotly.graph_objects as go
 import streamlit as st
 import streamlit_antd_components as sac
-from plotly.subplots import make_subplots
 
 sys.path.insert(0, str(Path(__file__).parent))
 
-from src.config.supabase_client import get_supabase_client
+from src.config.settings import NOMES_DISPLAY_PRODUTO
 from src.dashboard.auth import (
     fazer_logout,
     tela_login,
     usuario_logado,
 )
 from src.dashboard.components.tables import exibir_tabela
+from src.dashboard.kpis.gerais import (
+    calcular_kpis_gerais,
+    calcular_kpis_analise,
+    calcular_kpis_cancelados,
+    calcular_kpis_qtd_produtos,
+    calcular_medias_du_por_nivel,
+    calcular_metas_produto_diarias,
+)
+from src.dashboard.loaders import (
+    carregar_categorias,
+    carregar_consultores_cadastro,
+    carregar_contratos_cancelados,
+    carregar_contratos_em_analise,
+    carregar_lojas_regioes,
+    carregar_metas_consultor,
+    carregar_metas_produto,
+    carregar_pontuacao_efetiva,
+    carregar_ultimo_periodo,
+    consolidar_dados,
+)
+from src.dashboard.permissions import pode_ver
 from src.dashboard.rls import (
     aplicar_rls,
     aplicar_rls_metas,
     aplicar_rls_supervisores,
     obter_regioes_permitidas,
+)
+from src.dashboard.tabs.analiticos import render_tab_analiticos
+from src.dashboard.tabs.consultor import render_tab_consultor
+from src.dashboard.tabs.detalhes import render_tab_detalhes
+from src.dashboard.tabs.em_analise import render_tab_em_analise
+from src.dashboard.tabs.evolucao import render_tab_evolucao
+from src.dashboard.tabs.produtos import render_tab_produtos
+from src.dashboard.tabs.rankings import render_tab_rankings
+from src.dashboard.tabs.regioes import render_tab_regioes
+from src.dashboard.ui.header import (
+    render_header,
+    render_status_bar,
+)
+from src.dashboard.ui.kpi_cards import (
+    criar_cards_indicadores_principais,
+    criar_cards_metas_produto,
+    criar_cards_qtd_produto,
+)
+from src.dashboard.ui.skeleton import render_skeleton
+from src.dashboard.ui.theme import (
+    aplicar_tema,
+    carregar_estilos_customizados,
+    get_theme,
 )
 from src.dashboard.user_mgmt import render_pagina_usuarios
 from src.dashboard.feriados_mgmt import render_pagina_feriados
@@ -53,4218 +93,6 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded",
 )
-
-
-# ══════════════════════════════════════════════════════
-# SISTEMA DE TEMAS (LIGHT / DARK)
-# ══════════════════════════════════════════════════════
-
-# Paleta estendida para graficos Plotly (CSS nao alcanca)
-_CHART_THEME = {
-    "light": {
-        "text": "#1a1a2e",
-        "text_secondary": "rgba(26,26,46,0.65)",
-        "bg": "rgba(0,0,0,0)",
-        "grid": "rgba(128,128,128,0.10)",
-        "grid_zero": "rgba(128,128,128,0.15)",
-        "tooltip_bg": "rgba(30,30,46,0.92)",
-        "tooltip_text": "#ffffff",
-        "border": "rgba(26,26,46,0.10)",
-    },
-    "dark": {
-        "text": "#e2e4ea",
-        "text_secondary": "rgba(226,228,234,0.55)",
-        "bg": "rgba(0,0,0,0)",
-        "grid": "rgba(226,228,234,0.06)",
-        "grid_zero": "rgba(226,228,234,0.10)",
-        "tooltip_bg": "rgba(15,17,23,0.95)",
-        "tooltip_text": "#e2e4ea",
-        "border": "rgba(226,228,234,0.08)",
-    },
-}
-
-# Cores do tema nativo Streamlit (sincronizado com o toggle)
-_NATIVE_THEME = {
-    "light": {
-        "base": "light",
-        "primaryColor": "#2563eb",
-        "backgroundColor": "#f8f9fb",
-        "secondaryBackgroundColor": "#ffffff",
-        "textColor": "#1a1a2e",
-    },
-    "dark": {
-        "base": "dark",
-        "primaryColor": "#3b82f6",
-        "backgroundColor": "#0f1117",
-        "secondaryBackgroundColor": "#1a1c25",
-        "textColor": "#e2e4ea",
-    },
-}
-
-# Variaveis CSS por tema (--mg-*)
-_CSS_VARS = {
-    "light": """
-        --mg-primary: #2563eb;
-        --mg-bg: #f8f9fb;
-        --mg-secondary-bg: #ffffff;
-        --mg-sidebar-bg: #ffffff;
-        --mg-text: #1a1a2e;
-        --mg-text-secondary: rgba(26,26,46,0.65);
-        --mg-border: rgba(26,26,46,0.10);
-        --mg-shadow: rgba(26,26,46,0.06);
-        --mg-shadow-hover: rgba(26,26,46,0.10);
-        --mg-card-border: rgba(26,26,46,0.08);
-        --mg-hover-bg: rgba(37,99,235,0.04);
-        --mg-scrollbar: rgba(26,26,46,0.18);
-    """,
-    "dark": """
-        --mg-primary: #3b82f6;
-        --mg-bg: #0f1117;
-        --mg-secondary-bg: #1a1c25;
-        --mg-sidebar-bg: #161820;
-        --mg-text: #e2e4ea;
-        --mg-text-secondary: rgba(226,228,234,0.55);
-        --mg-border: rgba(226,228,234,0.08);
-        --mg-shadow: rgba(0,0,0,0.20);
-        --mg-shadow-hover: rgba(0,0,0,0.35);
-        --mg-card-border: rgba(226,228,234,0.06);
-        --mg-hover-bg: rgba(59,130,246,0.08);
-        --mg-scrollbar: rgba(226,228,234,0.15);
-    """,
-}
-
-
-def _get_theme() -> str:
-    """Retorna tema ativo.
-
-    Na primeira visita, detecta preferencia do sistema
-    via localStorage (setado pelo JS de deteccao).
-    """
-    if "theme" not in st.session_state:
-        # Tenta ler do query param _theme (setado pelo JS)
-        detected = st.query_params.get("_theme")
-        if detected in ("light", "dark"):
-            st.session_state["theme"] = detected
-            # Limpar o param para nao poluir a URL
-            del st.query_params["_theme"]
-        else:
-            # Fallback: sera corrigido pelo JS de deteccao
-            # no primeiro render (redireciona com ?_theme)
-            st.session_state["theme"] = "light"
-    return st.session_state["theme"]
-
-
-def _chart_theme() -> dict:
-    """Retorna paleta de cores para graficos Plotly."""
-    return _CHART_THEME[_get_theme()]
-
-
-def _aplicar_tema():
-    """Sincroniza tema nativo Streamlit + CSS custom properties."""
-    from streamlit.config import set_option
-
-    theme = _get_theme()
-    vars_css = _CSS_VARS[theme]
-    native = _NATIVE_THEME[theme]
-
-    # Sincronizar tema nativo (widgets, st.dataframe, st.metric)
-    set_option("theme.base", native["base"])
-    set_option("theme.primaryColor", native["primaryColor"])
-    set_option(
-        "theme.backgroundColor", native["backgroundColor"]
-    )
-    set_option(
-        "theme.secondaryBackgroundColor",
-        native["secondaryBackgroundColor"],
-    )
-    set_option("theme.textColor", native["textColor"])
-
-    # CSS custom properties — o CSS file usa var(--mg-*)
-    # Esconde o seletor nativo de tema para evitar conflito
-    st.markdown(
-        f"""<style>
-        :root {{ {vars_css}
-            --primary-color: var(--mg-primary) !important;
-            --background-color: var(--mg-bg) !important;
-            --secondary-background-color: var(--mg-secondary-bg) !important;
-            --text-color: var(--mg-text) !important;
-        }}
-        html, body, .stApp,
-        [data-testid="stAppViewContainer"],
-        .main, .main .block-container {{
-            background-color: var(--mg-bg) !important;
-            color: var(--mg-text) !important;
-        }}
-        [data-testid="stHeader"], header {{
-            background-color: var(--mg-bg) !important;
-        }}
-        [data-testid="stBottomBlockContainer"] {{
-            background-color: var(--mg-bg) !important;
-        }}
-        section[data-testid="stSidebar"],
-        section[data-testid="stSidebar"] > div {{
-            background-color: var(--mg-sidebar-bg) !important;
-        }}
-        /* Esconder seletor de tema nativo para evitar
-           dessincronizacao com o toggle customizado */
-        [data-testid="stMainMenu"] ul li:has(
-            [data-testid="stMainMenuPopoverThemeItem"]
-        ) {{
-            display: none !important;
-        }}
-        </style>""",
-        unsafe_allow_html=True,
-    )
-
-    # JS: detectar preferencia do sistema na primeira
-    # visita + persistir tema + tematizar iframes
-    import streamlit.components.v1 as components
-
-    is_dark = "true" if theme == "dark" else "false"
-    components.html(
-        f"""<script>
-        (function() {{
-            const p = window.parent;
-            const isDark = {is_dark};
-
-            // Detectar preferencia do sistema na 1a visita
-            const stored = localStorage.getItem('mgcred_theme');
-            if (!stored) {{
-                const prefersDark = window.matchMedia
-                    && window.matchMedia('(prefers-color-scheme: dark)').matches;
-                const detected = prefersDark ? 'dark' : 'light';
-                localStorage.setItem('mgcred_theme', detected);
-                if (detected !== (isDark ? 'dark' : 'light')) {{
-                    const url = new URL(p.location);
-                    url.searchParams.set('_theme', detected);
-                    p.location.replace(url.toString());
-                    return;
-                }}
-            }}
-            const tc = isDark ? '#e2e4ea' : '#1a1a2e';
-            const pc = isDark ? '#3b82f6' : '#2563eb';
-            const sb = isDark ? '#1a1c25' : '#ffffff';
-            const bg = isDark ? '#0f1117' : '#f8f9fb';
-
-            localStorage.setItem('mgcred_theme', isDark ? 'dark' : 'light');
-
-            const VARS = {{
-                '--primary-color': pc,
-                '--background-color': bg,
-                '--secondary-background-color': sb,
-                '--text-color': tc,
-            }};
-
-            function inject(iframe) {{
-                try {{
-                    const doc = iframe.contentDocument
-                             || iframe.contentWindow.document;
-                    if (!doc || !doc.documentElement) return;
-                    const root = doc.documentElement;
-                    for (const [k, v] of Object.entries(VARS))
-                        root.style.setProperty(k, v);
-                    let s = doc.getElementById('mgcred-theme');
-                    if (!s) {{
-                        s = doc.createElement('style');
-                        s.id = 'mgcred-theme';
-                        doc.head.appendChild(s);
-                    }}
-                    s.textContent = `
-                        :root, body {{ background:transparent!important; color:${{tc}}!important }}
-                        .ant-divider {{ border-color:${{tc}}20!important }}
-                        .ant-divider-inner-text {{ background:transparent!important; color:${{tc}}!important }}
-                        .ant-tabs-tab-btn {{ color:${{tc}}90!important }}
-                        .ant-tabs-tab-active .ant-tabs-tab-btn {{ color:${{pc}}!important }}
-                        .ant-tabs-ink-bar {{ background:${{pc}}!important }}
-                        .ant-tabs-nav::before {{ border-color:${{tc}}15!important }}
-                        .ant-tabs-card .ant-tabs-tab {{ background:transparent!important; border-color:${{tc}}15!important }}
-                        .ant-tabs-card .ant-tabs-tab-active {{ background:${{sb}}!important; border-color:${{pc}}!important }}
-                        .ant-segmented {{ background:${{tc}}10!important }}
-                        .ant-segmented-item-label {{ color:${{tc}}80!important }}
-                        .ant-segmented-item-selected .ant-segmented-item-label {{ color:${{pc}}!important }}
-                        .ant-segmented-thumb {{ background:${{sb}}!important }}
-                    `;
-                }} catch(e) {{}}
-            }}
-
-            function run() {{
-                p.document.querySelectorAll('iframe').forEach(f => {{
-                    if (f.contentDocument) inject(f);
-                    else f.addEventListener('load', () => inject(f));
-                }});
-            }}
-
-            run();
-            const obs = new MutationObserver(muts => {{
-                for (const m of muts)
-                    for (const n of m.addedNodes)
-                        if (n.tagName === 'IFRAME' || (n.querySelectorAll && n.querySelectorAll('iframe').length))
-                            {{ setTimeout(run, 100); return; }}
-            }});
-            obs.observe(p.document.body, {{ childList:true, subtree:true }});
-            setTimeout(run, 500);
-            setTimeout(run, 1500);
-        }})();
-        </script>""",
-        height=0,
-    )
-
-
-# ══════════════════════════════════════════════════════
-# PALETA DE CORES PARA GRAFICOS
-# ══════════════════════════════════════════════════════
-
-CHART_COLORS = {
-    "primary": "#2563eb",
-    "primary_dark": "#1e40af",
-    "secondary": "#0d9488",
-    "success": "#059669",
-    "danger": "#dc2626",
-    "warning": "#d97706",
-    "neutral": "#64748b",
-    "purple": "#7c3aed",
-    "rose": "#e11d48",
-    "seq": [
-        "#2563eb",
-        "#0d9488",
-        "#7c3aed",
-        "#d97706",
-        "#059669",
-        "#e11d48",
-        "#64748b",
-        "#0284c7",
-    ],
-}
-
-
-# ══════════════════════════════════════════════════════
-# CAMADA DE DADOS — SUPABASE
-# ══════════════════════════════════════════════════════
-
-
-def _sb():
-    """Atalho para obter o cliente Supabase."""
-    return get_supabase_client()
-
-
-def _ttl_periodo(
-    mes: int,
-    ano: int,
-    ttl_atual: int,
-    ttl_historico: int,
-) -> int:
-    """Retorna TTL curto para periodo vigente, longo para historico."""
-    hoje = datetime.now()
-    if mes == hoje.month and ano == hoje.year:
-        return ttl_atual
-    return ttl_historico
-
-
-def _eh_mes_atual(mes: int, ano: int) -> bool:
-    """Retorna True se mes/ano corresponde ao mes corrente."""
-    hoje = datetime.now()
-    return mes == hoje.month and ano == hoje.year
-
-
-@st.cache_data(ttl=86400)
-def carregar_categorias() -> pd.DataFrame:
-    """Carrega categorias_produto do banco. TTL 24h — raramente muda."""
-    resp = (
-        _sb()
-        .table("categorias_produto")
-        .select("*")
-        .eq("ativo", True)
-        .order("ordem")
-        .execute()
-    )
-    return pd.DataFrame(resp.data or [])
-
-
-@st.cache_data(ttl=86400)
-def carregar_periodo(mes: int, ano: int) -> Optional[dict]:
-    """Busca o periodo correspondente a mes/ano. TTL 24h — imutavel."""
-    resp = (
-        _sb()
-        .table("periodos")
-        .select("id, mes, ano, referencia")
-        .eq("mes", mes)
-        .eq("ano", ano)
-        .limit(1)
-        .execute()
-    )
-    return resp.data[0] if resp.data else None
-
-
-_PAGE_SIZE = 1000
-
-
-def carregar_contratos_pagos(
-    mes: int,
-    ano: int,
-) -> pd.DataFrame:
-    """Carrega contratos pagos via view v_contratos_dashboard.
-
-    TTL real: 30min para mes corrente, 24h para historico.
-    """
-    if _eh_mes_atual(mes, ano):
-        return _contratos_pagos_atual(mes, ano)
-    return _contratos_pagos_historico(mes, ano)
-
-
-def _fetch_contratos_pagos(mes: int, ano: int) -> pd.DataFrame:
-    """Executa a query de contratos pagos sem cache."""
-    periodo = carregar_periodo(mes, ano)
-    if not periodo:
-        return pd.DataFrame()
-
-    all_data: List[dict] = []
-    offset = 0
-    while True:
-        resp = (
-            _sb()
-            .from_("v_contratos_dashboard")
-            .select("*")
-            .eq("periodo_id", periodo["id"])
-            .order("id")
-            .limit(_PAGE_SIZE)
-            .offset(offset)
-            .execute()
-        )
-        batch = resp.data or []
-        all_data.extend(batch)
-        if len(batch) < _PAGE_SIZE:
-            break
-        offset += _PAGE_SIZE
-
-    if not all_data:
-        return pd.DataFrame()
-
-    rows = []
-    for c in all_data:
-        rows.append(
-            {
-                "CONTRATO_ID": c.get("contrato_id"),
-                "DATA": c.get("data_status_pagamento"),
-                "DATA_CADASTRO": c.get("data_cadastro"),
-                "LOJA": c.get("loja", ""),
-                "REGIAO": c.get("regiao", ""),
-                "CONSULTOR": c.get("consultor", ""),
-                "PRODUTO": c.get("produto", ""),
-                "TIPO_PRODUTO": c.get("tipo_produto", ""),
-                "SUBTIPO": c.get("subtipo", ""),
-                "TIPO OPER.": c.get("tipo_operacao", ""),
-                "VALOR": float(c.get("valor", 0)),
-                "BANCO": c.get("banco", ""),
-                "CONVENIO": c.get("convenio", ""),
-                "categoria_codigo": c.get("categoria_codigo", ""),
-                "grupo_dashboard": c.get("grupo_dashboard"),
-                "grupo_meta": c.get("grupo_meta"),
-                "conta_valor": c.get("conta_valor", True),
-                "conta_pontuacao": c.get("conta_pontuacao", True),
-            }
-        )
-
-    df = pd.DataFrame(rows)
-
-    if "DATA" in df.columns:
-        df["DATA"] = pd.to_datetime(df["DATA"], errors="coerce")
-
-    return df
-
-
-@st.cache_data(ttl=1800)
-def _contratos_pagos_atual(mes: int, ano: int) -> pd.DataFrame:
-    """Contratos pagos — mes corrente. TTL 30min."""
-    return _fetch_contratos_pagos(mes, ano)
-
-
-@st.cache_data(ttl=86400)
-def _contratos_pagos_historico(mes: int, ano: int) -> pd.DataFrame:
-    """Contratos pagos — historico. TTL 24h."""
-    return _fetch_contratos_pagos(mes, ano)
-
-
-def carregar_contratos_em_analise(
-    mes: int,
-    ano: int,
-) -> pd.DataFrame:
-    """Carrega contratos em analise via RPC obter_contratos_em_analise.
-
-    TTL real: 15min para mes corrente, 6h para historico.
-    """
-    if _eh_mes_atual(mes, ano):
-        return _contratos_em_analise_atual(mes, ano)
-    return _contratos_em_analise_historico(mes, ano)
-
-
-def _fetch_contratos_em_analise(mes: int, ano: int) -> pd.DataFrame:
-    """Executa a RPC de contratos em analise sem cache."""
-    all_data: List[dict] = []
-    offset = 0
-    while True:
-        resp = (
-            _sb()
-            .rpc(
-                "obter_contratos_em_analise",
-                {"p_mes": mes, "p_ano": ano},
-            )
-            .range(offset, offset + _PAGE_SIZE - 1)
-            .execute()
-        )
-        batch = resp.data or []
-        all_data.extend(batch)
-        if len(batch) < _PAGE_SIZE:
-            break
-        offset += _PAGE_SIZE
-
-    if not all_data:
-        return pd.DataFrame()
-
-    rows = []
-    for c in all_data:
-        rows.append(
-            {
-                "CONTRATO_ID": c.get("contrato_id"),
-                "DATA_CADASTRO": c.get("data_cadastro"),
-                "LOJA": c.get("loja", ""),
-                "REGIAO": c.get("regiao", ""),
-                "CONSULTOR": c.get("consultor", ""),
-                "PRODUTO": c.get("produto", ""),
-                "TIPO_PRODUTO": c.get("tipo_produto", ""),
-                "SUBTIPO": c.get("subtipo", ""),
-                "TIPO OPER.": c.get("tipo_operacao", ""),
-                "VALOR": float(c.get("valor", 0)),
-                "BANCO": c.get("banco", ""),
-                "STATUS_BANCO": c.get("status_banco", ""),
-                "categoria_codigo": c.get("categoria_codigo", ""),
-                "grupo_dashboard": c.get("grupo_dashboard"),
-                "conta_valor": c.get("conta_valor", True),
-            }
-        )
-
-    df = pd.DataFrame(rows)
-
-    if "DATA_CADASTRO" in df.columns:
-        df["DATA_CADASTRO"] = pd.to_datetime(
-            df["DATA_CADASTRO"], errors="coerce"
-        )
-
-    return df
-
-
-@st.cache_data(ttl=900)
-def _contratos_em_analise_atual(mes: int, ano: int) -> pd.DataFrame:
-    """Contratos em analise — mes corrente. TTL 15min."""
-    return _fetch_contratos_em_analise(mes, ano)
-
-
-@st.cache_data(ttl=21600)
-def _contratos_em_analise_historico(mes: int, ano: int) -> pd.DataFrame:
-    """Contratos em analise — historico. TTL 6h."""
-    return _fetch_contratos_em_analise(mes, ano)
-
-
-def carregar_contratos_cancelados(
-    mes: int,
-    ano: int,
-) -> pd.DataFrame:
-    """Carrega contratos cancelados via RPC obter_contratos_cancelados.
-
-    TTL real: 15min para mes corrente, 6h para historico.
-    """
-    if _eh_mes_atual(mes, ano):
-        return _contratos_cancelados_atual(mes, ano)
-    return _contratos_cancelados_historico(mes, ano)
-
-
-def _fetch_contratos_cancelados(mes: int, ano: int) -> pd.DataFrame:
-    """Executa a RPC de contratos cancelados sem cache."""
-    all_data: List[dict] = []
-    offset = 0
-    while True:
-        resp = (
-            _sb()
-            .rpc(
-                "obter_contratos_cancelados",
-                {"p_mes": mes, "p_ano": ano},
-            )
-            .range(offset, offset + _PAGE_SIZE - 1)
-            .execute()
-        )
-        batch = resp.data or []
-        all_data.extend(batch)
-        if len(batch) < _PAGE_SIZE:
-            break
-        offset += _PAGE_SIZE
-
-    if not all_data:
-        return pd.DataFrame()
-
-    rows = []
-    for c in all_data:
-        rows.append(
-            {
-                "CONTRATO_ID": c.get("contrato_id"),
-                "DATA_CADASTRO": c.get("data_cadastro"),
-                "LOJA": c.get("loja", ""),
-                "REGIAO": c.get("regiao", ""),
-                "CONSULTOR": c.get("consultor", ""),
-                "PRODUTO": c.get("produto", ""),
-                "TIPO_PRODUTO": c.get("tipo_produto", ""),
-                "SUBTIPO": c.get("subtipo", ""),
-                "TIPO OPER.": c.get("tipo_operacao", ""),
-                "VALOR": float(c.get("valor", 0)),
-                "BANCO": c.get("banco", ""),
-                "STATUS_BANCO": c.get("status_banco", ""),
-                "SUB_STATUS": c.get("sub_status_banco", ""),
-                "STATUS_PAG": c.get(
-                    "status_pagamento_cliente", ""
-                ),
-                "categoria_codigo": c.get(
-                    "categoria_codigo", ""
-                ),
-                "grupo_dashboard": c.get("grupo_dashboard"),
-                "conta_valor": c.get("conta_valor", True),
-            }
-        )
-
-    df = pd.DataFrame(rows)
-
-    if "DATA_CADASTRO" in df.columns:
-        df["DATA_CADASTRO"] = pd.to_datetime(
-            df["DATA_CADASTRO"], errors="coerce"
-        )
-
-    return df
-
-
-@st.cache_data(ttl=900)
-def _contratos_cancelados_atual(mes: int, ano: int) -> pd.DataFrame:
-    """Contratos cancelados — mes corrente. TTL 15min."""
-    return _fetch_contratos_cancelados(mes, ano)
-
-
-@st.cache_data(ttl=21600)
-def _contratos_cancelados_historico(mes: int, ano: int) -> pd.DataFrame:
-    """Contratos cancelados — historico. TTL 6h."""
-    return _fetch_contratos_cancelados(mes, ano)
-
-
-def carregar_pontuacao_efetiva(
-    mes: int,
-    ano: int,
-) -> pd.DataFrame:
-    """Carrega pontuacao efetiva via funcao SQL.
-
-    TTL real: 6h para mes corrente, 24h para historico.
-    """
-    if _eh_mes_atual(mes, ano):
-        return _pontuacao_atual(mes, ano)
-    return _pontuacao_historico(mes, ano)
-
-
-def _fetch_pontuacao(mes: int, ano: int) -> pd.DataFrame:
-    """Executa a RPC de pontuacao sem cache."""
-    resp = (
-        _sb()
-        .rpc(
-            "obter_pontuacao_periodo",
-            {"p_mes": mes, "p_ano": ano},
-        )
-        .execute()
-    )
-    return pd.DataFrame(resp.data or [])
-
-
-@st.cache_data(ttl=21600)
-def _pontuacao_atual(mes: int, ano: int) -> pd.DataFrame:
-    """Pontuacao — mes corrente. TTL 6h."""
-    return _fetch_pontuacao(mes, ano)
-
-
-@st.cache_data(ttl=86400)
-def _pontuacao_historico(mes: int, ano: int) -> pd.DataFrame:
-    """Pontuacao — historico. TTL 24h."""
-    return _fetch_pontuacao(mes, ano)
-
-
-def carregar_metas(mes: int, ano: int) -> pd.DataFrame:
-    """Carrega metas GERAL/LOJA do periodo.
-
-    TTL real: 6h para mes corrente, 24h para historico.
-    """
-    if _eh_mes_atual(mes, ano):
-        return _metas_atual(mes, ano)
-    return _metas_historico(mes, ano)
-
-
-def _fetch_metas(mes: int, ano: int) -> pd.DataFrame:
-    """Executa a query de metas GERAL/LOJA sem cache."""
-    periodo = carregar_periodo(mes, ano)
-    if not periodo:
-        return pd.DataFrame()
-
-    resp = (
-        _sb()
-        .table("metas")
-        .select(
-            "id, produto, escopo, nivel, valor, "
-            "lojas(nome)"
-        )
-        .eq("periodo_id", periodo["id"])
-        .eq("produto", "GERAL")
-        .eq("escopo", "LOJA")
-        .execute()
-    )
-
-    if not resp.data:
-        return pd.DataFrame(
-            columns=["LOJA", "META_PRATA", "META_OURO"]
-        )
-
-    rows = []
-    for m in resp.data:
-        loja = m.get("lojas") or {}
-        rows.append(
-            {
-                "LOJA": loja.get("nome", ""),
-                "nivel": m.get("nivel"),
-                "valor": float(m.get("valor", 0)),
-            }
-        )
-
-    df_geral_loja = pd.DataFrame(rows)
-
-    if not df_geral_loja.empty:
-        df_pivot = df_geral_loja.pivot_table(
-            index="LOJA",
-            columns="nivel",
-            values="valor",
-            aggfunc="sum",
-        ).reset_index()
-
-        rename_map = {}
-        if "PRATA" in df_pivot.columns:
-            rename_map["PRATA"] = "META_PRATA"
-        if "OURO" in df_pivot.columns:
-            rename_map["OURO"] = "META_OURO"
-        if "BRONZE" in df_pivot.columns:
-            rename_map["BRONZE"] = "META_BRONZE"
-        df_pivot = df_pivot.rename(columns=rename_map)
-
-        for col in ["META_PRATA", "META_OURO"]:
-            if col not in df_pivot.columns:
-                df_pivot[col] = 0
-
-        return df_pivot
-
-    return pd.DataFrame(columns=["LOJA", "META_PRATA", "META_OURO"])
-
-
-@st.cache_data(ttl=21600)
-def _metas_atual(mes: int, ano: int) -> pd.DataFrame:
-    """Metas GERAL/LOJA — mes corrente. TTL 6h."""
-    return _fetch_metas(mes, ano)
-
-
-@st.cache_data(ttl=86400)
-def _metas_historico(mes: int, ano: int) -> pd.DataFrame:
-    """Metas GERAL/LOJA — historico. TTL 24h."""
-    return _fetch_metas(mes, ano)
-
-
-def carregar_metas_produto(
-    mes: int,
-    ano: int,
-) -> pd.DataFrame:
-    """Carrega metas por produto do periodo.
-
-    TTL real: 6h para mes corrente, 24h para historico.
-    """
-    if _eh_mes_atual(mes, ano):
-        return _metas_produto_atual(mes, ano)
-    return _metas_produto_historico(mes, ano)
-
-
-def _fetch_metas_produto(mes: int, ano: int) -> pd.DataFrame:
-    """Executa a query de metas por produto sem cache."""
-    periodo = carregar_periodo(mes, ano)
-    if not periodo:
-        return pd.DataFrame()
-
-    resp = (
-        _sb()
-        .table("metas")
-        .select("produto, escopo, nivel, valor, lojas(nome)")
-        .eq("periodo_id", periodo["id"])
-        .eq("escopo", "LOJA")
-        .is_("nivel", "null")
-        .execute()
-    )
-
-    if not resp.data:
-        return pd.DataFrame()
-
-    rows = []
-    for m in resp.data:
-        loja = m.get("lojas") or {}
-        rows.append(
-            {
-                "LOJA": loja.get("nome", ""),
-                "produto_meta": m["produto"],
-                "valor": float(m.get("valor", 0)),
-            }
-        )
-
-    df = pd.DataFrame(rows)
-
-    # Deduplicar por (LOJA, produto_meta) — constraint
-    # UNIQUE com nivel NULL nao impede duplicatas no PG
-    df = df.drop_duplicates(
-        subset=["LOJA", "produto_meta"], keep="first"
-    )
-
-    # Pivotar para ter uma coluna por produto_meta
-    if not df.empty:
-        df_pivot = df.pivot_table(
-            index="LOJA",
-            columns="produto_meta",
-            values="valor",
-            aggfunc="sum",
-            fill_value=0,
-        ).reset_index()
-        return df_pivot
-
-    return pd.DataFrame(columns=["LOJA"])
-
-
-@st.cache_data(ttl=21600)
-def _metas_produto_atual(mes: int, ano: int) -> pd.DataFrame:
-    """Metas por produto — mes corrente. TTL 6h."""
-    return _fetch_metas_produto(mes, ano)
-
-
-@st.cache_data(ttl=86400)
-def _metas_produto_historico(mes: int, ano: int) -> pd.DataFrame:
-    """Metas por produto — historico. TTL 24h."""
-    return _fetch_metas_produto(mes, ano)
-
-
-@st.cache_data(ttl=21600)
-@st.cache_data(ttl=86400)
-def carregar_lojas_regioes() -> tuple[list[str], list[str]]:
-    """Retorna (lojas, regioes) para selects de configuracao. TTL 24h."""
-    resp = (
-        _sb()
-        .table("lojas")
-        .select("nome, regioes(nome)")
-        .order("nome")
-        .execute()
-    )
-    lojas: list[str] = []
-    regioes_set: set[str] = set()
-    for row in resp.data or []:
-        lojas.append(row.get("nome", ""))
-        reg = (row.get("regioes") or {}).get("nome", "")
-        if reg:
-            regioes_set.add(reg)
-    return sorted(lojas), sorted(regioes_set)
-
-
-@st.cache_data(ttl=21600)
-def carregar_supervisores() -> pd.DataFrame:
-    """Carrega supervisores com suas lojas e regioes. TTL 6h."""
-    resp = (
-        _sb().table("supervisores").select("nome, lojas(nome), regioes(nome)").execute()
-    )
-
-    if not resp.data:
-        return pd.DataFrame(columns=["SUPERVISOR", "LOJA", "REGIAO"])
-
-    rows = []
-    for s in resp.data:
-        loja = s.get("lojas") or {}
-        regiao = s.get("regioes") or {}
-        rows.append(
-            {
-                "SUPERVISOR": s.get("nome", ""),
-                "LOJA": loja.get("nome", ""),
-                "REGIAO": regiao.get("nome", ""),
-            }
-        )
-
-    return pd.DataFrame(rows)
-
-
-def consolidar_dados(
-    mes: int,
-    ano: int,
-) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
-    """Carrega, consolida e aplica pontuacao/regras.
-
-    Delega o processamento pesado para a camada de cache
-    e popula o diagnostico no session_state (side-effect
-    que nao pode viver dentro de cache_data).
-
-    TTL real: 30min para mes corrente, 24h para historico.
-
-    Returns:
-        (df_consolidado, df_metas, df_supervisores)
-    """
-    if _eh_mes_atual(mes, ano):
-        resultado = _consolidar_atual(mes, ano)
-    else:
-        resultado = _consolidar_historico(mes, ano)
-
-    df, df_metas, df_supervisores, diag = resultado
-
-    # Side-effect: diagnostico no session_state
-    if diag:
-        st.session_state["_diag_pontuacao"] = diag
-
-    return df, df_metas, df_supervisores
-
-
-@st.cache_data(ttl=1800)
-def _consolidar_atual(
-    mes: int,
-    ano: int,
-) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, Optional[dict]]:
-    """Consolidacao — mes corrente. TTL 30min."""
-    return _executar_consolidacao(mes, ano)
-
-
-@st.cache_data(ttl=86400)
-def _consolidar_historico(
-    mes: int,
-    ano: int,
-) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, Optional[dict]]:
-    """Consolidacao — historico. TTL 24h."""
-    return _executar_consolidacao(mes, ano)
-
-
-def _executar_consolidacao(
-    mes: int,
-    ano: int,
-) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, Optional[dict]]:
-    """Consolidacao cacheada — pura, sem side-effects."""
-    df = carregar_contratos_pagos(mes, ano)
-    df_pontos = carregar_pontuacao_efetiva(mes, ano)
-    df_metas = carregar_metas(mes, ano)
-    df_supervisores = carregar_supervisores()
-
-    if df.empty:
-        return df, df_metas, df_supervisores, None
-
-    # Fallback: preencher categoria_codigo via TIPO_PRODUTO
-    # quando produtos.categoria_id esta NULL no banco
-    _TIPO_PARA_CATEGORIA = {
-        "CNC": "CNC",
-        "CNC 13º": "CNC_13",
-        "CNC 13": "CNC_13",
-        "CNC ANT": "ANT_BENEF",
-        "SAQUE": "SAQUE",
-        "SAQUE BENEFICIO": "SAQUE_BENEFICIO",
-        "CONSIG": "CONSIG_BMG",
-        "CONSIG BMG": "CONSIG_BMG",
-        "CONSIG PRIV": "CONSIG_PRIV",
-        "CONSIG ITAU": "CONSIG_ITAU",
-        "CONSIG Itau": "CONSIG_ITAU",
-        "CONSIG C6": "CONSIG_C6",
-        "FGTS": "FGTS",
-        "EMISSAO": "CARTAO",
-        "EMISSAO CB": "CARTAO",
-        "EMISSAO CC": "CARTAO",
-        "Portabilidade": "PORTABILIDADE",
-        "PORTABILIDADE": "PORTABILIDADE",
-    }
-
-    mask_sem_cat = df["categoria_codigo"] == ""
-    if mask_sem_cat.any() and "TIPO_PRODUTO" in df.columns:
-        df.loc[mask_sem_cat, "categoria_codigo"] = (
-            df.loc[mask_sem_cat, "TIPO_PRODUTO"]
-            .map(_TIPO_PARA_CATEGORIA)
-            .fillna("")
-        )
-
-        # Preencher grupo_dashboard, grupo_meta, conta_valor,
-        # conta_pontuacao a partir das categorias do banco
-        categorias = carregar_categorias()
-        if not categorias.empty:
-            cat_map = categorias.set_index("codigo")
-            preenchidos = mask_sem_cat & (df["categoria_codigo"] != "")
-
-            for campo in [
-                "grupo_dashboard",
-                "grupo_meta",
-                "conta_valor",
-                "conta_pontuacao",
-            ]:
-                if campo in cat_map.columns:
-                    df.loc[preenchidos, campo] = (
-                        df.loc[preenchidos, "categoria_codigo"]
-                        .map(cat_map[campo])
-                    )
-
-    # Mapear pontos por categoria_codigo
-    if not df_pontos.empty:
-        mapa_pontos = dict(
-            zip(
-                df_pontos["categoria_codigo"],
-                df_pontos["pontos"].astype(float),
-            )
-        )
-        df["PONTOS"] = df["categoria_codigo"].map(mapa_pontos).fillna(0)
-    else:
-        mapa_pontos = {}
-        df["PONTOS"] = 0
-
-    # ── Diagnostico de mapeamento ──────────────────
-    total = len(df)
-    sem_cat = (df["categoria_codigo"] == "").sum()
-    com_cat = total - sem_cat
-    com_pontos = (df["PONTOS"] > 0).sum()
-    sem_pontos = com_cat - com_pontos
-
-    tipos_sem_cat: list = []
-    if sem_cat > 0 and "TIPO_PRODUTO" in df.columns:
-        tipos_sem_cat = (
-            df.loc[df["categoria_codigo"] == "", "TIPO_PRODUTO"]
-            .value_counts()
-            .reset_index()
-            .rename(columns={"TIPO_PRODUTO": "tipo", "count": "qtd"})
-            .to_dict(orient="records")
-        )
-
-    diag = {
-        "total_contratos": total,
-        "sem_categoria": int(sem_cat),
-        "com_categoria": int(com_cat),
-        "com_pontos_mapeados": int(com_pontos),
-        "sem_pontos_mapeados": int(sem_pontos),
-        "categorias_no_contrato": (
-            sorted(df["categoria_codigo"].unique().tolist())
-        ),
-        "categorias_na_pontuacao": sorted(mapa_pontos.keys()),
-        "mapa_pontos": mapa_pontos,
-        "tipos_sem_categoria": tipos_sem_cat,
-    }
-    # ───────────────────────────────────────────────
-
-    # Aplicar regras de exclusao:
-    # Produtos com conta_valor=false → VALOR = 0
-    # Produtos com conta_pontuacao=false → pontos = 0
-    mask_sem_valor = df["conta_valor"] == False  # noqa
-    mask_sem_pontos = df["conta_pontuacao"] == False  # noqa
-
-    df.loc[mask_sem_valor, "VALOR"] = 0
-    df["pontos"] = df["VALOR"] * df["PONTOS"]
-    df.loc[mask_sem_pontos, "pontos"] = 0
-
-    # Super Conta: CNC com subtipo especifico — conta valor/pontos
-    # como CNC e tambem e contado como producao Super Conta
-    df["is_super_conta"] = df["SUBTIPO"] == "SUPER CONTA"
-
-    # Classificacoes por TIPO OPER. (mesma logica do dashboard original)
-    col_tipo_oper = "TIPO OPER."
-
-    # Emissao de cartao: contam apenas quantidade
-    df["is_emissao_cartao"] = (
-        df[col_tipo_oper].isin(["CARTÃO BENEFICIO", "Venda Pré-Adesão"])
-        if col_tipo_oper in df.columns
-        else False
-    )
-
-    # Zerar valor/pontos de emissoes nao cobertas por conta_valor=false
-    # (ex: Venda Pre-Adesao com produto CONSIG tem categoria CONSIG_BMG
-    # que possui conta_valor=true, mas o TIPO OPER. indica emissao)
-    mask_emissao = df["is_emissao_cartao"]
-    if mask_emissao.any():
-        df.loc[mask_emissao, "VALOR"] = 0
-        df.loc[mask_emissao, "pontos"] = 0
-
-    # Seguros: contam apenas quantidade (valor/pontos ja zerados acima)
-    # Fallback para categoria_codigo caso tipo_operacao nao esteja preenchido
-    df["is_bmg_med"] = (
-        (df[col_tipo_oper] == "BMG MED")
-        if col_tipo_oper in df.columns
-        else (df["categoria_codigo"] == "BMG_MED")
-    )
-    df["is_seguro_vida"] = (
-        (df[col_tipo_oper] == "Seguro")
-        if col_tipo_oper in df.columns
-        else (df["categoria_codigo"] == "SEGURO_VIDA")
-    )
-
-    return df, df_metas, df_supervisores, diag
-
-
-# ══════════════════════════════════════════════════════
-# CALCULO DE KPIs
-# ══════════════════════════════════════════════════════
-
-
-def calcular_kpis_gerais(
-    df: pd.DataFrame,
-    df_metas: pd.DataFrame,
-    ano: int,
-    mes: int,
-    dia_atual: Optional[int] = None,
-    df_supervisores: Optional[pd.DataFrame] = None,
-) -> Dict:
-    """Calcula KPIs gerais do dashboard."""
-    du_total, du_dec, du_rest = calcular_dias_uteis(ano, mes, dia_atual)
-
-    total_vendas = df["VALOR"].sum()
-    total_pontos = df["pontos"].sum()
-    total_transacoes = len(df[df["VALOR"] > 0])
-
-    meta_prata = 0
-    meta_ouro = 0
-    if "META_PRATA" in df_metas.columns:
-        meta_prata = (
-            pd.to_numeric(df_metas["META_PRATA"], errors="coerce").fillna(0).sum()
-        )
-    if "META_OURO" in df_metas.columns:
-        meta_ouro = (
-            pd.to_numeric(df_metas["META_OURO"], errors="coerce").fillna(0).sum()
-        )
-
-    perc_prata = (total_pontos / meta_prata * 100) if meta_prata > 0 else 0
-    perc_ouro = (total_pontos / meta_ouro * 100) if meta_ouro > 0 else 0
-
-    media_du = total_vendas / du_dec if du_dec > 0 else 0
-    media_du_pts = total_pontos / du_dec if du_dec > 0 else 0
-    meta_diaria = meta_prata / du_total if du_total > 0 else 0
-    gap_pontos = max(0, meta_prata - total_pontos)
-    meta_diaria_restante = gap_pontos / du_rest if du_rest > 0 else 0
-    projecao = media_du * du_total
-    projecao_pts = media_du_pts * du_total
-    perc_proj = (projecao_pts / meta_prata * 100) if meta_prata > 0 else 0
-    ticket_medio = total_vendas / total_transacoes if total_transacoes > 0 else 0
-
-    num_consultores = 0
-    if "CONSULTOR" in df.columns:
-        consultores_unicos = df["CONSULTOR"].unique()
-        if df_supervisores is not None and "SUPERVISOR" in df_supervisores.columns:
-            supervisores = df_supervisores["SUPERVISOR"].unique()
-            consultores_unicos = [
-                c for c in consultores_unicos if c not in supervisores
-            ]
-        num_consultores = len(consultores_unicos)
-
-    qtd_super_conta = (
-        int(df["is_super_conta"].sum())
-        if "is_super_conta" in df.columns
-        else 0
-    )
-    qtd_emissao_cartao = (
-        int(df["is_emissao_cartao"].sum())
-        if "is_emissao_cartao" in df.columns
-        else 0
-    )
-    qtd_bmg_med = (
-        int(df["is_bmg_med"].sum())
-        if "is_bmg_med" in df.columns
-        else 0
-    )
-    qtd_seguro_vida = (
-        int(df["is_seguro_vida"].sum())
-        if "is_seguro_vida" in df.columns
-        else 0
-    )
-
-    return {
-        "total_vendas": total_vendas,
-        "total_pontos": total_pontos,
-        "total_transacoes": total_transacoes,
-        "meta_prata": meta_prata,
-        "meta_ouro": meta_ouro,
-        "meta_diaria": meta_diaria,
-        "meta_diaria_restante": meta_diaria_restante,
-        "perc_ating_prata": perc_prata,
-        "perc_ating_ouro": perc_ouro,
-        "media_du": media_du,
-        "media_du_pontos": media_du_pts,
-        "projecao": projecao,
-        "projecao_pontos": projecao_pts,
-        "perc_proj": perc_proj,
-        "ticket_medio": ticket_medio,
-        "du_total": du_total,
-        "du_decorridos": du_dec,
-        "du_restantes": du_rest,
-        "num_lojas": (df["LOJA"].nunique() if "LOJA" in df.columns else 0),
-        "num_consultores": num_consultores,
-        "num_regioes": (df["REGIAO"].nunique() if "REGIAO" in df.columns else 0),
-        "qtd_super_conta": qtd_super_conta,
-        "qtd_emissao_cartao": qtd_emissao_cartao,
-        "qtd_bmg_med": qtd_bmg_med,
-        "qtd_seguro_vida": qtd_seguro_vida,
-    }
-
-
-def _excluir_supervisores(
-    df: pd.DataFrame,
-    df_sup: Optional[pd.DataFrame],
-) -> pd.DataFrame:
-    """Remove supervisores do DataFrame de vendas."""
-    if (
-        df_sup is not None
-        and "SUPERVISOR" in df_sup.columns
-        and "CONSULTOR" in df.columns
-    ):
-        supervisores = df_sup["SUPERVISOR"].unique()
-        return df[~df["CONSULTOR"].isin(supervisores)].copy()
-    return df.copy()
-
-
-def _contar_consultores(
-    df: pd.DataFrame,
-    df_sup: Optional[pd.DataFrame],
-) -> int:
-    """Conta consultores excluindo supervisores."""
-    if "CONSULTOR" not in df.columns:
-        return 0
-    consultores = df["CONSULTOR"].unique()
-    if df_sup is not None and "SUPERVISOR" in df_sup.columns:
-        supervisores = df_sup["SUPERVISOR"].unique()
-        consultores = [c for c in consultores if c not in supervisores]
-    return len(consultores)
-
-
-def calcular_kpis_por_produto(
-    df: pd.DataFrame,
-    df_metas_produto: pd.DataFrame,
-    categorias: pd.DataFrame,
-    ano: int,
-    mes: int,
-    dia_atual: Optional[int] = None,
-    df_supervisores: Optional[pd.DataFrame] = None,
-) -> pd.DataFrame:
-    """Calcula KPIs por grupo de produto do dashboard."""
-    du_total, du_dec, du_rest = calcular_dias_uteis(ano, mes, dia_atual)
-
-    num_consultores = _contar_consultores(df, df_supervisores)
-
-    # Grupos do dashboard vindos do banco
-    grupos = (
-        categorias[categorias["grupo_dashboard"].notna()]["grupo_dashboard"]
-        .unique()
-        .tolist()
-    )
-
-    # Mapeamento grupo_dashboard → grupo_meta
-    grupo_meta_map = (
-        categorias[categorias["grupo_dashboard"].notna()]
-        .groupby("grupo_dashboard")["grupo_meta"]
-        .first()
-        .to_dict()
-    )
-
-    dados = []
-    for grupo in sorted(grupos):
-        df_grupo = df[df["grupo_dashboard"] == grupo].copy()
-
-        valor = df_grupo["VALOR"].sum()
-        quantidade = len(df_grupo[df_grupo["VALOR"] > 0])
-
-        # Buscar meta por grupo_meta
-        meta_key = grupo_meta_map.get(grupo, grupo)
-        meta_total = 0
-        if not df_metas_produto.empty and meta_key in df_metas_produto.columns:
-            meta_total = (
-                pd.to_numeric(
-                    df_metas_produto[meta_key],
-                    errors="coerce",
-                )
-                .fillna(0)
-                .sum()
-            )
-
-        perc_ating = (valor / meta_total * 100) if meta_total > 0 else 0
-        media_du = valor / du_dec if du_dec > 0 else 0
-        meta_diaria = meta_total / du_total if du_total > 0 else 0
-        gap = max(0, meta_total - valor)
-        meta_diaria_rest = gap / du_rest if du_rest > 0 else 0
-        ticket = valor / quantidade if quantidade > 0 else 0
-        projecao = media_du * du_total
-        perc_proj = (projecao / meta_total * 100) if meta_total > 0 else 0
-        valor_medio_cons = valor / num_consultores if num_consultores > 0 else 0
-
-        dados.append(
-            {
-                "Produto": grupo,
-                "Valor": valor,
-                "Meta": meta_total,
-                "Meta Diária": meta_diaria,
-                "Meta Diária Restante": meta_diaria_rest,
-                "% Atingimento": perc_ating,
-                "Quantidade": quantidade,
-                "Ticket Médio": ticket,
-                "Valor Médio/Consultor": valor_medio_cons,
-                "Média DU": media_du,
-                "Projeção": projecao,
-                "% Projeção": perc_proj,
-            }
-        )
-
-    return pd.DataFrame(dados)
-
-
-def calcular_kpis_por_regiao(
-    df: pd.DataFrame,
-    df_metas: pd.DataFrame,
-    ano: int,
-    mes: int,
-    dia_atual: Optional[int] = None,
-    df_supervisores: Optional[pd.DataFrame] = None,
-) -> pd.DataFrame:
-    """Calcula KPIs por regiao."""
-    if "REGIAO" not in df.columns:
-        return pd.DataFrame()
-
-    du_total, du_dec, _ = calcular_dias_uteis(ano, mes, dia_atual)
-
-    dados = []
-    for regiao in sorted(df["REGIAO"].unique()):
-        df_r = df[df["REGIAO"] == regiao]
-
-        valor = df_r["VALOR"].sum()
-        pontos = df_r["pontos"].sum()
-        num_lojas = df_r["LOJA"].nunique()
-        num_cons = _contar_consultores(df_r, df_supervisores)
-
-        meta_prata = 0
-        if "META_PRATA" in df_metas.columns:
-            lojas_r = df_r["LOJA"].unique()
-            meta_prata = df_metas[df_metas["LOJA"].isin(lojas_r)]["META_PRATA"].sum()
-
-        perc = (pontos / meta_prata * 100) if meta_prata > 0 else 0
-        media_du = valor / du_dec if du_dec > 0 else 0
-        projecao = media_du * du_total
-        valor_medio_cons = valor / num_cons if num_cons > 0 else 0
-
-        dados.append(
-            {
-                "Região": regiao,
-                "Valor": valor,
-                "Pontos": pontos,
-                "Meta Prata": meta_prata,
-                "% Atingimento": perc,
-                "Nº Lojas": num_lojas,
-                "Nº Consultores": num_cons,
-                "Valor Médio/Consultor": valor_medio_cons,
-                "Média DU": media_du,
-                "Projeção": projecao,
-            }
-        )
-
-    return pd.DataFrame(dados)
-
-
-def calcular_heatmap_regiao_produto(
-    df: pd.DataFrame,
-    df_metas_produto: pd.DataFrame,
-    categorias: pd.DataFrame,
-) -> Tuple[pd.DataFrame, pd.DataFrame]:
-    """Calcula matriz de ranking por regiao x produto.
-
-    Cada celula contem a posicao da regiao naquele produto,
-    baseada no % de atingimento (valor realizado / meta).
-
-    Returns:
-        (df_ranking, df_atingimento): ranking e % atingimento.
-    """
-    if "REGIAO" not in df.columns or "grupo_dashboard" not in df.columns:
-        return pd.DataFrame(), pd.DataFrame()
-
-    # Mapeamento grupo_dashboard → grupo_meta
-    grupo_meta_map = (
-        categorias[categorias["grupo_dashboard"].notna()]
-        .groupby("grupo_dashboard")["grupo_meta"]
-        .first()
-        .to_dict()
-    )
-
-    grupos = sorted(
-        categorias[categorias["grupo_dashboard"].notna()][
-            "grupo_dashboard"
-        ]
-        .unique()
-        .tolist()
-    )
-
-    regioes = sorted(df["REGIAO"].unique())
-
-    # Calcular % atingimento por regiao x produto
-    dados_ating = []
-    for regiao in regioes:
-        df_r = df[df["REGIAO"] == regiao]
-        lojas_r = df_r["LOJA"].unique()
-        row = {"Região": regiao}
-
-        for grupo in grupos:
-            valor = df_r[df_r["grupo_dashboard"] == grupo][
-                "VALOR"
-            ].sum()
-
-            meta_key = grupo_meta_map.get(grupo, grupo)
-            meta = 0
-            if (
-                not df_metas_produto.empty
-                and meta_key in df_metas_produto.columns
-            ):
-                meta = (
-                    pd.to_numeric(
-                        df_metas_produto[
-                            df_metas_produto["LOJA"].isin(lojas_r)
-                        ][meta_key],
-                        errors="coerce",
-                    )
-                    .fillna(0)
-                    .sum()
-                )
-
-            perc = (valor / meta * 100) if meta > 0 else 0
-            row[grupo] = perc
-
-        dados_ating.append(row)
-
-    df_ating = pd.DataFrame(dados_ating).set_index("Região")
-
-    # Gerar ranking (1 = melhor % atingimento)
-    df_ranking = df_ating.rank(ascending=False, method="min").astype(
-        int
-    )
-
-    return df_ranking, df_ating
-
-
-def calcular_ranking_lojas(
-    df: pd.DataFrame,
-    df_metas: pd.DataFrame,
-    top_n: int = 10,
-) -> pd.DataFrame:
-    """Ranking de lojas por atingimento de meta prata."""
-    df_v = df[df["VALOR"] > 0].copy()
-    if "LOJA" not in df_v.columns:
-        return pd.DataFrame()
-
-    ranking = (
-        df_v.groupby("LOJA")
-        .agg(
-            Qtd=("VALOR", "count"),
-            Valor=("VALOR", "sum"),
-            Pontos=("pontos", "sum"),
-        )
-        .reset_index()
-        .rename(columns={"LOJA": "Loja"})
-    )
-
-    if "REGIAO" in df.columns:
-        df_reg = df[["LOJA", "REGIAO"]].drop_duplicates()
-        ranking = ranking.merge(
-            df_reg,
-            left_on="Loja",
-            right_on="LOJA",
-            how="left",
-        ).drop("LOJA", axis=1)
-
-    if "LOJA" in df_metas.columns and "META_PRATA" in df_metas.columns:
-        ranking = ranking.merge(
-            df_metas[["LOJA", "META_PRATA"]],
-            left_on="Loja",
-            right_on="LOJA",
-            how="left",
-        )
-        ranking["Meta Prata"] = ranking["META_PRATA"].fillna(0)
-        ranking = ranking.drop(["LOJA", "META_PRATA"], axis=1)
-    else:
-        ranking["Meta Prata"] = 0
-
-    ranking["Atingimento %"] = ranking.apply(
-        lambda r: r["Pontos"] / r["Meta Prata"] * 100 if r["Meta Prata"] > 0 else 0,
-        axis=1,
-    )
-    ranking["Ticket Médio"] = ranking.apply(
-        lambda r: r["Valor"] / r["Qtd"] if r["Qtd"] > 0 else 0,
-        axis=1,
-    )
-
-    ranking = ranking.sort_values("Atingimento %", ascending=False).head(top_n)
-    ranking.insert(0, "Posição", range(1, len(ranking) + 1))
-    return ranking
-
-
-def calcular_ranking_consultores(
-    df: pd.DataFrame,
-    df_metas: pd.DataFrame,
-    top_n: int = 10,
-    df_supervisores: Optional[pd.DataFrame] = None,
-) -> pd.DataFrame:
-    """Ranking de consultores por atingimento."""
-    df_v = _excluir_supervisores(df[df["VALOR"] > 0], df_supervisores)
-    if "CONSULTOR" not in df_v.columns:
-        return pd.DataFrame()
-
-    ranking = (
-        df_v.groupby("CONSULTOR")
-        .agg(
-            Qtd=("VALOR", "count"),
-            Valor=("VALOR", "sum"),
-            Pontos=("pontos", "sum"),
-            Loja=("LOJA", "first"),
-        )
-        .reset_index()
-        .rename(columns={"CONSULTOR": "Consultor"})
-    )
-
-    if "LOJA" in df_metas.columns and "META_PRATA" in df_metas.columns:
-        metas_loja = df_metas.set_index("LOJA")["META_PRATA"]
-        num_cons_loja = df_v.groupby("LOJA")["CONSULTOR"].nunique()
-
-        ranking["Meta Prata"] = ranking["Loja"].map(
-            lambda x: (
-                metas_loja.get(x, 0) / num_cons_loja.get(x, 1)
-                if x in num_cons_loja.index
-                else 0
-            )
-        )
-    else:
-        ranking["Meta Prata"] = 0
-
-    ranking["Atingimento %"] = ranking.apply(
-        lambda r: r["Pontos"] / r["Meta Prata"] * 100 if r["Meta Prata"] > 0 else 0,
-        axis=1,
-    )
-    ranking["Ticket Médio"] = ranking.apply(
-        lambda r: r["Valor"] / r["Qtd"] if r["Qtd"] > 0 else 0,
-        axis=1,
-    )
-
-    ranking = ranking.sort_values("Atingimento %", ascending=False).head(top_n)
-    ranking.insert(0, "Posição", range(1, len(ranking) + 1))
-    return ranking
-
-
-def calcular_ranking_ticket_medio(
-    df: pd.DataFrame,
-    tipo: str = "loja",
-    top_n: int = 10,
-    df_supervisores: Optional[pd.DataFrame] = None,
-) -> pd.DataFrame:
-    """Ranking por ticket medio (lojas ou consultores)."""
-    df_v = df[df["VALOR"] > 0].copy()
-
-    if tipo == "consultor":
-        df_v = _excluir_supervisores(df_v, df_supervisores)
-
-    coluna = "LOJA" if tipo == "loja" else "CONSULTOR"
-    label = "Loja" if tipo == "loja" else "Consultor"
-
-    if coluna not in df_v.columns:
-        return pd.DataFrame()
-
-    agg_dict = {
-        "Qtd": ("VALOR", "count"),
-        "Valor": ("VALOR", "sum"),
-        "Pontos": ("pontos", "sum"),
-    }
-    if tipo == "consultor":
-        agg_dict["Loja"] = ("LOJA", "first")
-
-    ranking = (
-        df_v.groupby(coluna)
-        .agg(**agg_dict)
-        .reset_index()
-        .rename(columns={coluna: label})
-    )
-
-    if "REGIAO" in df.columns and tipo == "loja":
-        df_reg = df[["LOJA", "REGIAO"]].drop_duplicates()
-        ranking = ranking.merge(
-            df_reg,
-            left_on="Loja",
-            right_on="LOJA",
-            how="left",
-        ).drop("LOJA", axis=1)
-
-    ranking["Ticket Médio"] = ranking.apply(
-        lambda r: r["Valor"] / r["Qtd"] if r["Qtd"] > 0 else 0,
-        axis=1,
-    )
-
-    ranking = ranking.sort_values("Ticket Médio", ascending=False).head(top_n)
-    ranking.insert(0, "Posição", range(1, len(ranking) + 1))
-    return ranking
-
-
-def calcular_ranking_por_produto(
-    df: pd.DataFrame,
-    tipo: str = "loja",
-    top_n: int = 10,
-    df_supervisores: Optional[pd.DataFrame] = None,
-) -> Dict[str, pd.DataFrame]:
-    """Rankings por grupo_dashboard (lojas ou consultores)."""
-    df_v = df[df["VALOR"] > 0].copy()
-    if tipo == "consultor":
-        df_v = _excluir_supervisores(df_v, df_supervisores)
-
-    grupos = df_v[df_v["grupo_dashboard"].notna()]["grupo_dashboard"].unique()
-
-    coluna = "LOJA" if tipo == "loja" else "CONSULTOR"
-    label = "Loja" if tipo == "loja" else "Consultor"
-
-    rankings = {}
-    for grupo in sorted(grupos):
-        df_g = df_v[df_v["grupo_dashboard"] == grupo]
-        if df_g.empty:
-            rankings[grupo] = pd.DataFrame()
-            continue
-
-        agg_dict = {
-            "Qtd": ("VALOR", "count"),
-            "Valor": ("VALOR", "sum"),
-            "Pontos": ("pontos", "sum"),
-        }
-        if tipo == "consultor":
-            agg_dict["Loja"] = ("LOJA", "first")
-
-        ranking = (
-            df_g.groupby(coluna)
-            .agg(**agg_dict)
-            .reset_index()
-            .rename(columns={coluna: label})
-        )
-        ranking["Ticket Médio"] = ranking.apply(
-            lambda r: r["Valor"] / r["Qtd"] if r["Qtd"] > 0 else 0,
-            axis=1,
-        )
-        ranking = ranking.sort_values("Pontos", ascending=False).head(top_n)
-        ranking.insert(0, "Posição", range(1, len(ranking) + 1))
-        rankings[grupo] = ranking
-
-    return rankings
-
-
-def calcular_ranking_pontos(
-    df: pd.DataFrame,
-    tipo: str = "loja",
-    top_n: int = 10,
-    df_supervisores: Optional[pd.DataFrame] = None,
-) -> pd.DataFrame:
-    """Ranking por pontos (lojas ou consultores)."""
-    df_v = df[df["VALOR"] > 0].copy()
-
-    if tipo == "consultor":
-        df_v = _excluir_supervisores(df_v, df_supervisores)
-
-    coluna = "LOJA" if tipo == "loja" else "CONSULTOR"
-    label = "Loja" if tipo == "loja" else "Consultor"
-
-    if coluna not in df_v.columns:
-        return pd.DataFrame()
-
-    agg_dict = {
-        "Qtd": ("VALOR", "count"),
-        "Valor": ("VALOR", "sum"),
-        "Pontos": ("pontos", "sum"),
-    }
-    if tipo == "consultor":
-        agg_dict["Loja"] = ("LOJA", "first")
-
-    ranking = (
-        df_v.groupby(coluna)
-        .agg(**agg_dict)
-        .reset_index()
-        .rename(columns={coluna: label})
-    )
-
-    if "REGIAO" in df.columns and tipo == "loja":
-        df_reg = df[["LOJA", "REGIAO"]].drop_duplicates()
-        ranking = ranking.merge(
-            df_reg,
-            left_on="Loja",
-            right_on="LOJA",
-            how="left",
-        ).drop("LOJA", axis=1)
-
-    ranking["Ticket Médio"] = ranking.apply(
-        lambda r: r["Valor"] / r["Qtd"] if r["Qtd"] > 0 else 0,
-        axis=1,
-    )
-
-    ranking = ranking.sort_values(
-        "Pontos", ascending=False,
-    ).head(top_n)
-    ranking.insert(0, "Posição", range(1, len(ranking) + 1))
-    return ranking
-
-
-def calcular_ranking_media_du(
-    df: pd.DataFrame,
-    tipo: str = "loja",
-    top_n: int = 10,
-    du_decorridos: int = 1,
-    df_supervisores: Optional[pd.DataFrame] = None,
-) -> pd.DataFrame:
-    """Ranking por media DU (lojas ou consultores)."""
-    df_v = df[df["VALOR"] > 0].copy()
-
-    if tipo == "consultor":
-        df_v = _excluir_supervisores(df_v, df_supervisores)
-
-    coluna = "LOJA" if tipo == "loja" else "CONSULTOR"
-    label = "Loja" if tipo == "loja" else "Consultor"
-
-    if coluna not in df_v.columns:
-        return pd.DataFrame()
-
-    agg_dict = {
-        "Qtd": ("VALOR", "count"),
-        "Valor": ("VALOR", "sum"),
-        "Pontos": ("pontos", "sum"),
-    }
-    if tipo == "consultor":
-        agg_dict["Loja"] = ("LOJA", "first")
-
-    ranking = (
-        df_v.groupby(coluna)
-        .agg(**agg_dict)
-        .reset_index()
-        .rename(columns={coluna: label})
-    )
-
-    if "REGIAO" in df.columns and tipo == "loja":
-        df_reg = df[["LOJA", "REGIAO"]].drop_duplicates()
-        ranking = ranking.merge(
-            df_reg,
-            left_on="Loja",
-            right_on="LOJA",
-            how="left",
-        ).drop("LOJA", axis=1)
-
-    du = max(du_decorridos, 1)
-    ranking["Média DU"] = ranking["Valor"] / du
-    ranking["Ticket Médio"] = ranking.apply(
-        lambda r: r["Valor"] / r["Qtd"] if r["Qtd"] > 0 else 0,
-        axis=1,
-    )
-
-    ranking = ranking.sort_values(
-        "Média DU", ascending=False,
-    ).head(top_n)
-    ranking.insert(0, "Posição", range(1, len(ranking) + 1))
-    return ranking
-
-
-def calcular_ranking_regioes(
-    df: pd.DataFrame,
-    df_metas: pd.DataFrame,
-    du_decorridos: int = 1,
-) -> Dict[str, pd.DataFrame]:
-    """Todos os rankings de regioes."""
-    df_v = df[df["VALOR"] > 0].copy()
-    if "REGIAO" not in df_v.columns:
-        return {}
-
-    base = (
-        df_v.groupby("REGIAO")
-        .agg(
-            Qtd=("VALOR", "count"),
-            Valor=("VALOR", "sum"),
-            Pontos=("pontos", "sum"),
-        )
-        .reset_index()
-        .rename(columns={"REGIAO": "Região"})
-    )
-
-    du = max(du_decorridos, 1)
-    base["Ticket Médio"] = base.apply(
-        lambda r: r["Valor"] / r["Qtd"] if r["Qtd"] > 0 else 0,
-        axis=1,
-    )
-    base["Média DU"] = base["Valor"] / du
-
-    # Atingimento meta: somar metas das lojas por regiao
-    if (
-        "LOJA" in df_metas.columns
-        and "META_PRATA" in df_metas.columns
-        and "REGIAO" in df.columns
-    ):
-        loja_reg = df[["LOJA", "REGIAO"]].drop_duplicates()
-        metas_reg = (
-            df_metas[["LOJA", "META_PRATA"]]
-            .merge(loja_reg, on="LOJA", how="left")
-            .groupby("REGIAO")["META_PRATA"]
-            .sum()
-        )
-        base["Meta Prata"] = base["Região"].map(metas_reg).fillna(0)
-    else:
-        base["Meta Prata"] = 0
-
-    base["Atingimento %"] = base.apply(
-        lambda r: (
-            r["Pontos"] / r["Meta Prata"] * 100
-            if r["Meta Prata"] > 0
-            else 0
-        ),
-        axis=1,
-    )
-
-    def _add_pos(r):
-        r = r.copy()
-        r.insert(0, "Posição", range(1, len(r) + 1))
-        return r
-
-    # Por Pontos
-    rk_pontos = _add_pos(
-        base[["Região", "Qtd", "Valor", "Pontos", "Ticket Médio"]]
-        .sort_values("Pontos", ascending=False)
-    )
-
-    # Por Ticket Médio
-    rk_ticket = _add_pos(
-        base[["Região", "Qtd", "Valor", "Pontos", "Ticket Médio"]]
-        .sort_values("Ticket Médio", ascending=False)
-    )
-
-    # Por Média DU
-    rk_media = _add_pos(
-        base[
-            ["Região", "Qtd", "Valor", "Pontos",
-             "Ticket Médio", "Média DU"]
-        ]
-        .sort_values("Média DU", ascending=False)
-    )
-
-    # Por Atingimento
-    rk_ating = _add_pos(
-        base[
-            ["Região", "Qtd", "Valor", "Pontos",
-             "Meta Prata", "Atingimento %", "Ticket Médio"]
-        ]
-        .sort_values("Atingimento %", ascending=False)
-    )
-
-    # Por Produto
-    rk_produto = {}
-    grupos = df_v[
-        df_v["grupo_dashboard"].notna()
-    ]["grupo_dashboard"].unique()
-    for grupo in sorted(grupos):
-        df_g = df_v[df_v["grupo_dashboard"] == grupo]
-        if df_g.empty:
-            continue
-        rk = (
-            df_g.groupby("REGIAO")
-            .agg(
-                Qtd=("VALOR", "count"),
-                Valor=("VALOR", "sum"),
-                Pontos=("pontos", "sum"),
-            )
-            .reset_index()
-            .rename(columns={"REGIAO": "Região"})
-        )
-        rk["Ticket Médio"] = rk.apply(
-            lambda r: r["Valor"] / r["Qtd"] if r["Qtd"] > 0 else 0,
-            axis=1,
-        )
-        rk["Média DU"] = rk["Valor"] / du
-        rk = rk.sort_values("Pontos", ascending=False)
-        rk.insert(0, "Posição", range(1, len(rk) + 1))
-        rk_produto[grupo] = rk
-
-    return {
-        "pontos": rk_pontos,
-        "ticket": rk_ticket,
-        "media_du": rk_media,
-        "atingimento": rk_ating,
-        "por_produto": rk_produto,
-    }
-
-
-def calcular_analitico_consultores(
-    df: pd.DataFrame,
-    df_supervisores: Optional[pd.DataFrame] = None,
-) -> pd.DataFrame:
-    """Analitico de consultores por produto e loja."""
-    if "CONSULTOR" not in df.columns:
-        return pd.DataFrame()
-
-    # Incluir seguros (VALOR=0) que contam apenas quantidade
-    mask_producao = df["VALOR"] > 0
-    if "is_bmg_med" in df.columns:
-        mask_producao = mask_producao | df["is_bmg_med"]
-    if "is_seguro_vida" in df.columns:
-        mask_producao = mask_producao | df["is_seguro_vida"]
-
-    df_v = _excluir_supervisores(df[mask_producao], df_supervisores)
-
-    df_v["PRODUTO_MIX"] = df_v["grupo_dashboard"].fillna("OUTROS")
-    if "is_bmg_med" in df_v.columns:
-        df_v.loc[df_v["is_bmg_med"], "PRODUTO_MIX"] = "BMG Med"
-    if "is_seguro_vida" in df_v.columns:
-        df_v.loc[df_v["is_seguro_vida"], "PRODUTO_MIX"] = "Vida Familiar"
-
-    analitico = (
-        df_v.groupby(["CONSULTOR", "LOJA", "REGIAO", "PRODUTO_MIX"])
-        .agg(
-            Qtd=("VALOR", "count"),
-            Valor=("VALOR", "sum"),
-            Pontos=("pontos", "sum"),
-        )
-        .reset_index()
-    )
-
-    analitico.columns = [
-        "Consultor",
-        "Loja",
-        "Região",
-        "Produto",
-        "Qtd",
-        "Valor",
-        "Pontos",
-    ]
-    analitico["Ticket Médio"] = analitico.apply(
-        lambda r: r["Valor"] / r["Qtd"] if r["Qtd"] > 0 else 0,
-        axis=1,
-    )
-    return analitico.sort_values(
-        ["Consultor", "Pontos"],
-        ascending=[True, False],
-    )
-
-
-def calcular_media_producao_regiao(
-    df: pd.DataFrame,
-    df_supervisores: Optional[pd.DataFrame] = None,
-) -> pd.DataFrame:
-    """Media de producao por consultor por regiao."""
-    if "CONSULTOR" not in df.columns or "REGIAO" not in df.columns:
-        return pd.DataFrame()
-
-    df_v = _excluir_supervisores(df[df["VALOR"] > 0], df_supervisores)
-
-    por_cons = (
-        df_v.groupby(["REGIAO", "CONSULTOR"])
-        .agg(
-            VALOR=("VALOR", "sum"),
-            pontos=("pontos", "sum"),
-        )
-        .reset_index()
-    )
-
-    stats = (
-        por_cons.groupby("REGIAO")
-        .agg(
-            **{
-                "Valor Médio": ("VALOR", "mean"),
-                "Valor Mediano": ("VALOR", "median"),
-                "Valor Desvio": ("VALOR", "std"),
-                "Valor Mínimo": ("VALOR", "min"),
-                "Valor Máximo": ("VALOR", "max"),
-                "Pontos Médio": ("pontos", "mean"),
-                "Pontos Mediano": ("pontos", "median"),
-                "Pontos Desvio": ("pontos", "std"),
-                "Pontos Mínimo": ("pontos", "min"),
-                "Pontos Máximo": ("pontos", "max"),
-                "Num Consultores": ("CONSULTOR", "count"),
-            }
-        )
-        .reset_index()
-        .rename(columns={"REGIAO": "Região"})
-    )
-
-    return stats.sort_values("Pontos Médio", ascending=False)
-
-
-def calcular_distribuicao_produtos(
-    df: pd.DataFrame,
-    df_supervisores: Optional[pd.DataFrame] = None,
-) -> pd.DataFrame:
-    """Distribuicao de produtos por consultor."""
-    if "CONSULTOR" not in df.columns:
-        return pd.DataFrame()
-
-    # Incluir seguros (VALOR=0) que contam apenas quantidade
-    mask_producao = df["VALOR"] > 0
-    if "is_bmg_med" in df.columns:
-        mask_producao = mask_producao | df["is_bmg_med"]
-    if "is_seguro_vida" in df.columns:
-        mask_producao = mask_producao | df["is_seguro_vida"]
-
-    df_v = _excluir_supervisores(df[mask_producao], df_supervisores)
-
-    df_v["PRODUTO_MIX"] = df_v["grupo_dashboard"].fillna("OUTROS")
-    if "is_bmg_med" in df_v.columns:
-        df_v.loc[df_v["is_bmg_med"], "PRODUTO_MIX"] = "BMG Med"
-    if "is_seguro_vida" in df_v.columns:
-        df_v.loc[df_v["is_seguro_vida"], "PRODUTO_MIX"] = "Vida Familiar"
-
-    grupos = sorted(
-        df_v[df_v["PRODUTO_MIX"] != "OUTROS"]["PRODUTO_MIX"].unique().tolist()
-    )
-
-    distrib = df_v.pivot_table(
-        index="CONSULTOR",
-        columns="PRODUTO_MIX",
-        values="pontos",
-        aggfunc="sum",
-        fill_value=0,
-    ).reset_index()
-
-    cols_existentes = [g for g in grupos if g in distrib.columns]
-    distrib["TOTAL"] = distrib[cols_existentes].sum(axis=1)
-
-    if "LOJA" in df.columns:
-        df_info = df[["CONSULTOR", "LOJA"]].drop_duplicates()
-        distrib = distrib.merge(df_info, on="CONSULTOR", how="left")
-
-    if "REGIAO" in df.columns:
-        df_reg = df[["LOJA", "REGIAO"]].drop_duplicates()
-        distrib = distrib.merge(df_reg, on="LOJA", how="left")
-
-    return distrib.sort_values("TOTAL", ascending=False)
-
-
-def calcular_evolucao_diaria(
-    df: pd.DataFrame,
-    ano: int,
-    mes: int,
-) -> pd.DataFrame:
-    """Evolucao diaria de vendas e pontos."""
-    if "DATA" not in df.columns:
-        return pd.DataFrame()
-
-    df_t = df.copy()
-    df_t["DATA_DIA"] = pd.to_datetime(df_t["DATA"]).dt.date
-
-    evolucao = (
-        df_t.groupby("DATA_DIA")
-        .agg(
-            VALOR=("VALOR", "sum"),
-            pontos=("pontos", "sum"),
-        )
-        .reset_index()
-        .rename(columns={"DATA_DIA": "DATA"})
-    )
-
-    evolucao["DATA"] = pd.to_datetime(evolucao["DATA"])
-    evolucao = evolucao.sort_values("DATA")
-    evolucao["Valor Acumulado"] = evolucao["VALOR"].cumsum()
-    evolucao["Pontos Acumulados"] = evolucao["pontos"].cumsum()
-
-    return evolucao
-
-
-# ══════════════════════════════════════════════════════
-# FORMATADORES
-# ══════════════════════════════════════════════════════
-
-
-def formatar_moeda(valor):
-    """Formata valor como moeda brasileira."""
-    return f"R$ {valor:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
-
-
-def formatar_numero(valor):
-    """Formata numero com separador de milhares."""
-    return f"{valor:,.0f}".replace(",", ".")
-
-
-def formatar_percentual(valor):
-    """Formata percentual."""
-    return f"{valor:.1f}%"
-
-
-# ══════════════════════════════════════════════════════
-# ESTILOS
-# ══════════════════════════════════════════════════════
-
-
-def carregar_estilos_customizados():
-    """Carrega CSS customizado do dashboard."""
-    try:
-        with open("assets/dashboard_style.css") as f:
-            st.markdown(
-                f"<style>{f.read()}</style>",
-                unsafe_allow_html=True,
-            )
-    except FileNotFoundError:
-        pass
-
-
-# ══════════════════════════════════════════════════════
-# SKELETON LOADING
-# ══════════════════════════════════════════════════════
-
-
-def _render_skeleton():
-    """Renderiza placeholder shimmer enquanto dados carregam."""
-    cards = ""
-    for _ in range(4):
-        cards += (
-            '<div class="mg-skeleton-card">'
-            '<div class="mg-skeleton-line lg"></div>'
-            '<div class="mg-skeleton-line sm"></div>'
-            '<div class="mg-skeleton-line xs"></div>'
-            "</div>"
-        )
-    st.markdown(
-        f'<div class="mg-skeleton">'
-        f'<div class="mg-skeleton-row">{cards}</div>'
-        f'<div class="mg-skeleton-chart">'
-        f'<div class="mg-skeleton-chart-inner"></div>'
-        f"</div></div>",
-        unsafe_allow_html=True,
-    )
-
-
-# ══════════════════════════════════════════════════════
-# HEADER
-# ══════════════════════════════════════════════════════
-
-
-def _chart_card_open(title: str, icon: str = "", subtitle: str = ""):
-    """Abre container HTML de card de grafico com header."""
-    icon_html = (
-        f'<div class="mg-chart-icon">{icon}</div>'
-        if icon
-        else ""
-    )
-    sub_html = (
-        f'<div class="mg-chart-subtitle">{subtitle}</div>'
-        if subtitle
-        else ""
-    )
-    st.markdown(
-        f'<div class="mg-chart-card">'
-        f'<div class="mg-chart-header">'
-        f'{icon_html}'
-        f'<div><div class="mg-chart-title">{title}</div>'
-        f'{sub_html}</div>'
-        f'</div>',
-        unsafe_allow_html=True,
-    )
-
-
-def _chart_card_close():
-    """Fecha container HTML de card de grafico."""
-    st.markdown("</div>", unsafe_allow_html=True)
-
-
-def _render_header():
-    """Renderiza cabecalho estilizado."""
-    st.markdown(
-        """
-        <div class="dashboard-header">
-            <h1>Dashboard de Vendas</h1>
-            <p>Analise completa de performance
-            e KPIs - MGCred</p>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-
-
-def _render_status_bar(
-    num_registros,
-    ultima_data,
-    filtro_regiao,
-    num_em_analise=0,
-):
-    """Renderiza barra de status."""
-    regiao_txt = (
-        f" &middot; Regiao: {filtro_regiao}" if filtro_regiao != "Todas" else ""
-    )
-    data_str = (
-        ultima_data.strftime("%d/%m/%Y")
-        if hasattr(ultima_data, "strftime")
-        else str(ultima_data)
-    )
-    analise_txt = (
-        f" &middot; <strong>{num_em_analise:,}</strong> em analise"
-        if num_em_analise > 0
-        else ""
-    )
-    st.markdown(
-        '<div class="status-bar fade-in">'
-        '<span class="status-dot"></span>'
-        f"<span><strong>{num_registros:,}</strong>"
-        f" pagos{analise_txt}"
-        f" &middot; Atualizado em"
-        f" <strong>{data_str}</strong>"
-        f"{regiao_txt}</span></div>",
-        unsafe_allow_html=True,
-    )
-
-
-# ══════════════════════════════════════════════════════
-# KPI CARDS
-# ══════════════════════════════════════════════════════
-
-
-def _progress_bar(percent: float, label: str = "") -> None:
-    """Renderiza barra de progresso abaixo de um st.metric."""
-    clamped = max(0, min(percent, 100))
-    if percent >= 100:
-        css_class = "mg-success"
-    elif percent >= 80:
-        css_class = "mg-warning"
-    else:
-        css_class = "mg-danger"
-    lbl = (
-        f'<div class="mg-progress-label">{label}</div>'
-        if label
-        else ""
-    )
-    st.markdown(
-        f'<div class="mg-progress">'
-        f'<div class="mg-progress-fill {css_class}" '
-        f'style="width:{clamped:.1f}%"></div>'
-        f"</div>{lbl}",
-        unsafe_allow_html=True,
-    )
-
-
-def _status_badge(percent: float) -> None:
-    """Renderiza badge de status baseado no percentual."""
-    if percent >= 100:
-        cls = "mg-status-success"
-        txt = "Meta atingida"
-    elif percent >= 80:
-        cls = "mg-status-warning"
-        txt = "Em progresso"
-    else:
-        cls = "mg-status-danger"
-        txt = "Abaixo da meta"
-    st.markdown(
-        f'<div class="mg-status {cls}">'
-        f'<span class="mg-status-dot"></span>'
-        f"{txt}</div>",
-        unsafe_allow_html=True,
-    )
-
-
-def criar_cards_kpis_principais(kpis):
-    """Cria cards de KPIs principais."""
-    sac.divider(
-        label="Indicadores Principais",
-        icon="bar-chart-line",
-        align="left",
-        color="blue",
-    )
-
-    col1, col2, col3, col4 = st.columns(4)
-
-    with col1:
-        dc = (
-            "normal"
-            if kpis["perc_ating_prata"] >= 100
-            else "off"
-            if kpis["perc_ating_prata"] >= 80
-            else "inverse"
-        )
-        st.metric(
-            "Total de Vendas",
-            formatar_moeda(kpis["total_vendas"]),
-            f"{formatar_percentual(kpis['perc_ating_prata'])} da meta prata",
-            delta_color=dc,
-        )
-        _progress_bar(kpis["perc_ating_prata"])
-        _status_badge(kpis["perc_ating_prata"])
-
-    with col2:
-        dc = (
-            "normal"
-            if kpis["perc_ating_prata"] >= 100
-            else "off"
-            if kpis["perc_ating_prata"] >= 80
-            else "inverse"
-        )
-        st.metric(
-            "Total de Pontos",
-            formatar_numero(kpis["total_pontos"]),
-            f"{formatar_percentual(kpis['perc_ating_prata'])} da meta prata",
-            delta_color=dc,
-        )
-        _progress_bar(kpis["perc_ating_prata"])
-        _status_badge(kpis["perc_ating_prata"])
-
-    with col3:
-        dc = (
-            "normal"
-            if kpis["perc_proj"] >= 100
-            else "off"
-            if kpis["perc_proj"] >= 90
-            else "inverse"
-        )
-        st.metric(
-            "Projecao (Pontos)",
-            formatar_numero(kpis["projecao_pontos"]),
-            f"{formatar_percentual(kpis['perc_proj'])} da meta prata",
-            delta_color=dc,
-        )
-        _progress_bar(kpis["perc_proj"])
-
-    with col4:
-        st.metric(
-            "Meta Prata",
-            formatar_numero(kpis["meta_prata"]),
-            f"{kpis['du_restantes']} DU restantes",
-        )
-
-    sac.divider(
-        label="Indicadores Operacionais",
-        icon="clipboard-data",
-        align="left",
-        color="blue",
-    )
-
-    col1, col2, col3, col4 = st.columns(4)
-
-    with col1:
-        dc = (
-            "normal"
-            if kpis["perc_ating_ouro"] >= 100
-            else "off"
-            if kpis["perc_ating_ouro"] >= 80
-            else "inverse"
-        )
-        st.metric(
-            "Meta Ouro",
-            formatar_numero(kpis["meta_ouro"]),
-            f"{formatar_percentual(kpis['perc_ating_ouro'])} atingido",
-            delta_color=dc,
-        )
-        _progress_bar(kpis["perc_ating_ouro"])
-
-    with col2:
-        mdr = kpis["meta_diaria_restante"]
-        if mdr == 0 and kpis["perc_ating_prata"] >= 100:
-            st.metric(
-                "Meta Diaria (Pontos)",
-                "Meta atingida",
-                f"Ritmo: {formatar_numero(kpis['media_du_pontos'])} pts/DU",
-                delta_color="normal",
-            )
-        else:
-            dif_pts = kpis["media_du_pontos"] - mdr
-            dc = "normal" if dif_pts >= 0 else "inverse"
-            st.metric(
-                "Meta Diaria Restante",
-                f"{formatar_numero(mdr)} pts/DU",
-                f"Ritmo atual: {formatar_numero(kpis['media_du_pontos'])} pts/DU",
-                delta_color=dc,
-            )
-
-    with col3:
-        st.metric(
-            "Ticket Medio",
-            formatar_moeda(kpis["ticket_medio"]),
-            f"{formatar_numero(kpis['total_transacoes'])} transacoes",
-        )
-
-    with col4:
-        prod = (
-            kpis["total_transacoes"] / kpis["num_consultores"]
-            if kpis["num_consultores"] > 0
-            else 0
-        )
-        st.metric(
-            "Produtividade",
-            f"{prod:.1f}",
-            f"{formatar_numero(kpis['num_consultores'])} consultores",
-        )
-
-    col1, col2, col3, col4 = st.columns(4)
-
-    with col1:
-        pm = (
-            kpis["total_pontos"] / kpis["num_consultores"]
-            if kpis["num_consultores"] > 0
-            else 0
-        )
-        st.metric(
-            "Producao Media/Consultor",
-            formatar_numero(pm),
-            "pontos por consultor",
-        )
-
-    with col2:
-        st.metric(
-            "Lojas Ativas",
-            formatar_numero(kpis["num_lojas"]),
-            f"{formatar_numero(kpis['num_regioes'])} regioes",
-        )
-
-    with col3:
-        st.metric(
-            "Consultores Ativos",
-            formatar_numero(kpis["num_consultores"]),
-            f"Media: {pm:.0f} pts",
-        )
-
-    with col4:
-        vmc = (
-            kpis["total_vendas"] / kpis["num_consultores"]
-            if kpis["num_consultores"] > 0
-            else 0
-        )
-        st.metric(
-            "Media/Consultor",
-            formatar_moeda(vmc),
-            "valor por consultor",
-        )
-
-    col1, col2, col3, col4 = st.columns(4)
-
-    with col1:
-        st.metric(
-            "Super Contas",
-            formatar_numero(kpis.get("qtd_super_conta", 0)),
-            "CNCs com subtipo Super Conta",
-        )
-
-    with col2:
-        st.metric(
-            "Emissao de Cartao",
-            formatar_numero(kpis.get("qtd_emissao_cartao", 0)),
-            "quantidade produzida",
-        )
-
-    with col3:
-        st.metric(
-            "BMG Med",
-            formatar_numero(kpis.get("qtd_bmg_med", 0)),
-            "quantidade produzida",
-        )
-
-    with col4:
-        st.metric(
-            "Seguro Vida Familiar",
-            formatar_numero(kpis.get("qtd_seguro_vida", 0)),
-            "quantidade produzida",
-        )
-
-
-def criar_cards_pipeline(df_analise, kpis_pagos):
-    """Cria cards de KPIs do pipeline em analise."""
-    sac.divider(
-        label="Pipeline em Analise (ultimos 30 dias)",
-        icon="hourglass-split",
-        align="left",
-        color="orange",
-    )
-
-    if df_analise.empty:
-        st.info("Nenhum contrato em analise no periodo.")
-        return
-
-    valor_analise = df_analise["VALOR"].sum()
-    qtd_analise = len(df_analise)
-    ticket_analise = valor_analise / qtd_analise if qtd_analise > 0 else 0
-    valor_pagos = kpis_pagos["total_vendas"]
-    razao = (
-        (valor_analise / valor_pagos * 100)
-        if valor_pagos > 0
-        else 0
-    )
-
-    col1, col2, col3, col4 = st.columns(4)
-
-    with col1:
-        st.metric(
-            "Valor em Analise",
-            formatar_moeda(valor_analise),
-            f"{qtd_analise} propostas",
-        )
-    with col2:
-        st.metric(
-            "Ticket Medio (Analise)",
-            formatar_moeda(ticket_analise),
-        )
-    with col3:
-        num_lojas = (
-            df_analise["LOJA"].nunique()
-            if "LOJA" in df_analise.columns
-            else 0
-        )
-        st.metric(
-            "Lojas com Pipeline",
-            formatar_numero(num_lojas),
-        )
-    with col4:
-        st.metric(
-            "Pipeline / Produzido",
-            formatar_percentual(razao),
-            "do valor pago no periodo",
-            delta_color="off",
-        )
-
-
-# ══════════════════════════════════════════════════════
-# GRAFICOS
-# ══════════════════════════════════════════════════════
-
-
-def _template():
-    """Configuracao base para graficos Plotly."""
-    ct = _chart_theme()
-    return {
-        "paper_bgcolor": "rgba(0,0,0,0)",
-        "plot_bgcolor": "rgba(0,0,0,0)",
-        "font": dict(
-            family=(
-                "Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif"
-            ),
-            size=12,
-            color=ct["text"],
-        ),
-        "title_font": dict(size=16, weight=700),
-        "legend": dict(
-            orientation="h",
-            yanchor="bottom",
-            y=1.02,
-            xanchor="right",
-            x=1,
-            font=dict(size=11, color=ct["text"]),
-            bgcolor="rgba(0,0,0,0)",
-        ),
-        "margin": dict(l=60, r=30, t=60, b=50),
-        "hoverlabel": dict(
-            bgcolor=ct["tooltip_bg"],
-            font_color=ct["tooltip_text"],
-            font_size=12,
-            bordercolor=ct["border"],
-        ),
-    }
-
-
-def _aplicar(fig, t):
-    """Aplica template a um grafico."""
-    ct = _chart_theme()
-    text_color = ct["text"]
-    fig.update_layout(
-        paper_bgcolor=t["paper_bgcolor"],
-        plot_bgcolor=t["plot_bgcolor"],
-        font=t["font"],
-        legend=t["legend"],
-        hoverlabel=t["hoverlabel"],
-        title_font_color=text_color,
-    )
-    # subplot_titles criam annotations — forcar cor do texto
-    for ann in fig.layout.annotations:
-        ann.font.color = text_color
-    fig.update_xaxes(
-        gridcolor=ct["grid"],
-        zerolinecolor=ct["grid_zero"],
-        tickfont_color=text_color,
-        title_font_color=text_color,
-    )
-    fig.update_yaxes(
-        gridcolor=ct["grid"],
-        zerolinecolor=ct["grid_zero"],
-        tickfont_color=text_color,
-        title_font_color=text_color,
-    )
-    return fig
-
-
-def criar_grafico_produtos(df_produtos):
-    """Grafico completo de produtos."""
-    t = _template()
-
-    fig = make_subplots(
-        rows=2,
-        cols=2,
-        subplot_titles=(
-            "Realizado vs Meta",
-            "% Atingimento por Produto",
-            "Projecao vs Meta",
-            "Ticket Medio por Produto",
-        ),
-        specs=[
-            [{"type": "bar"}, {"type": "bar"}],
-            [{"type": "scatter"}, {"type": "bar"}],
-        ],
-        vertical_spacing=0.14,
-        horizontal_spacing=0.10,
-    )
-
-    fig.add_trace(
-        go.Bar(
-            name="Realizado",
-            x=df_produtos["Produto"],
-            y=df_produtos["Valor"],
-            marker_color=CHART_COLORS["primary"],
-            marker_line=dict(width=0),
-            text=df_produtos["Valor"].apply(formatar_moeda),
-            textposition="outside",
-            textfont=dict(size=10),
-        ),
-        row=1,
-        col=1,
-    )
-
-    fig.add_trace(
-        go.Bar(
-            name="Meta",
-            x=df_produtos["Produto"],
-            y=df_produtos["Meta"],
-            marker_color=CHART_COLORS["primary_dark"],
-            marker_line=dict(width=0),
-            text=df_produtos["Meta"].apply(formatar_moeda),
-            textposition="outside",
-            textfont=dict(size=10),
-        ),
-        row=1,
-        col=1,
-    )
-
-    cores = df_produtos["% Atingimento"].apply(
-        lambda x: CHART_COLORS["success"] if x >= 100 else CHART_COLORS["danger"]
-    )
-    fig.add_trace(
-        go.Bar(
-            name="% Atingimento",
-            x=df_produtos["Produto"],
-            y=df_produtos["% Atingimento"],
-            marker_color=cores,
-            marker_line=dict(width=0),
-            text=df_produtos["% Atingimento"].apply(lambda x: f"{x:.1f}%"),
-            textposition="outside",
-            textfont=dict(size=10),
-            showlegend=False,
-        ),
-        row=1,
-        col=2,
-    )
-
-    fig.add_hline(
-        y=100,
-        line_dash="dash",
-        line_color=CHART_COLORS["neutral"],
-        line_width=1,
-        opacity=0.5,
-        row=1,
-        col=2,
-    )
-
-    fig.add_trace(
-        go.Scatter(
-            name="Projecao",
-            x=df_produtos["Produto"],
-            y=df_produtos["Projeção"],
-            mode="lines+markers",
-            marker=dict(
-                size=10,
-                color=CHART_COLORS["rose"],
-                line=dict(width=2, color=_chart_theme()["bg"]),
-            ),
-            line=dict(width=3, color=CHART_COLORS["rose"]),
-        ),
-        row=2,
-        col=1,
-    )
-
-    fig.add_trace(
-        go.Scatter(
-            name="Meta",
-            x=df_produtos["Produto"],
-            y=df_produtos["Meta"],
-            mode="lines+markers",
-            marker=dict(size=8, color=CHART_COLORS["primary_dark"]),
-            line=dict(
-                width=2,
-                color=CHART_COLORS["primary_dark"],
-                dash="dash",
-            ),
-            showlegend=False,
-        ),
-        row=2,
-        col=1,
-    )
-
-    fig.add_trace(
-        go.Bar(
-            name="Ticket Medio",
-            x=df_produtos["Produto"],
-            y=df_produtos["Ticket Médio"],
-            marker_color=CHART_COLORS["secondary"],
-            marker_line=dict(width=0),
-            text=df_produtos["Ticket Médio"].apply(formatar_moeda),
-            textposition="outside",
-            textfont=dict(size=10),
-            showlegend=False,
-        ),
-        row=2,
-        col=2,
-    )
-
-    fig.update_layout(
-        height=640,
-        showlegend=True,
-        title_text="Analise Completa de Produtos",
-        bargap=0.2,
-        autosize=True,
-    )
-    return _aplicar(fig, t)
-
-
-def criar_grafico_evolucao(df_evolucao, kpis):
-    """Grafico de evolucao diaria."""
-    t = _template()
-    fig = make_subplots(
-        rows=2,
-        cols=1,
-        subplot_titles=(
-            "Evolucao Diaria de Vendas",
-            "Evolucao Acumulada vs Meta",
-        ),
-        vertical_spacing=0.15,
-    )
-
-    fig.add_trace(
-        go.Bar(
-            name="Valor Diario",
-            x=df_evolucao["DATA"],
-            y=df_evolucao["VALOR"],
-            marker_color=CHART_COLORS["primary"],
-            marker_line=dict(width=0),
-        ),
-        row=1,
-        col=1,
-    )
-
-    fig.add_trace(
-        go.Scatter(
-            name="Valor Acumulado",
-            x=df_evolucao["DATA"],
-            y=df_evolucao["Valor Acumulado"],
-            mode="lines+markers",
-            marker=dict(
-                size=5,
-                color=CHART_COLORS["primary_dark"],
-                line=dict(width=1, color=_chart_theme()["bg"]),
-            ),
-            line=dict(width=3, color=CHART_COLORS["primary_dark"]),
-            fill="tozeroy",
-            fillcolor="rgba(37, 99, 235, 0.08)",
-        ),
-        row=2,
-        col=1,
-    )
-
-    fig.add_hline(
-        y=kpis["meta_prata"],
-        line_dash="dash",
-        line_color=CHART_COLORS["success"],
-        line_width=2,
-        annotation_text="Meta Prata",
-        annotation_font=dict(size=11, color=CHART_COLORS["success"]),
-        row=2,
-        col=1,
-    )
-    fig.add_hline(
-        y=kpis["projecao"],
-        line_dash="dot",
-        line_color=CHART_COLORS["warning"],
-        line_width=2,
-        annotation_text="Projecao",
-        annotation_font=dict(size=11, color=CHART_COLORS["warning"]),
-        row=2,
-        col=1,
-    )
-
-    fig.update_layout(
-        height=640,
-        showlegend=True,
-        hovermode="x unified",
-        autosize=True,
-    )
-    return _aplicar(fig, t)
-
-
-def criar_grafico_regional(df_regioes):
-    """Grafico de analise regional."""
-    t = _template()
-    fig = make_subplots(
-        rows=1,
-        cols=2,
-        subplot_titles=(
-            "Valor por Regiao",
-            "% Atingimento por Regiao",
-        ),
-        specs=[[{"type": "bar"}, {"type": "bar"}]],
-    )
-
-    df_s = df_regioes.sort_values("Valor", ascending=False)
-
-    fig.add_trace(
-        go.Bar(
-            x=df_s["Região"],
-            y=df_s["Valor"],
-            name="Valor",
-            marker_color=CHART_COLORS["primary"],
-            marker_line=dict(width=0),
-            text=df_s["Valor"].apply(formatar_moeda),
-            textposition="outside",
-            textfont=dict(size=10),
-        ),
-        row=1,
-        col=1,
-    )
-
-    cores = df_s["% Atingimento"].apply(
-        lambda x: CHART_COLORS["success"] if x >= 100 else CHART_COLORS["danger"]
-    )
-    fig.add_trace(
-        go.Bar(
-            x=df_s["Região"],
-            y=df_s["% Atingimento"],
-            name="% Atingimento",
-            marker_color=cores,
-            marker_line=dict(width=0),
-            text=df_s["% Atingimento"].apply(lambda x: f"{x:.1f}%"),
-            textposition="outside",
-            textfont=dict(size=10),
-        ),
-        row=1,
-        col=2,
-    )
-
-    fig.update_layout(
-        height=460,
-        showlegend=False,
-        title_text="Analise por Regiao",
-        bargap=0.25,
-        autosize=True,
-    )
-    return _aplicar(fig, t)
-
-
-def criar_grafico_media_regiao(df_media):
-    """Grafico de media de pontos por regiao."""
-    t = _template()
-    fig = go.Figure()
-
-    fig.add_trace(
-        go.Bar(
-            x=df_media["Região"],
-            y=df_media["Pontos Médio"],
-            name="Pontos Medio",
-            marker_color=CHART_COLORS["secondary"],
-            marker_line=dict(width=0),
-            text=df_media["Pontos Médio"].apply(formatar_numero),
-            textposition="outside",
-            textfont=dict(size=11),
-        )
-    )
-
-    fig.update_layout(
-        title="Media de Pontos por Consultor por Regiao",
-        xaxis_title="Regiao",
-        yaxis_title="Pontos Medio",
-        height=400,
-        bargap=0.3,
-        autosize=True,
-    )
-    return _aplicar(fig, t)
-
-
-def criar_heatmap_regiao_produto(
-    df_ranking,
-    df_ating,
-    regioes_destaque=None,
-):
-    """Mapa de calor: ranking de regioes por produto.
-
-    Celulas mostram a posicao; hover exibe o % atingimento.
-    Escala: 1o lugar (verde) → ultimo (vermelho).
-    regioes_destaque: lista de regioes para destacar com
-    marcador visual (ex: regiao do gerente comercial).
-    """
-    t = _template()
-    ct = _chart_theme()
-
-    regioes = df_ranking.index.tolist()
-    produtos = df_ranking.columns.tolist()
-
-    z = df_ranking.values
-    n_regioes = len(regioes)
-
-    destaque = set(regioes_destaque or [])
-
-    # Labels do eixo Y com marcador para regioes destacadas
-    y_labels = [
-        f"★ {r}" if r in destaque else r
-        for r in regioes
-    ]
-
-    # Texto de hover com % atingimento
-    hover = []
-    for i, reg in enumerate(regioes):
-        row = []
-        for j, prod in enumerate(produtos):
-            ating = df_ating.iloc[i, j]
-            pos = int(z[i][j])
-            marca = " (sua regiao)" if reg in destaque else ""
-            row.append(
-                f"<b>{reg}{marca}</b><br>"
-                f"Produto: {prod}<br>"
-                f"Posicao: {pos}º<br>"
-                f"Atingimento: {ating:.1f}%"
-            )
-        hover.append(row)
-
-    # Texto exibido nas celulas: posicao + % atingimento
-    text = []
-    for i in range(len(regioes)):
-        row = []
-        for j in range(len(produtos)):
-            pos = int(z[i][j])
-            ating = df_ating.iloc[i, j]
-            row.append(f"{pos}º<br>{ating:.1f}%")
-        text.append(row)
-
-    # Escala invertida: 1 (melhor) = verde, max = vermelho
-    colorscale = [
-        [0.0, "#059669"],
-        [0.5, "#fbbf24"],
-        [1.0, "#dc2626"],
-    ]
-
-    fig = go.Figure(
-        data=go.Heatmap(
-            z=z,
-            x=produtos,
-            y=y_labels,
-            text=text,
-            texttemplate="%{text}",
-            textfont=dict(size=13, color=ct["text"]),
-            hovertext=hover,
-            hoverinfo="text",
-            colorscale=colorscale,
-            zmin=1,
-            zmax=n_regioes,
-            showscale=True,
-            colorbar=dict(
-                title="Posicao",
-                titlefont=dict(color=ct["text"]),
-                tickfont=dict(color=ct["text"]),
-                tickvals=list(range(1, n_regioes + 1)),
-                ticktext=[
-                    f"{i}º" for i in range(1, n_regioes + 1)
-                ],
-            ),
-            xgap=3,
-            ygap=3,
-        )
-    )
-
-    # Bordas de destaque nas linhas do usuario
-    if destaque:
-        for i, reg in enumerate(regioes):
-            if reg in destaque:
-                fig.add_shape(
-                    type="rect",
-                    x0=-0.5,
-                    x1=len(produtos) - 0.5,
-                    y0=i - 0.5,
-                    y1=i + 0.5,
-                    line=dict(
-                        color="#2563eb",
-                        width=3,
-                    ),
-                    layer="above",
-                )
-
-    fig.update_layout(
-        title="Mapa de Calor: Ranking por Produto x Regiao",
-        xaxis_title="Produto",
-        yaxis_title="Regiao",
-        height=max(380, 80 * n_regioes),
-        autosize=True,
-        yaxis=dict(autorange="reversed"),
-    )
-
-    return _aplicar(fig, t)
-
-
-# ══════════════════════════════════════════════════════
-# TAB RENDERERS
-# ══════════════════════════════════════════════════════
-
-
-def _render_tab_produtos(
-    df,
-    df_metas_produto,
-    categorias,
-    ano,
-    mes,
-    dia_atual,
-    df_sup,
-):
-    """Renderiza aba de Produtos."""
-    sac.divider(
-        label="Analise de Produtos",
-        icon="box",
-        align="left",
-        color="blue",
-    )
-
-    df_prod = calcular_kpis_por_produto(
-        df,
-        df_metas_produto,
-        categorias,
-        ano,
-        mes,
-        dia_atual,
-        df_sup,
-    )
-
-    # ── Cards de meta diaria por produto ────────
-    if not df_prod.empty and "Meta Diária Restante" in df_prod.columns:
-        sac.divider(
-            label="Meta Diaria Restante por Produto",
-            icon="calendar-check",
-            align="left",
-            color="gray",
-        )
-
-        prods = df_prod[df_prod["Meta"] > 0]
-        if not prods.empty:
-            cols = st.columns(len(prods))
-            for col, (_, row) in zip(cols, prods.iterrows()):
-                with col:
-                    mdr = row["Meta Diária Restante"]
-                    atingiu = (
-                        mdr == 0 and row["% Atingimento"] >= 100
-                    )
-                    if atingiu:
-                        st.metric(
-                            row["Produto"],
-                            "Meta atingida",
-                            f"Ritmo: {formatar_moeda(row['Média DU'])}/DU",
-                            delta_color="normal",
-                        )
-                    else:
-                        dif = row["Média DU"] - mdr
-                        dc = "normal" if dif >= 0 else "inverse"
-                        st.metric(
-                            row["Produto"],
-                            formatar_moeda(mdr) + "/DU",
-                            f"Ritmo: {formatar_moeda(row['Média DU'])}/DU",
-                            delta_color=dc,
-                        )
-
-            # Resumo geral de produtos
-            mdr_total = prods["Meta Diária Restante"].sum()
-            media_du_total = prods["Média DU"].sum()
-            todas_atingidas = (
-                mdr_total == 0
-                and (prods["% Atingimento"] >= 100).all()
-            )
-
-            col_geral, col_gap, col_ritmo = st.columns([2, 1, 2])
-            with col_geral:
-                if todas_atingidas:
-                    st.metric(
-                        "Meta Diaria Geral (Produtos)",
-                        "Todas atingidas",
-                        f"Ritmo: {formatar_moeda(media_du_total)}/DU",
-                        delta_color="normal",
-                    )
-                else:
-                    dif_total = media_du_total - mdr_total
-                    dc_total = (
-                        "normal" if dif_total >= 0 else "inverse"
-                    )
-                    st.metric(
-                        "Meta Diaria Restante (Geral)",
-                        formatar_moeda(mdr_total) + "/DU",
-                        f"Ritmo: {formatar_moeda(media_du_total)}/DU",
-                        delta_color=dc_total,
-                    )
-            with col_ritmo:
-                if todas_atingidas:
-                    st.metric(
-                        "Folga Diaria",
-                        formatar_moeda(media_du_total),
-                        "meta ja atingida",
-                        delta_color="normal",
-                    )
-                else:
-                    gap = mdr_total - media_du_total
-                    if gap > 0:
-                        st.metric(
-                            "Gap Diario",
-                            formatar_moeda(gap),
-                            "abaixo do necessario",
-                            delta_color="inverse",
-                        )
-                    else:
-                        st.metric(
-                            "Folga Diaria",
-                            formatar_moeda(abs(gap)),
-                            "acima do necessario",
-                            delta_color="normal",
-                        )
-
-    fig = criar_grafico_produtos(df_prod)
-    _chart_card_open(
-        "Analise Completa de Produtos",
-        icon="📦",
-        subtitle="Realizado vs Meta, Atingimento, Projecao e Ticket Medio",
-    )
-    st.plotly_chart(fig, width="stretch")
-    _chart_card_close()
-
-    sac.divider(
-        label="KPIs por Produto",
-        icon="table",
-        align="left",
-        color="gray",
-    )
-    exibir_tabela(df_prod)
-    st.info("PACK = FGTS + ANT. BEN. + CNC 13o")
-
-
-def _render_tab_regioes(
-    df,
-    df_metas,
-    ano,
-    mes,
-    dia_atual,
-    df_sup,
-    df_metas_produto=None,
-    categorias=None,
-    df_full=None,
-    df_metas_produto_full=None,
-):
-    """Renderiza aba de Regioes."""
-    sac.divider(
-        label="Analise por Regiao",
-        icon="geo-alt",
-        align="left",
-        color="blue",
-    )
-
-    df_reg = calcular_kpis_por_regiao(
-        df,
-        df_metas,
-        ano,
-        mes,
-        dia_atual,
-        df_sup,
-    )
-
-    if not df_reg.empty:
-        fig = criar_grafico_regional(df_reg)
-        _chart_card_open(
-            "Performance Regional",
-            icon="📍",
-            subtitle="Valor realizado, meta e atingimento por regiao",
-        )
-        st.plotly_chart(fig, width="stretch")
-        _chart_card_close()
-
-        sac.divider(
-            label="KPIs por Regiao",
-            icon="table",
-            align="left",
-            color="gray",
-        )
-        exibir_tabela(df_reg)
-    else:
-        st.warning("Dados regionais nao disponiveis")
-
-    # ── Mapa de calor: ranking regiao x produto ───
-    # Visivel para admin, gestor e gerente_comercial
-    # Gerente comercial ve TODAS as regioes (dados pre-RLS)
-    # com destaque na(s) sua(s) regiao(oes)
-    from src.dashboard.rls import _obter_perfil_efetivo
-
-    perfil = _obter_perfil_efetivo()
-    perfil_role = perfil["perfil"] if perfil else None
-    pode_ver_heatmap = perfil_role in (
-        "admin", "gestor", "gerente_comercial",
-    )
-
-    if (
-        pode_ver_heatmap
-        and df_metas_produto is not None
-        and categorias is not None
-        and not df_metas_produto.empty
-    ):
-        # Usar dados completos (pre-RLS) para o heatmap
-        # comparativo, quando disponiveis
-        df_hm = (
-            df_full
-            if df_full is not None and not df_full.empty
-            else df
-        )
-        df_mp_hm = (
-            df_metas_produto_full
-            if df_metas_produto_full is not None
-            and not df_metas_produto_full.empty
-            else df_metas_produto
-        )
-
-        # Regioes do usuario (para destaque)
-        regioes_usuario = None
-        if perfil_role == "gerente_comercial":
-            regioes_usuario = perfil.get("escopo", [])
-
-        df_ranking, df_ating = calcular_heatmap_regiao_produto(
-            df_hm, df_mp_hm, categorias,
-        )
-
-        if not df_ranking.empty:
-            sac.divider(
-                label="Ranking por Produto x Regiao",
-                icon="grid-3x3",
-                align="left",
-                color="blue",
-            )
-            fig_hm = criar_heatmap_regiao_produto(
-                df_ranking, df_ating,
-                regioes_destaque=regioes_usuario,
-            )
-            _chart_card_open(
-                "Ranking Regiao x Produto",
-                icon="🗺️",
-                subtitle="Mapa de calor comparativo de atingimento",
-            )
-            st.plotly_chart(fig_hm, width="stretch")
-            _chart_card_close()
-
-
-def _render_tab_rankings(df, df_metas, df_sup, du_decorridos):
-    """Renderiza aba de Rankings."""
-    sac.divider(
-        label="Rankings de Performance",
-        icon="trophy",
-        align="left",
-        color="blue",
-    )
-
-    menu = sac.tabs(
-        items=[
-            sac.TabsItem(label="Lojas", icon="shop"),
-            sac.TabsItem(label="Consultores", icon="people"),
-            sac.TabsItem(label="Regioes", icon="geo-alt"),
-            sac.TabsItem(label="Por Produto", icon="box-seam"),
-        ],
-        align="start",
-        variant="outline",
-    )
-
-    if menu == "Lojas":
-        col1, col2 = st.columns(2)
-        with col1:
-            sac.divider(
-                label="Top 10 por Atingimento",
-                icon="graph-up-arrow",
-                align="left",
-                color="green",
-            )
-            rl = calcular_ranking_lojas(df, df_metas, top_n=10)
-            if not rl.empty:
-                exibir_tabela(rl)
-            else:
-                st.warning("Dados nao disponiveis")
-
-        with col2:
-            sac.divider(
-                label="Top 10 por Pontos",
-                icon="star",
-                align="left",
-                color="blue",
-            )
-            rp = calcular_ranking_pontos(
-                df, tipo="loja", top_n=10,
-            )
-            if not rp.empty:
-                exibir_tabela(rp)
-            else:
-                st.warning("Dados nao disponiveis")
-
-        col3, col4 = st.columns(2)
-        with col3:
-            sac.divider(
-                label="Top 10 por Ticket Medio",
-                icon="cash-coin",
-                align="left",
-                color="orange",
-            )
-            rt = calcular_ranking_ticket_medio(
-                df, tipo="loja", top_n=10,
-            )
-            if not rt.empty:
-                exibir_tabela(rt)
-            else:
-                st.warning("Dados nao disponiveis")
-
-        with col4:
-            sac.divider(
-                label="Top 10 por Media DU",
-                icon="calendar-check",
-                align="left",
-                color="violet",
-            )
-            rm = calcular_ranking_media_du(
-                df, tipo="loja", top_n=10,
-                du_decorridos=du_decorridos,
-            )
-            if not rm.empty:
-                exibir_tabela(rm)
-            else:
-                st.warning("Dados nao disponiveis")
-
-    elif menu == "Consultores":
-        col1, col2 = st.columns(2)
-        with col1:
-            sac.divider(
-                label="Top 10 por Atingimento",
-                icon="graph-up-arrow",
-                align="left",
-                color="green",
-            )
-            rc = calcular_ranking_consultores(
-                df,
-                df_metas,
-                top_n=10,
-                df_supervisores=df_sup,
-            )
-            if not rc.empty:
-                exibir_tabela(rc)
-            else:
-                st.warning("Dados nao disponiveis")
-
-        with col2:
-            sac.divider(
-                label="Top 10 por Pontos",
-                icon="star",
-                align="left",
-                color="blue",
-            )
-            rp = calcular_ranking_pontos(
-                df, tipo="consultor", top_n=10,
-                df_supervisores=df_sup,
-            )
-            if not rp.empty:
-                exibir_tabela(rp)
-            else:
-                st.warning("Dados nao disponiveis")
-
-        col3, col4 = st.columns(2)
-        with col3:
-            sac.divider(
-                label="Top 10 por Ticket Medio",
-                icon="cash-coin",
-                align="left",
-                color="orange",
-            )
-            rt = calcular_ranking_ticket_medio(
-                df,
-                tipo="consultor",
-                top_n=10,
-                df_supervisores=df_sup,
-            )
-            if not rt.empty:
-                exibir_tabela(rt)
-            else:
-                st.warning("Dados nao disponiveis")
-
-        with col4:
-            sac.divider(
-                label="Top 10 por Media DU",
-                icon="calendar-check",
-                align="left",
-                color="violet",
-            )
-            rm = calcular_ranking_media_du(
-                df, tipo="consultor", top_n=10,
-                du_decorridos=du_decorridos,
-                df_supervisores=df_sup,
-            )
-            if not rm.empty:
-                exibir_tabela(rm)
-            else:
-                st.warning("Dados nao disponiveis")
-
-    elif menu == "Regioes":
-        rk_regioes = calcular_ranking_regioes(
-            df, df_metas, du_decorridos=du_decorridos,
-        )
-        if not rk_regioes:
-            st.warning("Dados nao disponiveis")
-        else:
-            col1, col2 = st.columns(2)
-            with col1:
-                sac.divider(
-                    label="Por Atingimento Meta",
-                    icon="graph-up-arrow",
-                    align="left",
-                    color="green",
-                )
-                exibir_tabela(rk_regioes["atingimento"])
-
-            with col2:
-                sac.divider(
-                    label="Por Pontos",
-                    icon="star",
-                    align="left",
-                    color="blue",
-                )
-                exibir_tabela(rk_regioes["pontos"])
-
-            col3, col4 = st.columns(2)
-            with col3:
-                sac.divider(
-                    label="Por Ticket Medio",
-                    icon="cash-coin",
-                    align="left",
-                    color="orange",
-                )
-                exibir_tabela(rk_regioes["ticket"])
-
-            with col4:
-                sac.divider(
-                    label="Por Media DU",
-                    icon="calendar-check",
-                    align="left",
-                    color="violet",
-                )
-                exibir_tabela(rk_regioes["media_du"])
-
-            # Por Produto
-            rk_prod = rk_regioes.get("por_produto", {})
-            if rk_prod:
-                sac.divider(
-                    label="Regioes por Produto",
-                    icon="box-seam",
-                    align="left",
-                    color="gray",
-                )
-                for prod, rk in rk_prod.items():
-                    if not rk.empty:
-                        with st.expander(prod, expanded=False):
-                            exibir_tabela(rk)
-
-    elif menu == "Por Produto":
-        tipo_sel = sac.segmented(
-            items=[
-                sac.SegmentedItem(label="Lojas", icon="shop"),
-                sac.SegmentedItem(
-                    label="Consultores", icon="people",
-                ),
-            ],
-            align="start",
-            use_container_width=False,
-        )
-        tipo = "loja" if tipo_sel == "Lojas" else "consultor"
-        rankings = calcular_ranking_por_produto(
-            df,
-            tipo=tipo,
-            top_n=10,
-            df_supervisores=df_sup,
-        )
-        if rankings:
-            for prod, rk in rankings.items():
-                if not rk.empty:
-                    with st.expander(prod, expanded=False):
-                        exibir_tabela(rk)
-        else:
-            st.warning("Dados nao disponiveis")
-
-
-def _exportar_csv(df: pd.DataFrame, nome: str, key: str):
-    """Botao de download CSV para uma tabela."""
-    csv = df.to_csv(index=False, sep=";", decimal=",")
-    st.download_button(
-        label=f"Exportar {nome}",
-        data=csv,
-        file_name=f"{nome}.csv",
-        mime="text/csv",
-        key=key,
-        icon=":material/download:",
-    )
-
-
-def _render_detalhamento_pagos(df, df_sup):
-    """Sub-aba: detalhamento de contratos pagos."""
-    if df.empty:
-        st.warning("Nenhum contrato pago no periodo.")
-        return
-
-    st.markdown(f"**{len(df):,} contratos pagos**".replace(",", "."))
-
-    # Filtros
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        lojas = ["Todas"] + sorted(df["LOJA"].unique().tolist())
-        filt_loja = st.selectbox("Loja", lojas, key="det_pago_loja")
-    with col2:
-        consultores = ["Todos"] + sorted(
-            df["CONSULTOR"].unique().tolist()
-        )
-        filt_cons = st.selectbox(
-            "Consultor", consultores, key="det_pago_cons"
-        )
-    with col3:
-        produtos = ["Todos"]
-        if "grupo_dashboard" in df.columns:
-            produtos += sorted(
-                [
-                    str(x) for x in df["grupo_dashboard"].unique()
-                    if pd.notna(x)
-                ]
-            )
-        filt_prod = st.selectbox(
-            "Produto", produtos, key="det_pago_prod"
-        )
-
-    df_d = df.copy()
-    if filt_loja != "Todas":
-        df_d = df_d[df_d["LOJA"] == filt_loja]
-    if filt_cons != "Todos":
-        df_d = df_d[df_d["CONSULTOR"] == filt_cons]
-    if filt_prod != "Todos" and "grupo_dashboard" in df_d.columns:
-        df_d = df_d[df_d["grupo_dashboard"] == filt_prod]
-
-    # KPIs
-    total_valor = df_d["VALOR"].sum()
-    total_pts = df_d["pontos"].sum() if "pontos" in df_d.columns else 0
-    total_trans = len(df_d[df_d["VALOR"] > 0])
-    tk = total_valor / total_trans if total_trans > 0 else 0
-
-    col1, col2, col3, col4 = st.columns(4)
-    with col1:
-        st.metric("Total de Valor", formatar_moeda(total_valor))
-    with col2:
-        st.metric("Total de Pontos", formatar_numero(total_pts))
-    with col3:
-        st.metric("Ticket Medio", formatar_moeda(tk))
-    with col4:
-        st.metric("Quantidade", formatar_numero(len(df_d)))
-
-    # Tabela detalhada
-    cols = ["CONTRATO_ID", "DATA", "LOJA", "CONSULTOR"]
-    if "REGIAO" in df_d.columns:
-        cols.append("REGIAO")
-    cols += ["TIPO_PRODUTO", "TIPO OPER.", "VALOR"]
-    if "pontos" in df_d.columns:
-        cols.append("pontos")
-    cols.append("BANCO")
-
-    cols_disp = [c for c in cols if c in df_d.columns]
-    df_tabela = (
-        df_d[cols_disp]
-        .sort_values("DATA", ascending=False)
-        .rename(columns={
-            "CONTRATO_ID": "Nº Proposta",
-            "DATA": "Data Pagamento",
-            "TIPO_PRODUTO": "Produto",
-            "TIPO OPER.": "Tipo Operacao",
-            "VALOR": "Valor",
-            "pontos": "Pontos",
-            "BANCO": "Banco",
-            "LOJA": "Loja",
-            "CONSULTOR": "Consultor",
-            "REGIAO": "Regiao",
-        })
-    )
-    exibir_tabela(
-        df_tabela,
-        colunas_moeda=["Valor"],
-        colunas_numero=["Pontos"],
-    )
-    _exportar_csv(df_tabela, "contratos_pagos", "exp_pagos")
-
-
-def _render_detalhamento_em_analise(df_analise):
-    """Sub-aba: detalhamento de contratos em analise."""
-    if df_analise.empty:
-        st.warning("Nenhum contrato em analise no periodo.")
-        return
-
-    st.markdown(
-        f"**{len(df_analise):,} contratos em analise**"
-        .replace(",", ".")
-    )
-
-    # Filtros
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        lojas = ["Todas"] + sorted(
-            df_analise["LOJA"].unique().tolist()
-        )
-        filt_loja = st.selectbox(
-            "Loja", lojas, key="det_analise_loja"
-        )
-    with col2:
-        consultores = ["Todos"] + sorted(
-            df_analise["CONSULTOR"].unique().tolist()
-        )
-        filt_cons = st.selectbox(
-            "Consultor", consultores, key="det_analise_cons"
-        )
-    with col3:
-        produtos = ["Todos"]
-        if "grupo_dashboard" in df_analise.columns:
-            produtos += sorted(
-                [
-                    str(x)
-                    for x in df_analise["grupo_dashboard"].unique()
-                    if pd.notna(x)
-                ]
-            )
-        filt_prod = st.selectbox(
-            "Produto", produtos, key="det_analise_prod"
-        )
-
-    df_d = df_analise.copy()
-    if filt_loja != "Todas":
-        df_d = df_d[df_d["LOJA"] == filt_loja]
-    if filt_cons != "Todos":
-        df_d = df_d[df_d["CONSULTOR"] == filt_cons]
-    if filt_prod != "Todos" and "grupo_dashboard" in df_d.columns:
-        df_d = df_d[df_d["grupo_dashboard"] == filt_prod]
-
-    # KPIs
-    total_valor = df_d["VALOR"].sum()
-    total_trans = len(df_d)
-    tk = total_valor / total_trans if total_trans > 0 else 0
-
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        st.metric("Valor Total", formatar_moeda(total_valor))
-    with col2:
-        st.metric("Ticket Medio", formatar_moeda(tk))
-    with col3:
-        st.metric("Quantidade", formatar_numero(total_trans))
-
-    # Tabela detalhada
-    cols = ["CONTRATO_ID", "DATA_CADASTRO", "LOJA", "CONSULTOR"]
-    if "REGIAO" in df_d.columns:
-        cols.append("REGIAO")
-    cols += [
-        "TIPO_PRODUTO", "TIPO OPER.", "VALOR",
-        "STATUS_BANCO", "BANCO",
-    ]
-
-    cols_disp = [c for c in cols if c in df_d.columns]
-    df_tabela = (
-        df_d[cols_disp]
-        .sort_values("DATA_CADASTRO", ascending=False)
-        .rename(columns={
-            "CONTRATO_ID": "Nº Proposta",
-            "DATA_CADASTRO": "Data Cadastro",
-            "TIPO_PRODUTO": "Produto",
-            "TIPO OPER.": "Tipo Operacao",
-            "VALOR": "Valor",
-            "STATUS_BANCO": "Status Banco",
-            "BANCO": "Banco",
-            "LOJA": "Loja",
-            "CONSULTOR": "Consultor",
-            "REGIAO": "Regiao",
-        })
-    )
-    exibir_tabela(df_tabela, colunas_moeda=["Valor"])
-    _exportar_csv(
-        df_tabela, "contratos_em_analise", "exp_analise"
-    )
-
-
-def _render_detalhamento_cancelados(df_cancel):
-    """Sub-aba: detalhamento de contratos cancelados."""
-    if df_cancel.empty:
-        st.warning("Nenhum contrato cancelado no periodo.")
-        return
-
-    st.markdown(
-        f"**{len(df_cancel):,} contratos cancelados**"
-        .replace(",", ".")
-    )
-
-    # Filtros
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        lojas = ["Todas"] + sorted(
-            df_cancel["LOJA"].unique().tolist()
-        )
-        filt_loja = st.selectbox(
-            "Loja", lojas, key="det_cancel_loja"
-        )
-    with col2:
-        consultores = ["Todos"] + sorted(
-            df_cancel["CONSULTOR"].unique().tolist()
-        )
-        filt_cons = st.selectbox(
-            "Consultor", consultores, key="det_cancel_cons"
-        )
-    with col3:
-        produtos = ["Todos"]
-        if "grupo_dashboard" in df_cancel.columns:
-            produtos += sorted(
-                [
-                    str(x)
-                    for x in df_cancel["grupo_dashboard"].unique()
-                    if pd.notna(x)
-                ]
-            )
-        filt_prod = st.selectbox(
-            "Produto", produtos, key="det_cancel_prod"
-        )
-
-    df_d = df_cancel.copy()
-    if filt_loja != "Todas":
-        df_d = df_d[df_d["LOJA"] == filt_loja]
-    if filt_cons != "Todos":
-        df_d = df_d[df_d["CONSULTOR"] == filt_cons]
-    if filt_prod != "Todos" and "grupo_dashboard" in df_d.columns:
-        df_d = df_d[df_d["grupo_dashboard"] == filt_prod]
-
-    # KPIs
-    total_valor = df_d["VALOR"].sum()
-    total_trans = len(df_d)
-    tk = total_valor / total_trans if total_trans > 0 else 0
-
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        st.metric("Valor Total", formatar_moeda(total_valor))
-    with col2:
-        st.metric("Ticket Medio", formatar_moeda(tk))
-    with col3:
-        st.metric("Quantidade", formatar_numero(total_trans))
-
-    # Tabela detalhada
-    cols = ["CONTRATO_ID", "DATA_CADASTRO", "LOJA", "CONSULTOR"]
-    if "REGIAO" in df_d.columns:
-        cols.append("REGIAO")
-    cols += [
-        "TIPO_PRODUTO", "TIPO OPER.", "VALOR",
-        "SUB_STATUS", "STATUS_PAG", "BANCO",
-    ]
-
-    cols_disp = [c for c in cols if c in df_d.columns]
-    df_tabela = (
-        df_d[cols_disp]
-        .sort_values("DATA_CADASTRO", ascending=False)
-        .rename(columns={
-            "CONTRATO_ID": "Nº Proposta",
-            "DATA_CADASTRO": "Data Cadastro",
-            "TIPO_PRODUTO": "Produto",
-            "TIPO OPER.": "Tipo Operacao",
-            "VALOR": "Valor",
-            "SUB_STATUS": "Sub-Status",
-            "STATUS_PAG": "Status Pagamento",
-            "BANCO": "Banco",
-            "LOJA": "Loja",
-            "CONSULTOR": "Consultor",
-            "REGIAO": "Regiao",
-        })
-    )
-    exibir_tabela(df_tabela, colunas_moeda=["Valor"])
-    _exportar_csv(
-        df_tabela, "contratos_cancelados", "exp_cancel"
-    )
-
-
-def _render_tab_analiticos(
-    df, df_sup, df_analise, df_cancelados,
-):
-    """Renderiza aba de Analiticos."""
-    sac.divider(
-        label="Analiticos Detalhados",
-        icon="graph-up",
-        align="left",
-        color="blue",
-    )
-
-    menu = sac.tabs(
-        items=[
-            sac.TabsItem(
-                label="Propostas Pagas",
-                icon="check-circle",
-            ),
-            sac.TabsItem(
-                label="Em Analise",
-                icon="hourglass-split",
-            ),
-            sac.TabsItem(
-                label="Cancelados",
-                icon="x-circle",
-            ),
-            sac.TabsItem(
-                label="Consultores por Produto",
-                icon="people",
-            ),
-            sac.TabsItem(
-                label="Producao por Regiao",
-                icon="geo-alt",
-            ),
-            sac.TabsItem(
-                label="Distribuicao de Produtos",
-                icon="pie-chart",
-            ),
-        ],
-        align="start",
-        variant="outline",
-    )
-
-    if menu == "Propostas Pagas":
-        _render_detalhamento_pagos(df, df_sup)
-
-    elif menu == "Em Analise":
-        _render_detalhamento_em_analise(df_analise)
-
-    elif menu == "Cancelados":
-        _render_detalhamento_cancelados(df_cancelados)
-
-    elif menu == "Consultores por Produto":
-        df_a = calcular_analitico_consultores(df, df_sup)
-        if not df_a.empty:
-            st.info(f"Total de {df_a['Consultor'].nunique()} consultores analisados")
-
-            col1, col2 = st.columns(2)
-            with col1:
-                opts_c = ["Todos"] + sorted(df_a["Consultor"].unique().tolist())
-                filt_c = st.selectbox("Filtrar por Consultor", opts_c)
-            with col2:
-                opts_p = ["Todos"] + sorted(df_a["Produto"].unique().tolist())
-                filt_p = st.selectbox("Filtrar por Produto", opts_p)
-
-            df_af = df_a.copy()
-            if filt_c != "Todos":
-                df_af = df_af[df_af["Consultor"] == filt_c]
-            if filt_p != "Todos":
-                df_af = df_af[df_af["Produto"] == filt_p]
-
-            exibir_tabela(df_af)
-            _exportar_csv(
-                df_af, "consultores_por_produto",
-                "exp_cons_prod",
-            )
-
-            # Cards resumo: usar df original (mesma base dos KPIs
-            # principais) para manter consistencia, aplicando apenas
-            # os filtros de consultor/produto selecionados pelo usuario
-            mask_cards = df["VALOR"] > 0
-            if "is_bmg_med" in df.columns:
-                mask_cards = mask_cards | df["is_bmg_med"]
-            if "is_seguro_vida" in df.columns:
-                mask_cards = mask_cards | df["is_seguro_vida"]
-            df_cards = df[mask_cards].copy()
-            df_cards["PRODUTO_MIX"] = df_cards[
-                "grupo_dashboard"
-            ].fillna("OUTROS")
-            if "is_bmg_med" in df_cards.columns:
-                df_cards.loc[
-                    df_cards["is_bmg_med"], "PRODUTO_MIX"
-                ] = "BMG Med"
-            if "is_seguro_vida" in df_cards.columns:
-                df_cards.loc[
-                    df_cards["is_seguro_vida"], "PRODUTO_MIX"
-                ] = "Vida Familiar"
-            if filt_c != "Todos":
-                df_cards = df_cards[df_cards["CONSULTOR"] == filt_c]
-            if filt_p != "Todos":
-                df_cards = df_cards[df_cards["PRODUTO_MIX"] == filt_p]
-
-            total_valor = df_cards["VALOR"].sum()
-            total_pts = df_cards["pontos"].sum()
-            total_trans = len(df_cards[df_cards["VALOR"] > 0])
-            tk_medio = (
-                total_valor / total_trans if total_trans > 0 else 0
-            )
-
-            col1, col2, col3 = st.columns(3)
-            with col1:
-                st.metric(
-                    "Total de Pontos",
-                    formatar_numero(total_pts),
-                )
-            with col2:
-                st.metric(
-                    "Total de Valor",
-                    formatar_moeda(total_valor),
-                )
-            with col3:
-                st.metric(
-                    "Ticket Medio Geral",
-                    formatar_moeda(tk_medio),
-                )
-        else:
-            st.warning("Dados nao disponiveis")
-
-    elif menu == "Producao por Regiao":
-        df_mr = calcular_media_producao_regiao(df, df_sup)
-        if not df_mr.empty:
-            _chart_card_open(
-                "Produtividade Media por Regiao",
-                icon="📊",
-                subtitle="Comparativo de produtividade media entre regioes",
-            )
-            fig = criar_grafico_media_regiao(df_mr)
-            st.plotly_chart(fig, width="stretch")
-            _chart_card_close()
-            sac.divider(
-                label="Estatisticas Detalhadas",
-                icon="table",
-                align="left",
-                color="gray",
-            )
-            df_d = df_mr.drop(
-                ["Valor Desvio", "Pontos Desvio"],
-                axis=1,
-            )
-            exibir_tabela(df_d)
-            _exportar_csv(
-                df_d, "producao_por_regiao", "exp_prod_reg"
-            )
-        else:
-            st.warning("Dados nao disponiveis")
-
-    elif menu == "Distribuicao de Produtos":
-        df_dist = calcular_distribuicao_produtos(df, df_sup)
-        if not df_dist.empty:
-            st.info("Visualizacao da distribuicao de produtos por consultor")
-            top_n = st.slider(
-                "Exibir top N consultores",
-                min_value=5,
-                max_value=50,
-                value=20,
-                step=5,
-            )
-            exibir_tabela(df_dist.head(top_n))
-            _exportar_csv(
-                df_dist, "distribuicao_produtos",
-                "exp_dist_prod",
-            )
-        else:
-            st.warning("Dados nao disponiveis")
-
-
-def _render_tab_evolucao(df, ano, mes, kpis):
-    """Renderiza aba de Evolucao."""
-    sac.divider(
-        label="Evolucao Temporal",
-        icon="graph-down",
-        align="left",
-        color="blue",
-    )
-
-    df_ev = calcular_evolucao_diaria(df, ano, mes)
-
-    if not df_ev.empty:
-        fig = criar_grafico_evolucao(df_ev, kpis)
-        _chart_card_open(
-            "Evolucao Diaria de Vendas",
-            icon="📈",
-            subtitle="Acompanhamento diario e acumulado vs meta",
-        )
-        st.plotly_chart(fig, width="stretch")
-        _chart_card_close()
-
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            best = df_ev.loc[df_ev["VALOR"].idxmax()]
-            st.metric(
-                "Melhor Dia",
-                best["DATA"].strftime("%d/%m"),
-                formatar_moeda(best["VALOR"]),
-            )
-        with col2:
-            media = df_ev["VALOR"].mean()
-            st.metric(
-                "Media Diaria",
-                formatar_moeda(media),
-                f"{len(df_ev)} dias com vendas",
-            )
-        with col3:
-            acima = (df_ev["VALOR"] >= kpis["meta_diaria"]).sum()
-            perc = acima / len(df_ev) * 100 if len(df_ev) > 0 else 0
-            st.metric(
-                "Dias Acima da Meta",
-                f"{acima}",
-                f"{perc:.1f}% dos dias",
-            )
-    else:
-        st.warning("Dados de evolucao nao disponiveis")
-
-
-def _render_tab_em_analise(df_analise, df_sup):
-    """Renderiza aba de contratos Em Analise."""
-    sac.divider(
-        label="Contratos em Analise",
-        icon="hourglass-split",
-        align="left",
-        color="orange",
-    )
-
-    if df_analise.empty:
-        st.warning("Nenhum contrato em analise no periodo.")
-        return
-
-    df_a = df_analise.copy()
-    if df_sup is not None and "SUPERVISOR" in df_sup.columns:
-        supervisores = df_sup["SUPERVISOR"].unique()
-    else:
-        supervisores = []
-
-    # ── Filtros ────────────────────────────────────
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        lojas = ["Todas"] + sorted(df_a["LOJA"].unique().tolist())
-        filt_loja = st.selectbox("Loja", lojas, key="analise_loja")
-    with col2:
-        if "REGIAO" in df_a.columns:
-            regioes = ["Todas"] + sorted(df_a["REGIAO"].unique().tolist())
-            filt_reg = st.selectbox(
-                "Regiao", regioes, key="analise_regiao"
-            )
-        else:
-            filt_reg = "Todas"
-    with col3:
-        status_opts = ["Todos"] + sorted(
-            [str(x) for x in df_a["STATUS_BANCO"].unique() if pd.notna(x)]
-        )
-        filt_status = st.selectbox(
-            "Status Banco", status_opts, key="analise_status"
-        )
-
-    if filt_loja != "Todas":
-        df_a = df_a[df_a["LOJA"] == filt_loja]
-    if filt_reg != "Todas" and "REGIAO" in df_a.columns:
-        df_a = df_a[df_a["REGIAO"] == filt_reg]
-    if filt_status != "Todos":
-        df_a = df_a[df_a["STATUS_BANCO"] == filt_status]
-
-    qtd_emissao_analise = (
-        (df_a["TIPO OPER."].isin(["CARTÃO BENEFICIO", "Venda Pré-Adesão"])).sum()
-        if "TIPO OPER." in df_a.columns
-        else 0
-    )
-    qtd_sem_emissao = len(df_a) - qtd_emissao_analise
-
-    st.markdown(f"**{len(df_a):,} propostas em analise**")
-
-    # ── KPIs resumo ───────────────────────────────
-    col1, col2, col3, col4 = st.columns(4)
-    with col1:
-        st.metric("Valor Total", formatar_moeda(df_a["VALOR"].sum()))
-    with col2:
-        st.metric(
-            "Quantidade",
-            formatar_numero(len(df_a)),
-            f"{formatar_numero(qtd_sem_emissao)} operacoes"
-            f" + {formatar_numero(qtd_emissao_analise)} emissoes",
-        )
-    with col3:
-        tk = df_a["VALOR"].sum() / len(df_a) if len(df_a) > 0 else 0
-        st.metric("Ticket Medio", formatar_moeda(tk))
-    with col4:
-        cons = df_a["CONSULTOR"].unique()
-        cons_sem_sup = [c for c in cons if c not in supervisores]
-        st.metric("Consultores", formatar_numero(len(cons_sem_sup)))
-
-    # ── Breakdown por produto ─────────────────────
-    sac.divider(
-        label="Por Produto",
-        icon="box-seam",
-        align="left",
-        color="gray",
-    )
-
-    if "grupo_dashboard" in df_a.columns:
-        df_prod = (
-            df_a[df_a["grupo_dashboard"].notna()]
-            .groupby("grupo_dashboard")
-            .agg(
-                Qtd=("VALOR", "count"),
-                Valor=("VALOR", "sum"),
-            )
-            .reset_index()
-            .rename(columns={"grupo_dashboard": "Produto"})
-            .sort_values("Valor", ascending=False)
-        )
-        df_prod["Ticket Medio"] = df_prod.apply(
-            lambda r: r["Valor"] / r["Qtd"] if r["Qtd"] > 0 else 0,
-            axis=1,
-        )
-        exibir_tabela(df_prod, colunas_moeda=["Valor", "Ticket Medio"])
-
-    # ── Breakdown BMG Med e Vida Familiar ───────
-    sac.divider(
-        label="BMG Med e Vida Familiar (Em Análise)",
-        icon="heart-pulse",
-        align="left",
-        color="gray",
-    )
-
-    if "TIPO OPER." in df_a.columns:
-        # Contar BMG MED e Seguro em análise
-        mask_bmg_med = df_a["TIPO OPER."] == "BMG MED"
-        mask_seguro = df_a["TIPO OPER."] == "Seguro"
-
-        # Breakdown por status para BMG MED
-        if mask_bmg_med.any():
-            st.markdown("**BMG Med - Status:**")
-            df_bmg_status = (
-                df_a[mask_bmg_med]
-                .groupby("STATUS_BANCO")
-                .size()
-                .reset_index(name="Quantidade")
-            )
-            st.dataframe(df_bmg_status, width="stretch", hide_index=True)
-
-        # Breakdown por sub-status para Seguro
-        if mask_seguro.any():
-            st.markdown("**Vida Familiar (Seguro) - Status:**")
-            df_seg_status = (
-                df_a[mask_seguro]
-                .groupby("STATUS_BANCO")
-                .size()
-                .reset_index(name="Quantidade")
-            )
-            st.dataframe(df_seg_status, width="stretch", hide_index=True)
-
-        # Resumo geral
-        total_bmg = int(mask_bmg_med.sum())
-        total_seguro = int(mask_seguro.sum())
-
-        if total_bmg > 0 or total_seguro > 0:
-            st.info(
-                f"📌 **Resumo:** {total_bmg} BMG Med + {total_seguro} "
-                f"Vida Familiar em análise. "
-                f"Estes contratos aparecerão nos 'Contratos Pagos' "
-                f"quando o Sub-Status mudar para 'Liquidada'. "
-                f"Valor não é contabilizado (apenas quantidade)."
-            )
-
-    # ── Breakdown por loja ────────────────────────
-    sac.divider(
-        label="Por Loja",
-        icon="shop",
-        align="left",
-        color="gray",
-    )
-
-    df_loja = (
-        df_a.groupby("LOJA")
-        .agg(
-            Qtd=("VALOR", "count"),
-            Valor=("VALOR", "sum"),
-        )
-        .reset_index()
-        .rename(columns={"LOJA": "Loja"})
-        .sort_values("Valor", ascending=False)
-    )
-    df_loja["Ticket Medio"] = df_loja.apply(
-        lambda r: r["Valor"] / r["Qtd"] if r["Qtd"] > 0 else 0,
-        axis=1,
-    )
-    exibir_tabela(df_loja, colunas_moeda=["Valor", "Ticket Medio"])
-
-    # ── Tabela detalhada ──────────────────────────
-    sac.divider(
-        label="Detalhamento",
-        icon="table",
-        align="left",
-        color="gray",
-    )
-
-    cols = [
-        "DATA_CADASTRO",
-        "LOJA",
-        "CONSULTOR",
-        "TIPO_PRODUTO",
-        "VALOR",
-        "STATUS_BANCO",
-        "BANCO",
-    ]
-    if "REGIAO" in df_a.columns:
-        cols.insert(2, "REGIAO")
-
-    exibir_tabela(
-        df_a[cols].sort_values("DATA_CADASTRO", ascending=False),
-        colunas_moeda=["VALOR"],
-    )
-
-
-def _render_tab_detalhes(df):
-    """Renderiza aba de Detalhes."""
-    sac.divider(
-        label="Dados Detalhados",
-        icon="clipboard-data",
-        align="left",
-        color="blue",
-    )
-
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        lojas = ["Todas"] + sorted(df["LOJA"].unique().tolist())
-        filt_loja = st.selectbox("Loja", lojas)
-
-    with col2:
-        if "REGIAO" in df.columns:
-            regioes = ["Todas"] + sorted(df["REGIAO"].unique().tolist())
-            filt_reg = st.selectbox("Regiao (detalhe)", regioes)
-        else:
-            filt_reg = "Todas"
-
-    with col3:
-        prods = ["Todos"] + sorted(
-            [str(x) for x in df["TIPO_PRODUTO"].unique() if pd.notna(x)]
-        )
-        filt_prod = st.selectbox("Produto", prods)
-
-    df_d = df.copy()
-    if filt_loja != "Todas":
-        df_d = df_d[df_d["LOJA"] == filt_loja]
-    if filt_reg != "Todas" and "REGIAO" in df.columns:
-        df_d = df_d[df_d["REGIAO"] == filt_reg]
-    if filt_prod != "Todos":
-        df_d = df_d[df_d["TIPO_PRODUTO"] == filt_prod]
-
-    st.markdown(f"**{len(df_d):,} registros encontrados**")
-
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        st.metric(
-            "Total Valor",
-            formatar_moeda(df_d["VALOR"].sum()),
-        )
-    with col2:
-        st.metric(
-            "Total Pontos",
-            formatar_numero(df_d["pontos"].sum()),
-        )
-    with col3:
-        tk = df_d["VALOR"].sum() / len(df_d) if len(df_d) > 0 else 0
-        st.metric("Ticket Medio", formatar_moeda(tk))
-
-    cols = [
-        "DATA",
-        "LOJA",
-        "CONSULTOR",
-        "TIPO_PRODUTO",
-        "VALOR",
-        "pontos",
-    ]
-    if "REGIAO" in df_d.columns:
-        cols.insert(2, "REGIAO")
-
-    exibir_tabela(
-        df_d[cols],
-        colunas_moeda=["VALOR"],
-        colunas_numero=["pontos"],
-    )
 
 
 # ══════════════════════════════════════════════════════
@@ -4343,15 +171,20 @@ def _render_sidebar_usuario():
             st.rerun()
 
 
-def _render_sidebar_visualizar_como(df):
-    """Seletor 'Visualizar como' para admin."""
+def _render_sidebar_visualizar_como(df_full):
+    """Seletor 'Visualizar como' para admin.
+
+    Recebe df_full (pre-RLS) para que as opcoes de regiao/loja/
+    consultor reflitam sempre o universo completo, independente
+    do escopo simulado atual.
+    """
     user = usuario_logado()
     if not user or user["perfil"] != "admin":
         return
 
     sac.divider(
         label="Visualizar Como",
-        icon="eye",
+        icon="eye-fill",
         align="center",
         color="gray",
     )
@@ -4360,6 +193,7 @@ def _render_sidebar_visualizar_como(df):
         "Admin (padrao)",
         "Gerente Comercial",
         "Supervisor",
+        "Consultor",
     ]
     sel = st.selectbox(
         "Simular perfil",
@@ -4367,11 +201,15 @@ def _render_sidebar_visualizar_como(df):
         key="sel_visualizar_perfil",
     )
 
+    _anterior = st.session_state.get("visualizar_como")
+
     if sel == "Admin (padrao)":
         st.session_state.pop("visualizar_como", None)
     elif sel == "Gerente Comercial":
         regioes = (
-            sorted(df["REGIAO"].unique().tolist()) if "REGIAO" in df.columns else []
+            sorted(df_full["REGIAO"].dropna().unique().tolist())
+            if "REGIAO" in df_full.columns
+            else []
         )
         escopo = st.multiselect(
             "Regioes",
@@ -4386,7 +224,11 @@ def _render_sidebar_visualizar_como(df):
         else:
             st.session_state.pop("visualizar_como", None)
     elif sel == "Supervisor":
-        lojas = sorted(df["LOJA"].unique().tolist()) if "LOJA" in df.columns else []
+        lojas = (
+            sorted(df_full["LOJA"].dropna().unique().tolist())
+            if "LOJA" in df_full.columns
+            else []
+        )
         escopo = st.multiselect(
             "Lojas",
             lojas,
@@ -4399,6 +241,30 @@ def _render_sidebar_visualizar_como(df):
             }
         else:
             st.session_state.pop("visualizar_como", None)
+    elif sel == "Consultor":
+        consultores = (
+            sorted(df_full["CONSULTOR"].dropna().unique().tolist())
+            if "CONSULTOR" in df_full.columns
+            else []
+        )
+        sel_cons = st.selectbox(
+            "Consultor",
+            [""] + consultores,
+            key="sel_visualizar_consultor",
+            help="Digite parte do nome para filtrar.",
+        )
+        if sel_cons:
+            st.session_state["visualizar_como"] = {
+                "perfil": "consultor",
+                "escopo": [sel_cons],
+            }
+        else:
+            st.session_state.pop("visualizar_como", None)
+
+    # Forca rerun imediato quando o perfil simulado muda,
+    # garantindo que o RLS use o novo escopo no mesmo ciclo.
+    if st.session_state.get("visualizar_como") != _anterior:
+        st.rerun()
 
 
 # ══════════════════════════════════════════════════════
@@ -4409,13 +275,13 @@ def _render_sidebar_visualizar_como(df):
 def main():
     """Funcao principal do dashboard."""
     carregar_estilos_customizados()
-    _aplicar_tema()
+    aplicar_tema()
 
     # ── Autenticacao ──────────────────────────────
     if not tela_login():
         return
 
-    _render_header()
+    render_header()
 
     with st.sidebar:
         # ── Logo + toggle de tema ──
@@ -4423,12 +289,12 @@ def main():
         with col_logo:
             logo = (
                 "assets/logo-grayscale.png"
-                if _get_theme() == "dark"
+                if get_theme() == "dark"
                 else "assets/logotipo-mg-cred.png"
             )
             st.image(logo, width="stretch")
         with col_theme:
-            is_dark = _get_theme() == "dark"
+            is_dark = get_theme() == "dark"
             icon = ":material/light_mode:" if is_dark else ":material/dark_mode:"
             if st.button(
                 icon,
@@ -4444,16 +310,37 @@ def main():
 
         sac.divider(
             label="Periodo",
-            icon="calendar3",
+            icon="calendar3-fill",
             align="center",
             color="gray",
         )
 
-        ano = st.selectbox("Ano", [2024, 2025, 2026], index=2)
+        _anos = [2024, 2025, 2026]
+        if "periodo_padrao_carregado" not in st.session_state:
+            _ultimo = carregar_ultimo_periodo()
+            if _ultimo:
+                st.session_state["ano_padrao"] = _ultimo["ano"]
+                st.session_state["mes_padrao"] = _ultimo["mes"]
+            else:
+                from datetime import datetime as _dt
+                _hoje = _dt.now()
+                st.session_state["ano_padrao"] = _hoje.year
+                st.session_state["mes_padrao"] = _hoje.month
+            st.session_state["periodo_padrao_carregado"] = True
+
+        _ano_padrao = st.session_state.get("ano_padrao", 2026)
+        _mes_padrao = st.session_state.get("mes_padrao", 1)
+        _idx_ano = (
+            _anos.index(_ano_padrao)
+            if _ano_padrao in _anos
+            else len(_anos) - 1
+        )
+
+        ano = st.selectbox("Ano", _anos, index=_idx_ano)
         mes = st.selectbox(
             "Mes",
             list(range(1, 13)),
-            index=2,
+            index=_mes_padrao - 1,
             format_func=lambda x: {
                 1: "Janeiro",
                 2: "Fevereiro",
@@ -4472,14 +359,13 @@ def main():
 
         sac.divider(
             label="Legenda",
-            icon="book",
+            icon="info-circle-fill",
             align="center",
             color="gray",
         )
         st.caption("**DU**: Dias Uteis")
         st.caption("**Meta Prata**: Meta principal")
         st.caption("**Meta Ouro**: Meta desafio")
-        st.caption("**PACK**: FGTS + ANT. BEN. + CNC 13o")
 
         # ── Botao para forcar atualizacao do cache ──
         if st.button(
@@ -4503,22 +389,24 @@ def main():
 
         user = usuario_logado()
         lojas_cfg, regioes_cfg = carregar_lojas_regioes()
+        consultores_cfg = carregar_consultores_cadastro()
 
         if user and user["perfil"] == "admin":
             sac.divider(
                 label="Gerenciamento de Usuarios",
-                icon="people",
+                icon="people-fill",
                 align="left",
                 color="blue",
             )
             render_pagina_usuarios(
                 regioes=regioes_cfg,
                 lojas=lojas_cfg,
+                consultores=consultores_cfg,
             )
 
             sac.divider(
                 label="Gerenciamento de Feriados",
-                icon="calendar-event",
+                icon="calendar2-event-fill",
                 align="left",
                 color="blue",
             )
@@ -4538,7 +426,11 @@ def main():
         skeleton_ph = st.empty()
         skeleton_ph.container()
         with skeleton_ph:
-            _render_skeleton()
+            render_skeleton()
+
+        _is_admin = (
+            usuario_logado() or {}
+        ).get("perfil") == "admin"
 
         with st.status(
             "Carregando dados...", expanded=False
@@ -4598,25 +490,69 @@ def main():
                     ),
                     "VALOR",
                 ] = 0
-            n_pagos = len(df)
-            n_analise = len(df_analise)
-            n_cancel = len(df_cancelados)
-            _status.update(
-                label=(
-                    f"Dados carregados — "
-                    f"{n_pagos:,} pagos · "
-                    f"{n_analise:,} em analise · "
-                    f"{n_cancel:,} cancelados"
-                ).replace(",", "."),
-                state="complete",
-            )
+            # Aplicar filtro de 30 dias para analise e cancelados
+            from datetime import datetime, timedelta
+
+            data_corte = datetime.now() - timedelta(days=30)
+
+            if not df_analise.empty and "DATA_CADASTRO" in df_analise.columns:
+                df_analise = df_analise[
+                    df_analise["DATA_CADASTRO"] >= data_corte
+                ].copy()
+
+            if not df_cancelados.empty and \
+                    "DATA_CADASTRO" in df_cancelados.columns:
+                df_cancelados = df_cancelados[
+                    df_cancelados["DATA_CADASTRO"] >= data_corte
+                ].copy()
+
+            if _is_admin:
+                n_pagos = len(df)
+                n_analise = len(df_analise)
+                n_cancel = len(df_cancelados)
+                _status.update(
+                    label=(
+                        f"Dados carregados — "
+                        f"{n_pagos:,} pagos · "
+                        f"{n_analise:,} em analise · "
+                        f"{n_cancel:,} cancelados"
+                    ).replace(",", "."),
+                    state="complete",
+                )
+            else:
+                _status.update(
+                    label="Dados carregados",
+                    state="complete",
+                )
 
         # Limpar skeleton apos carregamento
         skeleton_ph.empty()
 
+        # ── Nomes de display: renomear grupo_dashboard ─
+        # Substitui chaves internas (ex: 'PACK') pelo label
+        # amigavel antes de qualquer calculo ou renderizacao.
+        # Aplica em todos os DFs que expoe grupo_dashboard.
+        def _aplicar_nomes_display(frame: pd.DataFrame) -> pd.DataFrame:
+            if frame.empty or "grupo_dashboard" not in frame.columns:
+                return frame
+            return frame.assign(
+                grupo_dashboard=frame["grupo_dashboard"].replace(
+                    NOMES_DISPLAY_PRODUTO
+                )
+            )
+
+        df = _aplicar_nomes_display(df)
+        categorias = categorias.copy()
+        if "grupo_dashboard" in categorias.columns:
+            categorias["grupo_dashboard"] = categorias[
+                "grupo_dashboard"
+            ].replace(NOMES_DISPLAY_PRODUTO)
+        df_analise = _aplicar_nomes_display(df_analise)
+        df_cancelados = _aplicar_nomes_display(df_cancelados)
+
         # ── Diagnostico de pontuacao ─────────────
         diag = st.session_state.get("_diag_pontuacao")
-        if diag:
+        if diag and _is_admin:
             with st.expander(
                 f"Diagnostico de pontuacao — "
                 f"{diag['com_pontos_mapeados']}/{diag['total_contratos']} "
@@ -4669,6 +605,12 @@ def main():
                         + ", ".join(sem_match)
                     )
 
+        # Calcular dias uteis do periodo (para usar nos KPIs)
+        from datetime import datetime
+        hoje = datetime.now()
+        dia_ref = hoje.day if (ano == hoje.year and mes == hoje.month) else 1
+        _, du_decorridos, _ = calcular_dias_uteis(ano, mes, dia_ref)
+
         if df.empty and df_analise.empty and df_cancelados.empty:
             st.warning("Nenhum dado encontrado para o periodo selecionado.")
             return
@@ -4679,15 +621,45 @@ def main():
                 "Exibindo apenas propostas em analise."
             )
             df_analise = aplicar_rls(df_analise)
-            criar_cards_pipeline(df_analise, {
+            # Sem contratos pagos, mostrar apenas card de analise
+            kpis_analise = calcular_kpis_analise(
+                df_analise, pd.DataFrame(), du_decorridos
+            )
+            kpis_vazio = {
                 "total_vendas": 0,
-            })
-            _render_tab_em_analise(df_analise, df_sup)
+                "projecao": 0,
+                "meta_diaria_pts": 0,
+                "media_du": 0,
+                "media_du_pontos": 1,
+            }
+            criar_cards_indicadores_principais(
+                kpis_vazio,
+                kpis_analise,
+                {
+                    "valor_cancelados": 0,
+                    "qtd_cancelados": 0,
+                    "indice_perda": 0,
+                },
+                {"media_du_loja": 0, "media_du_consultor": 0},
+            )
+            render_tab_em_analise(df_analise, df_sup)
             return
 
         # ── Copias pre-RLS para heatmap comparativo ──
         df_full = df.copy()
         df_metas_produto_full = df_metas_produto.copy()
+
+        # ── Dados do mês anterior (pre-RLS, evolução) ─
+        mes_ant = mes - 1 if mes > 1 else 12
+        ano_ant = ano if mes > 1 else ano - 1
+        try:
+            df_ant_full, _, _ = consolidar_dados(mes_ant, ano_ant)
+            df_ant_full = _aplicar_nomes_display(df_ant_full)
+        except Exception:
+            df_ant_full = pd.DataFrame()
+        du_dec_ant = calcular_dias_uteis(
+            ano_ant, mes_ant, 1
+        )[0]
 
         # ── RLS: filtrar dados por perfil ─────────
         df = aplicar_rls(df)
@@ -4699,11 +671,13 @@ def main():
         if not df_cancelados.empty:
             df_cancelados = aplicar_rls(df_cancelados)
 
-        ultima_data = df["DATA"].max()
-        dia_atual = ultima_data.day if hasattr(ultima_data, "day") else None
-        _, du_decorridos, _ = calcular_dias_uteis(
-            ano, mes, dia_atual,
-        )
+        # Calcular dias uteis (usar data atual se df vazio)
+        if not df.empty:
+            ultima_data = df["DATA"].max()
+            dia_atual = ultima_data.day if hasattr(ultima_data, "day") else None
+        else:
+            dia_atual = datetime.now().day
+        _, du_decorridos, _ = calcular_dias_uteis(ano, mes, dia_atual)
 
         # ── Regioes permitidas pelo RLS ───────────
         regioes_todas = ["Todas"]
@@ -4714,12 +688,12 @@ def main():
         )
 
         with st.sidebar:
-            _render_sidebar_visualizar_como(df)
+            _render_sidebar_visualizar_como(df_full)
 
             if regioes_disp:
                 sac.divider(
                     label="Filtros Globais",
-                    icon="funnel",
+                    icon="funnel-fill",
                     align="center",
                     color="gray",
                 )
@@ -4751,7 +725,7 @@ def main():
             if not df_cancelados_f.empty and "REGIAO" in df_cancelados_f.columns:
                 df_cancelados_f = df_cancelados_f[df_cancelados_f["REGIAO"] == filtro_regiao]
 
-        _render_status_bar(
+        render_status_bar(
             len(df_f),
             ultima_data,
             filtro_regiao,
@@ -4791,37 +765,95 @@ def main():
                         )
                     )
 
+        # ── Calculos de KPIs ─────────────────────
         kpis = calcular_kpis_gerais(
             df_f,
             df_metas_f,
+            df_metas_prod_f,
             ano,
             mes,
             dia_atual,
             df_sup_f,
         )
-        criar_cards_kpis_principais(kpis)
-        criar_cards_pipeline(df_analise_f, kpis)
+
+        kpis_analise = calcular_kpis_analise(
+            df_analise_f,
+            df_f,
+            du_decorridos,
+        )
+
+        kpis_cancel = calcular_kpis_cancelados(
+            df_cancelados_f,
+            df_f,
+            df_analise_f,
+        )
+
+        medias = calcular_medias_du_por_nivel(
+            df_f,
+            du_decorridos,
+            df_sup_f,
+        )
+
+        metas_prod_diarias = calcular_metas_produto_diarias(
+            df_f,
+            df_metas_prod_f,
+            kpis.get("du_total", 0),
+            du_decorridos,
+        )
+
+        kpis_qtd = calcular_kpis_qtd_produtos(
+            df_f,
+            df_analise_f,
+            df_metas_prod_f,
+            kpis.get("du_total", 0),
+            du_decorridos,
+        )
+
+        # ── Perfil efetivo (para gating de UI) ────
+        from src.dashboard.rls import _obter_perfil_efetivo
+        perfil_efetivo = _obter_perfil_efetivo()
+        role = (
+            perfil_efetivo["perfil"]
+            if perfil_efetivo
+            else None
+        )
+
+        # Consultor nao ve cards gerenciais; sua aba
+        # renderiza os cards pessoais
+        if pode_ver("cards_gerenciais", role):
+            criar_cards_indicadores_principais(
+                kpis,
+                kpis_analise,
+                kpis_cancel,
+                medias,
+            )
+            criar_cards_metas_produto(metas_prod_diarias)
+            criar_cards_qtd_produto(kpis_qtd)
 
         # ── Navegacao principal ───────────────────
-        user = usuario_logado()
-        tab_items = [
-            sac.TabsItem(label="Produtos", icon="box"),
-            sac.TabsItem(label="Regioes", icon="geo-alt"),
-            sac.TabsItem(label="Rankings", icon="trophy"),
-            sac.TabsItem(label="Analiticos", icon="graph-up"),
-            sac.TabsItem(
-                label="Evolucao",
-                icon="calendar-range",
-            ),
-            sac.TabsItem(
-                label="Em Analise",
-                icon="hourglass-split",
-            ),
-            sac.TabsItem(
-                label="Detalhes",
-                icon="clipboard-data",
-            ),
+
+        # Monta abas conforme a matriz de permissoes
+        abas_disponiveis = [
+            ("tab_consultor", "Meu Dashboard", "speedometer2"),
+            ("tab_produtos", "Produtos", "tags-fill"),
+            ("tab_regioes", "Regioes", "map-fill"),
+            ("tab_rankings_lojas", "Rankings", "trophy-fill"),
+            ("tab_analiticos", "Analiticos", "bar-chart-fill"),
+            ("tab_evolucao", "Evolucao", "graph-up-arrow"),
+            ("tab_em_analise", "Em Analise", "clock-history"),
+            ("tab_detalhes", "Detalhes", "table"),
         ]
+        tab_items = [
+            sac.TabsItem(label=rotulo, icon=icone)
+            for chave, rotulo, icone in abas_disponiveis
+            if pode_ver(chave, role)
+        ]
+
+        if not tab_items:
+            st.warning(
+                "Nenhuma aba disponivel para seu perfil."
+            )
+            return
 
         tab = sac.tabs(
             items=tab_items,
@@ -4829,8 +861,53 @@ def main():
             variant="outline",
         )
 
-        if tab == "Produtos":
-            _render_tab_produtos(
+        if tab == "Meu Dashboard":
+            # Escopo do consultor (nome vindo do escopo)
+            escopo = (
+                perfil_efetivo.get("escopo", [])
+                if perfil_efetivo
+                else []
+            )
+            consultor_nome = escopo[0] if escopo else ""
+            loja_consultor = None
+            if (
+                not df_f.empty
+                and "LOJA" in df_f.columns
+                and not df_f["LOJA"].isna().all()
+            ):
+                loja_consultor = df_f["LOJA"].iloc[0]
+            elif (
+                consultor_nome
+                and not df_full.empty
+                and "CONSULTOR" in df_full.columns
+            ):
+                sub = df_full[
+                    df_full["CONSULTOR"] == consultor_nome
+                ]
+                if not sub.empty and "LOJA" in sub.columns:
+                    loja_consultor = sub["LOJA"].iloc[0]
+
+            metas_cons = (
+                carregar_metas_consultor(
+                    mes, ano, loja_consultor,
+                )
+                if loja_consultor
+                else {"meta_prata": 0.0, "meta_ouro": 0.0}
+            )
+
+            render_tab_consultor(
+                df_meu=df_f,
+                df_analise_meu=df_analise_f,
+                df_cancelados_meu=df_cancelados_f,
+                df_full=df_full,
+                metas_consultor=metas_cons,
+                consultor_nome=consultor_nome,
+                ano=ano,
+                mes=mes,
+                dia_atual=dia_atual,
+            )
+        elif tab == "Produtos":
+            render_tab_produtos(
                 df_f,
                 df_metas_prod_f,
                 categorias,
@@ -4838,9 +915,16 @@ def main():
                 mes,
                 dia_atual,
                 df_sup_f,
+                df_analise=df_analise_f,
+                du_total=kpis.get("du_total", 0),
+                du_decorridos=du_decorridos,
+                df_full=df_full,
+                df_metas_produto_full=df_metas_produto_full,
+                df_ant=df_ant_full,
+                du_dec_ant=du_dec_ant,
             )
         elif tab == "Regioes":
-            _render_tab_regioes(
+            render_tab_regioes(
                 df_f,
                 df_metas_f,
                 ano,
@@ -4853,28 +937,28 @@ def main():
                 df_metas_produto_full,
             )
         elif tab == "Rankings":
-            _render_tab_rankings(
+            render_tab_rankings(
                 df_f,
                 df_metas_f,
                 df_sup_f,
                 du_decorridos,
             )
         elif tab == "Analiticos":
-            _render_tab_analiticos(
+            render_tab_analiticos(
                 df_f, df_sup_f, df_analise_f,
                 df_cancelados_f,
             )
         elif tab == "Evolucao":
-            _render_tab_evolucao(
+            render_tab_evolucao(
                 df_f,
                 ano,
                 mes,
                 kpis,
             )
         elif tab == "Em Analise":
-            _render_tab_em_analise(df_analise_f, df_sup_f)
+            render_tab_em_analise(df_analise_f, df_sup_f)
         elif tab == "Detalhes":
-            _render_tab_detalhes(df_f)
+            render_tab_detalhes(df_f)
 
     except Exception as e:
         st.error(f"Erro inesperado: {e}")
