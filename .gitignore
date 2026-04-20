@@ -172,7 +172,7 @@ cython_debug/
 # Arquivos de saída e relatórios gerados
 outputs/
 relatorios/
-reports/
+/reports/
 *.html
 *.jpg
 *.jpeg
