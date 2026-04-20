@@ -33,6 +33,7 @@ from src.dashboard.kpis.gerais import (
     calcular_kpis_gerais,
     calcular_kpis_analise,
     calcular_kpis_cancelados,
+    calcular_kpis_qtd_produtos,
     calcular_medias_du_por_nivel,
     calcular_metas_produto_diarias,
 )
@@ -70,6 +71,7 @@ from src.dashboard.ui.header import (
 from src.dashboard.ui.kpi_cards import (
     criar_cards_indicadores_principais,
     criar_cards_metas_produto,
+    criar_cards_qtd_produto,
 )
 from src.dashboard.ui.skeleton import render_skeleton
 from src.dashboard.ui.theme import (
@@ -647,6 +649,18 @@ def main():
         df_full = df.copy()
         df_metas_produto_full = df_metas_produto.copy()
 
+        # ── Dados do mês anterior (pre-RLS, evolução) ─
+        mes_ant = mes - 1 if mes > 1 else 12
+        ano_ant = ano if mes > 1 else ano - 1
+        try:
+            df_ant_full, _, _ = consolidar_dados(mes_ant, ano_ant)
+            df_ant_full = _aplicar_nomes_display(df_ant_full)
+        except Exception:
+            df_ant_full = pd.DataFrame()
+        du_dec_ant = calcular_dias_uteis(
+            ano_ant, mes_ant, 1
+        )[0]
+
         # ── RLS: filtrar dados por perfil ─────────
         df = aplicar_rls(df)
         df_metas = aplicar_rls_metas(df_metas, df)
@@ -787,6 +801,14 @@ def main():
             du_decorridos,
         )
 
+        kpis_qtd = calcular_kpis_qtd_produtos(
+            df_f,
+            df_analise_f,
+            df_metas_prod_f,
+            kpis.get("du_total", 0),
+            du_decorridos,
+        )
+
         # ── Perfil efetivo (para gating de UI) ────
         from src.dashboard.rls import _obter_perfil_efetivo
         perfil_efetivo = _obter_perfil_efetivo()
@@ -806,6 +828,7 @@ def main():
                 medias,
             )
             criar_cards_metas_produto(metas_prod_diarias)
+            criar_cards_qtd_produto(kpis_qtd)
 
         # ── Navegacao principal ───────────────────
 
@@ -892,6 +915,13 @@ def main():
                 mes,
                 dia_atual,
                 df_sup_f,
+                df_analise=df_analise_f,
+                du_total=kpis.get("du_total", 0),
+                du_decorridos=du_decorridos,
+                df_full=df_full,
+                df_metas_produto_full=df_metas_produto_full,
+                df_ant=df_ant_full,
+                du_dec_ant=du_dec_ant,
             )
         elif tab == "Regioes":
             render_tab_regioes(

@@ -4,7 +4,7 @@ regiao x produto, media de producao por regiao e
 conjunto de rankings regionais.
 """
 
-from typing import Dict, Optional, Tuple
+from typing import Dict, Optional, Set, Tuple
 
 import pandas as pd
 
@@ -41,7 +41,10 @@ def calcular_kpis_por_regiao(
         meta_prata = 0
         if "META_PRATA" in df_metas.columns:
             lojas_r = df_r["LOJA"].unique()
-            meta_prata = df_metas[df_metas["LOJA"].isin(lojas_r)]["META_PRATA"].sum()
+            meta_prata = (
+                df_metas[df_metas["LOJA"].isin(lojas_r)]["META_PRATA"]
+                .sum()
+            )
 
         perc = (pontos / meta_prata * 100) if meta_prata > 0 else 0
         media_du = valor / du_dec if du_dec > 0 else 0
@@ -311,3 +314,71 @@ def calcular_ranking_regioes(
         "atingimento": rk_ating,
         "por_produto": rk_produto,
     }
+
+
+def calcular_evolucao_media_du(
+    df_atual: pd.DataFrame,
+    du_dec_atual: int,
+    df_ant: Optional[pd.DataFrame],
+    du_dec_ant: int,
+    regioes_excluir: Optional[Set[str]] = None,
+) -> pd.DataFrame:
+    """Evolução da Média DU por região entre mês anterior e atual.
+
+    Retorna DataFrame com: Região, Mês Anterior, Mês Atual,
+    % Evolução, incluindo linha de TOTAL.
+    """
+    if "REGIAO" not in df_atual.columns:
+        return pd.DataFrame()
+
+    excluir = {r.upper() for r in (regioes_excluir or set())}
+
+    def _serie(df: pd.DataFrame, du: int) -> pd.Series:
+        if df is None or df.empty or "REGIAO" not in df.columns:
+            return pd.Series(dtype=float)
+        du_safe = max(du, 1)
+        return (
+            df[df["VALOR"] > 0]
+            .groupby("REGIAO")["VALOR"]
+            .sum()
+            / du_safe
+        )
+
+    serie_atual = _serie(df_atual, du_dec_atual)
+    serie_ant = _serie(df_ant, du_dec_ant)
+
+    regioes = sorted(
+        r for r in df_atual["REGIAO"].dropna().unique()
+        if r.upper() not in excluir
+    )
+
+    rows = []
+    for reg in regioes:
+        atual = float(serie_atual.get(reg, 0))
+        ant = float(
+            serie_ant.get(reg, 0) if not serie_ant.empty else 0
+        )
+        perc = ((atual - ant) / ant * 100) if ant > 0 else 0
+        rows.append({
+            "Região": reg,
+            "Mês Anterior": ant,
+            "Mês Atual": atual,
+            "% Evolução": perc,
+        })
+
+    if rows:
+        tot_ant = sum(r["Mês Anterior"] for r in rows)
+        tot_atual = sum(r["Mês Atual"] for r in rows)
+        tot_perc = (
+            (tot_atual - tot_ant) / tot_ant * 100
+            if tot_ant > 0
+            else 0
+        )
+        rows.append({
+            "Região": "TOTAL",
+            "Mês Anterior": tot_ant,
+            "Mês Atual": tot_atual,
+            "% Evolução": tot_perc,
+        })
+
+    return pd.DataFrame(rows)

@@ -358,3 +358,124 @@ def calcular_metas_produto_diarias(
         })
 
     return resultados
+
+
+# Produtos contados apenas por quantidade (sem valor/pontos)
+_PRODUTOS_QTD = [
+    {
+        "produto": "EMISSAO",
+        "nome": "Emissão",
+        "col_pago": "is_emissao_cartao",
+        "col_meta": "EMISSAO",
+        "tipo_oper_analise": [
+            "CARTÃO BENEFICIO",
+            "Venda Pré-Adesão",
+        ],
+    },
+    {
+        "produto": "SUPER_CONTA",
+        "nome": "Super Conta",
+        "col_pago": "is_super_conta",
+        "col_meta": "SUPER_CONTA",
+        "subtipo_analise": "SUPER CONTA",
+    },
+    {
+        "produto": "BMG_MED",
+        "nome": "BMG Med",
+        "col_pago": "is_bmg_med",
+        "col_meta": "BMG_MED",
+        "tipo_oper_analise": ["BMG MED"],
+    },
+    {
+        "produto": "VIDA_FAMILIAR",
+        "nome": "Vida Familiar",
+        "col_pago": "is_seguro_vida",
+        "col_meta": "VIDA_FAMILIAR",
+        "tipo_oper_analise": ["Seguro"],
+    },
+]
+
+
+def calcular_kpis_qtd_produtos(
+    df: pd.DataFrame,
+    df_analise: pd.DataFrame,
+    df_metas_produto: pd.DataFrame,
+    du_total: int,
+    du_decorridos: int,
+) -> List[Dict]:
+    """
+    Calcula KPIs de quantidade para produtos contados apenas
+    por quantidade: Emissão, Super Conta, BMG Med e
+    Vida Familiar.
+    """
+    du_rest = max(0, du_total - du_decorridos)
+    lojas_ativas = (
+        df["LOJA"].unique()
+        if "LOJA" in df.columns
+        else []
+    )
+    resultados = []
+
+    for prod in _PRODUTOS_QTD:
+        # Quantidade paga/liquidada
+        col = prod["col_pago"]
+        qtd_paga = (
+            int(df[col].sum()) if col in df.columns else 0
+        )
+
+        # Quantidade em análise no pipeline
+        qtd_analise = 0
+        if not df_analise.empty:
+            if "subtipo_analise" in prod:
+                if "SUBTIPO" in df_analise.columns:
+                    qtd_analise = int(
+                        (
+                            df_analise["SUBTIPO"]
+                            == prod["subtipo_analise"]
+                        ).sum()
+                    )
+            elif "tipo_oper_analise" in prod:
+                if "TIPO OPER." in df_analise.columns:
+                    qtd_analise = int(
+                        df_analise["TIPO OPER."]
+                        .isin(prod["tipo_oper_analise"])
+                        .sum()
+                    )
+
+        # Meta total (soma das lojas ativas)
+        meta = 0
+        col_meta = prod["col_meta"]
+        if (
+            not df_metas_produto.empty
+            and col_meta in df_metas_produto.columns
+            and "LOJA" in df_metas_produto.columns
+            and len(lojas_ativas) > 0
+        ):
+            meta = float(
+                df_metas_produto.loc[
+                    df_metas_produto["LOJA"].isin(lojas_ativas),
+                    col_meta,
+                ].sum()
+            )
+
+        # Ritmo, projeção e meta diária restante
+        ritmo = qtd_paga / du_decorridos if du_decorridos > 0 else 0
+        projecao = ritmo * du_total
+        gap = max(0, meta - qtd_paga)
+        meta_dr = gap / du_rest if du_rest > 0 else 0
+        perc = (qtd_paga / meta * 100) if meta > 0 else 0
+
+        resultados.append({
+            "produto": prod["produto"],
+            "nome": prod["nome"],
+            "qtd_paga": qtd_paga,
+            "qtd_analise": qtd_analise,
+            "meta": meta,
+            "perc_atingido": perc,
+            "ritmo_diario": ritmo,
+            "projecao": projecao,
+            "meta_diaria_restante": meta_dr,
+            "du_restantes": du_rest,
+        })
+
+    return resultados
