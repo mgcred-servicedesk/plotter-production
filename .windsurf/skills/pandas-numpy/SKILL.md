@@ -1,11 +1,23 @@
 ---
 name: pandas-numpy
-description: Use whenever the task involves data manipulation, cleaning, transformation, or aggregation in Python.
+description: Manipulação, limpeza, transformação e agregação de dados com Pandas e NumPy.
 ---
 
-# Pandas + NumPy — Data Manipulation
+# Pandas + NumPy — Router
 
-## Options (set once at module level)
+Para padrões específicos do projeto (colunas padronizadas, filtros RLS,
+cache), veja `docs/agents/data-layer.md` e `docs/agents/conventions.md`.
+
+## Onde procurar
+
+| Tópico | Doc |
+|---|---|
+| Colunas padronizadas após `_fetch_*` (LOJA, CONSULTOR, pontos, …) | `docs/agents/data-layer.md` |
+| Formatters PT-BR, divisão segura | `docs/agents/conventions.md` |
+
+## Resumo rápido
+
+### Opções (uma vez no módulo)
 
 ```python
 pd.set_option("display.max_columns", 50)
@@ -13,7 +25,7 @@ pd.set_option("display.float_format", "{:.2f}".format)
 pd.set_option("display.max_colwidth", 80)
 ```
 
-## Loading Data
+### Carregar
 
 ```python
 df = pd.read_csv("data.csv", sep=",", encoding="utf-8",
@@ -21,14 +33,12 @@ df = pd.read_csv("data.csv", sep=",", encoding="utf-8",
 df = pd.read_excel("data.xlsx", sheet_name="Sheet1")
 ```
 
-## Data Cleaning
+### Limpeza
 
 ```python
 df.isna().sum()
 df.dropna(subset=["critical_col"])
 df["col"].fillna(df["col"].median())
-df.fillna({"col_a": 0, "col_b": "unknown"})
-
 df.drop_duplicates(subset=["id"], keep="first", inplace=True)
 
 df["price"]    = pd.to_numeric(df["price"], errors="coerce")
@@ -36,10 +46,9 @@ df["date"]     = pd.to_datetime(df["date"], format="%Y-%m-%d", errors="coerce")
 df["category"] = df["category"].astype("category")
 
 df["name"] = df["name"].str.strip().str.lower().str.replace(r"\s+", " ", regex=True)
-df.rename(columns={"old": "new"}, inplace=True)
 ```
 
-## Selection & Filtering
+### Seleção e filtragem
 
 ```python
 df.query("region == 'North' and value > 50")
@@ -52,12 +61,11 @@ df[df["region"].isin(["North", "South"])]
 df[df["age"].between(18, 65)]
 ```
 
-## Creating & Transforming Columns
+### Criando e transformando colunas
 
 ```python
 df["margin"] = (df["revenue"] - df["cost"]) / df["revenue"]
-
-df["flag"]  = np.where(df["value"] > df["threshold"], 1, 0)
+df["flag"]   = np.where(df["value"] > df["threshold"], 1, 0)
 
 conditions  = [df["score"] >= 0.9, df["score"] >= 0.7, df["score"] >= 0.5]
 choices     = ["A", "B", "C"]
@@ -68,7 +76,7 @@ df["age_group"] = pd.cut(df["age"], bins=[0, 18, 35, 60, 99],
 df["quartile"]  = pd.qcut(df["value"], q=4, labels=["Q1","Q2","Q3","Q4"])
 ```
 
-## Groupby & Aggregation
+### Groupby e agregação
 
 ```python
 df.groupby("region").agg(
@@ -81,13 +89,11 @@ df.groupby(["region", "year"])["revenue"].sum().reset_index()
 
 df["region_avg"] = df.groupby("region")["sales"].transform("mean")
 
-pivot = df.pivot_table(
-    values="sales", index="region", columns="year",
-    aggfunc="sum", fill_value=0, margins=True
-)
+pivot = df.pivot_table(values="sales", index="region", columns="year",
+                       aggfunc="sum", fill_value=0, margins=True)
 ```
 
-## Merging & Joining
+### Merge e concat
 
 ```python
 result = pd.merge(df_left, df_right, on="id", how="left")
@@ -96,7 +102,7 @@ result = pd.merge(df_orders, df_customers,
 df_all = pd.concat([df_2022, df_2023, df_2024], ignore_index=True)
 ```
 
-## Reshaping
+### Reshape
 
 ```python
 df_long = df.melt(id_vars=["id", "region"],
@@ -106,19 +112,19 @@ df_long = df.melt(id_vars=["id", "region"],
 df_wide = df_long.pivot(index="id", columns="quarter", values="revenue")
 ```
 
-## NumPy Essentials
+### NumPy essencial
 
 ```python
-np.where(condition, true_val, false_val)
-np.select(conditions, choices, default="F")
+np.where(cond, a, b)
+np.select(conds, choices, default="F")
 np.percentile(arr, [25, 50, 75])
 
 rng = np.random.default_rng(seed=42)
 
-df["pct"] = df["part"] / df["total"].replace(0, np.nan) * 100
+df["pct"] = df["part"] / df["total"].replace(0, np.nan) * 100  # divisão segura
 ```
 
-## Chaining Pattern
+### Chaining
 
 ```python
 result = (
@@ -135,11 +141,11 @@ result = (
 
 ## Pitfalls
 
-| Problem | Fix |
+| Problema | Correção |
 |---|---|
-| `SettingWithCopyWarning` | `.copy()` after slicing: `sub = df[mask].copy()` |
-| Slow `apply()` | Replace with vectorized Pandas/NumPy operations |
-| Duplicate columns after merge | Check `suffixes=("_x","_y")` or rename before merging |
-| Lost index after groupby | Add `.reset_index()` |
-| Dates parsed as strings | `parse_dates=["col"]` or `pd.to_datetime()` |
-| Division by zero | `.replace(0, np.nan)` before dividing |
+| `SettingWithCopyWarning` | `.copy()` após slice: `sub = df[mask].copy()` |
+| `apply()` lento | Vetorizar com Pandas/NumPy |
+| Colunas duplicadas após merge | Checar `suffixes=("_x","_y")` ou renomear antes |
+| Índice perdido após groupby | `.reset_index()` |
+| Datas como string | `parse_dates=` ou `pd.to_datetime()` |
+| Divisão por zero | `.replace(0, np.nan)` antes de dividir |

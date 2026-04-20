@@ -50,7 +50,7 @@ Actionable: conversion rate, CAC, LTV, churn, ROI, % atingimento de meta.
   Red = below target, Blue = primary series. Never use more than 3–4 colors per chart.
 - **Transparent backgrounds:** all Plotly charts use `paper_bgcolor` and
   `plot_bgcolor` as `rgba(0,0,0,0)` to match the Streamlit theme.
-- **Width:** always `use_container_width=True` on `st.plotly_chart`.
+- **Width:** always `width="stretch"` on `st.plotly_chart`, `st.dataframe`, `st.button` (Streamlit ≥ 1.35 — `use_container_width=True` está deprecated). Componentes `sac.*` ainda usam `use_container_width=`.
 - **Spacing:** use `sac.divider` with `label=` and `icon=` to separate sections.
   Never stack KPI rows without a divider between logical groups.
 - **No 3D charts.** No rainbow palettes. No decorative widgets.

@@ -1,11 +1,25 @@
 ---
 name: streamlit
-description: Use for Streamlit-specific patterns not covered by mgcred-dashboard. Covers layout, widgets, state, and caching.
+description: Padrões Streamlit (layout, widgets, state, caching, Width API). Para padrões específicos do projeto, consultar mgcred-dashboard primeiro.
 ---
 
-# Streamlit — Core Patterns
+# Streamlit — Router
 
-## Page Config (always first)
+Padrões específicos do projeto (cache `_atual`/`_historico`, `exibir_tabela`,
+tab renderer, componentes `sac.*`) vivem em `docs/agents/`. Consulte
+`mgcred-dashboard` **antes** de usar esta skill.
+
+## Onde procurar
+
+| Tópico | Doc |
+|---|---|
+| Estratégia de cache Supabase (`_atual`/`_historico`, TTLs) | `docs/agents/data-layer.md` |
+| Width API (`width="stretch"` vs `use_container_width`) | `docs/agents/conventions.md` |
+| `exibir_tabela`, `sac.*`, tab renderer | `docs/agents/ui-components.md` |
+
+## Resumo rápido — padrões Streamlit
+
+### Page config (sempre primeiro)
 
 ```python
 st.set_page_config(
@@ -16,85 +30,71 @@ st.set_page_config(
 )
 ```
 
-## Layout
+### Layout
 
 ```python
-# Columns
-col1, col2 = st.columns([2, 1])  # ratio
+col1, col2 = st.columns([2, 1])   # colunas com ratio
 with col1: ...
 
-# Tabs (native)
-tab1, tab2 = st.tabs(["Overview", "Details"])
-with tab1: ...
+tab1, tab2 = st.tabs(["A", "B"])  # nativo (prefira sac.tabs no projeto)
 
-# Expander
-with st.expander("Details", expanded=False):
-    st.write(...)
-
-# Sidebar
-with st.sidebar:
-    option = st.selectbox("Filter", choices)
+with st.expander("Detalhes", expanded=False): ...
+with st.sidebar: ...
 ```
 
-## Key Widgets
+### Widgets principais
 
 ```python
 st.selectbox("Label", options, help="...")
 st.multiselect("Label", options)
 st.slider("Label", min_value=0, max_value=100, value=50)
-st.date_input("Date")
+st.date_input("Data")
 st.file_uploader("Upload", type=["csv", "xlsx"])
 ```
 
-## Data Display
+### Caching (genérico)
 
 ```python
-# DataFrame (prefer exibir_tabela in this project)
-st.dataframe(df, use_container_width=True, hide_index=True)
-
-# Metric with context — always include delta and help
-st.metric(label="KPI", value="R$ 1.000", delta="10%",
-          delta_color="normal", help="Description")
+@st.cache_data           # dados, DataFrames
+@st.cache_data(ttl=300)  # TTL em segundos
+@st.cache_resource       # conexões, modelos
 ```
 
-## Caching
+> **No projeto**, preferir o padrão `_atual`/`_historico` — ver `docs/agents/data-layer.md`.
 
-```python
-@st.cache_data          # data, DataFrames — recomputes on arg change
-def load_data(): ...
-
-@st.cache_data(ttl=300) # explicit TTL in seconds for live data
-def fetch_from_db(): ...
-
-@st.cache_resource      # connections, models — shared across sessions
-def get_connection(): ...
-```
-
-## Session State
+### Session state
 
 ```python
 if "key" not in st.session_state:
-    st.session_state.key = default_value
+    st.session_state.key = default
 
-st.session_state.key = new_value
-st.rerun()  # force rerun after state change
+st.session_state.key = new
+st.rerun()
 ```
 
-## Messages
+### Width API (Streamlit ≥ 1.35)
 
 ```python
-st.success("OK")
-st.info("Info")
-st.warning("Attention")
-st.error("Error")
+st.plotly_chart(fig, width="stretch")
+st.dataframe(df, width="stretch", hide_index=True)
+st.button("Sair", width="stretch")
 ```
 
-## Common Pitfalls
+`use_container_width=True` está **deprecated** (exceto componentes
+`sac.*`, que são de biblioteca externa).
 
-| Problem | Fix |
+### Messages
+
+```python
+st.success("OK"); st.info("…"); st.warning("…"); st.error("…")
+```
+
+## Pitfalls
+
+| Problema | Correção |
 |---|---|
-| Chart not filling width | `use_container_width=True` |
-| State lost between interactions | Use `st.session_state` |
-| Heavy query runs on every interaction | `@st.cache_data` or `@st.cache_resource` |
-| `hide_index` missing | Always pass `hide_index=True` to `st.dataframe` |
-| Layout breaks on resize | Use `st.columns` with ratios, not fixed widths |
+| Gráfico não preenche largura | `width="stretch"` |
+| State perdido entre interações | `st.session_state` |
+| Query pesada roda a cada interação | `@st.cache_data` ou `@st.cache_resource` |
+| `hide_index` ausente | Sempre `hide_index=True` em `st.dataframe` |
+| `DeprecationWarning` para `use_container_width` | Migrar para `width="stretch"` |

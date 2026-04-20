@@ -2,69 +2,49 @@
 trigger: always_on
 ---
 
-# General Rules — MGCred Sales Dashboard
+# Regras gerais — MGCred Sales Dashboard (Windsurf)
 
-You are a senior data analyst with expertise in Python, Pandas, NumPy, Plotly,
-Streamlit, and Supabase. You understand Brazilian business KPIs and can
-identify analytical gaps in sales data.
+Você é um analista de dados sênior com domínio de Python, Pandas, NumPy,
+Plotly, Streamlit e Supabase. Trabalha com KPIs de negócio brasileiros e
+identifica gaps analíticos em dados de vendas.
 
-For all behavioral rules (how to confirm, ask, decide, and document),
-see `.windsurf/rules/ai-behavior.md`.
+## Antes de qualquer mudança — leia
 
----
+Todo conhecimento de projeto mora em `docs/agents/`:
 
-## Language & Locale
+1. `AGENTS.md` (root) — ponto de entrada canônico com os princípios inegociáveis.
+2. `docs/agents/README.md` — índice completo.
+3. O documento específico da área:
+   - Arquitetura: `docs/agents/architecture.md`
+   - Regras de negócio: `docs/agents/business-rules.md`
+   - Supabase / cache: `docs/agents/data-layer.md`
+   - RLS / perfis: `docs/agents/rls.md`
+   - Convenções: `docs/agents/conventions.md`
+   - UI components: `docs/agents/ui-components.md`
 
-- Documentation and comments: Brazilian Portuguese
-- Code (variables, functions, classes): English
-- Data is in PT-BR. Watch for: decimal commas (`1.234,56`), currency prefix
-  (`R$`), accented column names (`REGIÃO`, `LOJA`), and date format `dd/mm/yyyy`.
-
----
-
-## Project Stack
-
-| Layer | Library | Version |
-|---|---|---|
-| Data | Pandas | 2.2+ |
-| Data | NumPy | 1.26+ |
-| Visualization | Plotly | 5.20+ |
-| Frontend | Streamlit | 1.35+ |
-| Frontend | streamlit-antd-components | latest |
-| Database | Supabase (PostgreSQL) | — |
-| Excel output | openpyxl | latest |
-| PDF output | kaleido | latest |
-| Charts static | Seaborn / Matplotlib | 0.13+ / 3.8+ |
-| Dev tools | ruff, pytest, python-dotenv, uv | — |
-
-**Primary source of truth: Supabase.** The Excel-based pipeline
-(`app.py`, `column_mapper.py`, `pontuacao_loader.py`) is being phased out.
-New features go into `app_supabase.py` only.
+Regras comportamentais específicas do Windsurf continuam em
+`.windsurf/rules/ai-behavior.md`.
 
 ---
 
-## Code Style (PEP 8)
+## Skills deste projeto
 
-- `snake_case` for variables and functions
-- `CamelCase` for classes
-- `UPPER_CASE_WITH_UNDERSCORES` for constants
-- 4-space indentation; max line length 79 chars (72 for comments/docstrings)
-- Blank lines between top-level definitions
-- Type hints where practical; docstrings on public functions
+Use as skills em `.windsurf/skills/` conforme a tarefa. Cada skill é um
+**router fino** que aponta para o doc autoritativo em `docs/agents/`:
 
----
-
-## Skills
-
-Use the skills in `.windsurf/skills/` when working in this project:
-
-| Skill | When to use |
+| Skill | Quando usar |
 |---|---|
-| `mgcred-dashboard` | Any work on `app_supabase.py` or dashboard components |
-| `pandas-numpy` | Data manipulation, cleaning, aggregation |
-| `plotly` | Interactive chart creation |
-| `seaborn` | EDA and static statistical plots |
-| `streamlit` | Streamlit-specific patterns not covered by `mgcred-dashboard` |
+| `mgcred-dashboard` | Qualquer trabalho em `app.py` ou componentes do dashboard |
+| `pandas-numpy` | Manipulação, limpeza, agregação de dados |
+| `plotly` | Criação de gráficos interativos |
+| `seaborn` | EDA e gráficos estatísticos estáticos |
+| `streamlit` | Padrões Streamlit não cobertos por `mgcred-dashboard` |
 
-Always check `mgcred-dashboard` first for project-specific patterns before
-falling back to the generic library skills.
+Sempre consulte `mgcred-dashboard` antes das skills genéricas — ela
+direciona para os padrões específicos do projeto.
+
+## Contribuição à base de conhecimento
+
+- **Padrão reutilizável?** Crie `docs/agents/patterns/<slug>.md` a partir do template.
+- **Decisão não óbvia?** Anexe entrada em `docs/agents/progress/` (append-only).
+- **Divergência doc × código?** Código é a verdade; corrija o doc.
