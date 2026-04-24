@@ -78,6 +78,8 @@ from src.dashboard.ui.theme import (
     aplicar_tema,
     carregar_estilos_customizados,
     get_theme,
+    get_theme_mode,
+    set_theme_mode,
 )
 from src.dashboard.user_mgmt import render_pagina_usuarios
 from src.dashboard.feriados_mgmt import render_pagina_feriados
@@ -98,6 +100,40 @@ st.set_page_config(
 # ══════════════════════════════════════════════════════
 # SIDEBAR
 # ══════════════════════════════════════════════════════
+
+
+def _render_theme_toggle() -> None:
+    """Segmented 3-state: light / system / dark.
+
+    Renderiza tres botoes horizontais estilo macOS. O
+    botao correspondente ao ``theme_mode`` atual recebe
+    ``type='primary'``. Ao clicar, persiste via
+    ``set_theme_mode`` e rerun.
+    """
+    current = get_theme_mode()
+    opcoes = [
+        ("light", ":material/light_mode:", "Claro"),
+        ("system", ":material/computer:", "Sistema"),
+        ("dark", ":material/dark_mode:", "Escuro"),
+    ]
+    st.markdown(
+        '<div class="mg-theme-seg-wrapper"></div>',
+        unsafe_allow_html=True,
+    )
+    cols = st.columns(3, gap="small")
+    for col, (mode, icon, label) in zip(cols, opcoes):
+        with col:
+            btype = "primary" if current == mode else "secondary"
+            if st.button(
+                icon,
+                key=f"theme_mode_{mode}",
+                help=f"Tema {label}",
+                type=btype,
+                width="stretch",
+            ):
+                if mode != current:
+                    set_theme_mode(mode)
+                    st.rerun()
 
 
 def _render_sidebar_usuario():
@@ -132,9 +168,7 @@ def _render_sidebar_usuario():
     ):
         escopo_txt = ", ".join(user["escopo"])
         escopo_html = (
-            f'<div style="font-size:0.68rem;'
-            f"color:var(--mg-text-secondary);"
-            f'margin-top:2px">{escopo_txt}</div>'
+            f'<div class="mg-user-escopo">{escopo_txt}</div>'
         )
 
     st.markdown(
@@ -148,14 +182,18 @@ def _render_sidebar_usuario():
         unsafe_allow_html=True,
     )
 
+    st.markdown(
+        '<div class="mg-sidebar-actions"></div>',
+        unsafe_allow_html=True,
+    )
     col_cfg, col_sair = st.columns(2)
 
     with col_cfg:
-        icon = "⚙️"
+        icon = ":material/settings:"
         label = "Config"
         if user["perfil"] == "admin":
-            icon = "👥"
-            label = "Usuarios"
+            icon = ":material/group:"
+            label = "Usuários"
         if st.button(
             f"{icon} {label}",
             width="stretch",
@@ -166,7 +204,10 @@ def _render_sidebar_usuario():
             st.rerun()
 
     with col_sair:
-        if st.button("Sair", width="stretch"):
+        if st.button(
+            ":material/logout: Sair",
+            width="stretch",
+        ):
             fazer_logout()
             st.rerun()
 
@@ -281,105 +322,90 @@ def main():
     if not tela_login():
         return
 
-    render_header()
-
     with st.sidebar:
-        # ── Logo + toggle de tema ──
-        col_logo, col_theme = st.columns([4, 1])
-        with col_logo:
-            logo = (
-                "assets/logo-grayscale.png"
-                if get_theme() == "dark"
-                else "assets/logotipo-mg-cred.png"
-            )
-            st.image(logo, width="stretch")
-        with col_theme:
-            is_dark = get_theme() == "dark"
-            icon = ":material/light_mode:" if is_dark else ":material/dark_mode:"
-            if st.button(
-                icon,
-                key="theme_toggle",
-                help="Alternar tema claro/escuro",
-                width="stretch",
-            ):
-                new_theme = "light" if is_dark else "dark"
-                st.session_state["theme"] = new_theme
-                st.rerun()
+        # ── Logo ocupa toda a largura ──
+        logo = (
+            "assets/logo-grayscale.png"
+            if get_theme() == "dark"
+            else "assets/logotipo-mg-cred.png"
+        )
+        st.image(logo, width="stretch")
+
+        # ── Theme mode toggle 3-state (light/system/dark) ──
+        _render_theme_toggle()
 
         _render_sidebar_usuario()
 
-        sac.divider(
-            label="Periodo",
-            icon="calendar3-fill",
-            align="center",
-            color="gray",
-        )
-
-        _anos = [2024, 2025, 2026]
-        if "periodo_padrao_carregado" not in st.session_state:
-            _ultimo = carregar_ultimo_periodo()
-            if _ultimo:
-                st.session_state["ano_padrao"] = _ultimo["ano"]
-                st.session_state["mes_padrao"] = _ultimo["mes"]
-            else:
-                from datetime import datetime as _dt
-                _hoje = _dt.now()
-                st.session_state["ano_padrao"] = _hoje.year
-                st.session_state["mes_padrao"] = _hoje.month
-            st.session_state["periodo_padrao_carregado"] = True
-
-        _ano_padrao = st.session_state.get("ano_padrao", 2026)
-        _mes_padrao = st.session_state.get("mes_padrao", 1)
-        _idx_ano = (
-            _anos.index(_ano_padrao)
-            if _ano_padrao in _anos
-            else len(_anos) - 1
-        )
-
-        ano = st.selectbox("Ano", _anos, index=_idx_ano)
-        mes = st.selectbox(
-            "Mes",
-            list(range(1, 13)),
-            index=_mes_padrao - 1,
-            format_func=lambda x: {
-                1: "Janeiro",
-                2: "Fevereiro",
-                3: "Marco",
-                4: "Abril",
-                5: "Maio",
-                6: "Junho",
-                7: "Julho",
-                8: "Agosto",
-                9: "Setembro",
-                10: "Outubro",
-                11: "Novembro",
-                12: "Dezembro",
-            }[x],
-        )
-
-        sac.divider(
-            label="Legenda",
-            icon="info-circle-fill",
-            align="center",
-            color="gray",
-        )
-        st.caption("**DU**: Dias Uteis")
-        st.caption("**Meta Prata**: Meta principal")
-        st.caption("**Meta Ouro**: Meta desafio")
-
-        # ── Botao para forcar atualizacao do cache ──
-        if st.button(
-            ":material/refresh: Atualizar Dados",
-            help=(
-                "Limpa o cache e recarrega todos os dados "
-                "do banco. Use quando souber que os dados "
-                "foram atualizados recentemente."
-            ),
-            key="btn_refresh_cache",
-            width="stretch",
+        # ── Periodo (colapsavel) ──────────────────────
+        with st.expander(
+            ":material/calendar_month: Período",
+            expanded=True,
         ):
-            st.cache_data.clear()
-            st.rerun()
+            _anos = [2024, 2025, 2026]
+            if "periodo_padrao_carregado" not in st.session_state:
+                _ultimo = carregar_ultimo_periodo()
+                if _ultimo:
+                    st.session_state["ano_padrao"] = _ultimo["ano"]
+                    st.session_state["mes_padrao"] = _ultimo["mes"]
+                else:
+                    from datetime import datetime as _dt
+                    _hoje = _dt.now()
+                    st.session_state["ano_padrao"] = _hoje.year
+                    st.session_state["mes_padrao"] = _hoje.month
+                st.session_state["periodo_padrao_carregado"] = True
+
+            _ano_padrao = st.session_state.get("ano_padrao", 2026)
+            _mes_padrao = st.session_state.get("mes_padrao", 1)
+            _idx_ano = (
+                _anos.index(_ano_padrao)
+                if _ano_padrao in _anos
+                else len(_anos) - 1
+            )
+
+            ano = st.selectbox("Ano", _anos, index=_idx_ano)
+            mes = st.selectbox(
+                "Mes",
+                list(range(1, 13)),
+                index=_mes_padrao - 1,
+                format_func=lambda x: {
+                    1: "Janeiro",
+                    2: "Fevereiro",
+                    3: "Marco",
+                    4: "Abril",
+                    5: "Maio",
+                    6: "Junho",
+                    7: "Julho",
+                    8: "Agosto",
+                    9: "Setembro",
+                    10: "Outubro",
+                    11: "Novembro",
+                    12: "Dezembro",
+                }[x],
+            )
+
+            with st.expander(
+                ":material/info: Legenda",
+                expanded=False,
+            ):
+                st.caption("**DU**: Dias Úteis")
+                st.caption("**Meta Prata**: Meta principal")
+                st.caption("**Meta Ouro**: Meta desafio")
+
+            # ── Botao para forcar atualizacao do cache ──
+            if st.button(
+                ":material/refresh: Atualizar Dados",
+                help=(
+                    "Limpa o cache e recarrega todos os dados "
+                    "do banco. Use quando souber que os dados "
+                    "foram atualizados recentemente."
+                ),
+                key="btn_refresh_cache",
+                width="stretch",
+            ):
+                st.cache_data.clear()
+                st.rerun()
+
+    render_header(mes=mes, ano=ano)
 
     # ── Config: renderiza sem carregar contratos ──────
     if st.session_state.get("mostrar_config"):
@@ -691,17 +717,15 @@ def main():
             _render_sidebar_visualizar_como(df_full)
 
             if regioes_disp:
-                sac.divider(
-                    label="Filtros Globais",
-                    icon="funnel-fill",
-                    align="center",
-                    color="gray",
-                )
-                filtro_regiao = st.selectbox(
-                    "Regiao",
-                    regioes_disp,
-                    help="Filtrar dados por regiao",
-                )
+                with st.expander(
+                    ":material/filter_alt: Filtros Globais",
+                    expanded=True,
+                ):
+                    filtro_regiao = st.selectbox(
+                        "Regiao",
+                        regioes_disp,
+                        help="Filtrar dados por regiao",
+                    )
             else:
                 filtro_regiao = "Todas"
 
@@ -818,6 +842,23 @@ def main():
             else None
         )
 
+        # Serie diaria de valor pago (para sparkline do
+        # card hero). Agrega sem custo extra de query:
+        # df_f ja esta carregado/filtrado.
+        daily_pago = None
+        if "DATA" in df_f.columns and not df_f.empty:
+            df_com_data = df_f.dropna(subset=["DATA"])
+            if not df_com_data.empty:
+                serie = (
+                    df_com_data.groupby(
+                        df_com_data["DATA"].dt.date
+                    )["VALOR"]
+                    .sum()
+                    .sort_index()
+                )
+                if len(serie) >= 2:
+                    daily_pago = serie.tolist()
+
         # Consultor nao ve cards gerenciais; sua aba
         # renderiza os cards pessoais
         if pode_ver("cards_gerenciais", role):
@@ -826,6 +867,7 @@ def main():
                 kpis_analise,
                 kpis_cancel,
                 medias,
+                daily_pago=daily_pago,
             )
             criar_cards_metas_produto(metas_prod_diarias)
             criar_cards_qtd_produto(kpis_qtd)

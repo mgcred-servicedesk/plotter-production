@@ -1,20 +1,23 @@
+# Paleta OKLCH aproximada em hex — Streamlit native nao suporta oklch()
+# Fase 1: warm neutrals (light) + warm black (dark), accent azul neutro
+
 [theme]
-primaryColor="#2563EB"
-backgroundColor="#E8EDF3"
+primaryColor="#3366E6"
+backgroundColor="#FAFAF9"
 secondaryBackgroundColor="#FFFFFF"
-textColor="#0F172A"
+textColor="#1F2937"
 
 [theme.light]
-primaryColor="#2563EB"
-backgroundColor="#E8EDF3"
+primaryColor="#3366E6"
+backgroundColor="#FAFAF9"
 secondaryBackgroundColor="#FFFFFF"
-textColor="#0F172A"
+textColor="#1F2937"
 
 [theme.dark]
-primaryColor="#3B82F6"
-backgroundColor="#111827"
-secondaryBackgroundColor="#1F2937"
-textColor="#F9FAFB"
+primaryColor="#5C8FF7"
+backgroundColor="#0A0A0B"
+secondaryBackgroundColor="#141416"
+textColor="#F5F4F2"
 
 [server]
 headless = true

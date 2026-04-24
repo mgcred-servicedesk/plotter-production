@@ -9,7 +9,7 @@ Nova organizacao dos cards:
    - CNC, CLT, Saque, Consignado, FGTS/Ant.Ben/CNC13
 """
 
-from typing import Dict, List
+from typing import Dict, List, Optional, Sequence
 
 import streamlit as st
 import streamlit_antd_components as sac
@@ -23,6 +23,66 @@ from src.dashboard.formatters import (
 # ═══════════════════════════════════════════════════════
 # Helpers
 # ═══════════════════════════════════════════════════════
+
+
+def _sparkline_svg(
+    values: Sequence[float],
+    width: int = 180,
+    height: int = 36,
+) -> str:
+    """Sparkline inline em SVG (sem dependencia externa).
+
+    Desenha uma linha + area preenchida + ponto final,
+    usando classes CSS (``mg-spark-line``, ``mg-spark-area``,
+    ``mg-spark-dot``) para herdar cores do tema.
+
+    Retorna string vazia se ``values`` tiver menos de 2
+    pontos, para evitar render vazio.
+
+    Args:
+        values: Serie numerica (uma serie temporal).
+        width: Largura do viewBox em unidades SVG.
+        height: Altura do viewBox em unidades SVG.
+    """
+    if not values or len(values) < 2:
+        return ""
+
+    vmin = min(values)
+    vmax = max(values)
+    vrange = (vmax - vmin) if vmax > vmin else 1.0
+
+    n = len(values)
+    pad_x = 2
+    pad_y = 4
+    usable_w = width - 2 * pad_x
+    usable_h = height - 2 * pad_y
+
+    points = []
+    for i, v in enumerate(values):
+        x = pad_x + (i / (n - 1)) * usable_w
+        y = pad_y + usable_h - ((v - vmin) / vrange) * usable_h
+        points.append((x, y))
+
+    path_line = "M " + " L ".join(
+        f"{x:.1f},{y:.1f}" for x, y in points
+    )
+    path_area = (
+        f"{path_line} "
+        f"L {points[-1][0]:.1f},{height} "
+        f"L {points[0][0]:.1f},{height} Z"
+    )
+    last_x, last_y = points[-1]
+
+    return (
+        f'<svg class="mg-sparkline" '
+        f'viewBox="0 0 {width} {height}" '
+        f'preserveAspectRatio="none" aria-hidden="true">'
+        f'<path class="mg-spark-area" d="{path_area}"/>'
+        f'<path class="mg-spark-line" d="{path_line}"/>'
+        f'<circle class="mg-spark-dot" '
+        f'cx="{last_x:.1f}" cy="{last_y:.1f}" r="2.5"/>'
+        f"</svg>"
+    )
 
 
 def _delta_color(percent: float, limiar: float = 80) -> str:
@@ -58,8 +118,20 @@ def _termometro_status(
 # ═══════════════════════════════════════════════════════
 
 
-def _card_total_pago(kpis: Dict) -> None:
-    """Card: Total Pago com projecao e ritmo vs meta diaria."""
+def _card_total_pago(
+    kpis: Dict,
+    daily_values: Optional[Sequence[float]] = None,
+) -> None:
+    """Card hero: Total Pago com projecao, ritmo vs meta
+    diaria e sparkline opcional de evolucao.
+
+    Args:
+        kpis: KPIs gerais (total_vendas, projecao,
+            meta_diaria_restante_pts, media_du, etc).
+        daily_values: Serie diaria de valor pago no mes.
+            Se fornecida (>= 2 pontos), renderiza sparkline
+            inline abaixo do valor.
+    """
     total_pago = kpis.get("total_vendas", 0)
     projecao = kpis.get("projecao", 0)
     meta_dr_pts = kpis.get("meta_diaria_restante_pts", 0)
@@ -70,8 +142,9 @@ def _card_total_pago(kpis: Dict) -> None:
     def fmt(v: float) -> str:
         return formatar_moeda(v).replace("$", "&#36;")
 
+    # Hero sempre; variante semantica adicionada quando ha meta
+    card_mod = "mg-prod-card--hero"
     track_html = ""
-    card_mod = "mg-prod-card--accent-teal"
 
     if meta_dr_pts > 0 and media_du_pts > 0:
         fator = media_du / media_du_pts
@@ -79,15 +152,15 @@ def _card_total_pago(kpis: Dict) -> None:
         perc, status, _ = _termometro_status(media_du, meta_dr_val)
         clamped = max(0.0, min(perc, 100.0))
         if perc >= 100:
-            card_mod = "mg-prod-card--success"
+            card_mod += " mg-prod-card--success"
             bar_mod = "mg-success"
             meta_cls = "mg-prod-footer-ok"
         elif perc >= 80:
-            card_mod = "mg-prod-card--warning"
+            card_mod += " mg-prod-card--warning"
             bar_mod = "mg-warning"
             meta_cls = "mg-prod-footer-meta"
         else:
-            card_mod = "mg-prod-card--danger"
+            card_mod += " mg-prod-card--danger"
             bar_mod = "mg-danger"
             meta_cls = "mg-prod-footer-gap"
         track_html = (
@@ -112,12 +185,18 @@ def _card_total_pago(kpis: Dict) -> None:
         f'<span class="mg-prod-footer-ritmo">'
         f"&#8599; Proj: {fmt(projecao)}</span>"
     )
+
+    sparkline_html = ""
+    if daily_values is not None:
+        sparkline_html = _sparkline_svg(daily_values)
+
     html = (
         f'<div class="mg-prod-card {card_mod}">'
         f'<div class="mg-prod-header">'
         f'<span class="mg-prod-name">Total Pago</span>'
         f"</div>"
         f'<div class="mg-prod-value">{fmt(total_pago)}</div>'
+        f"{sparkline_html}"
         f"{track_html}"
         f'<div class="mg-prod-footer">'
         f"{footer_meta}{footer_proj}"
@@ -383,12 +462,9 @@ def _card_meta_produto(
     meta_dr = produto.get("meta_diaria_restante", 0)
     perc = produto.get("perc_atingido", 0)
 
-    if meta_dr > 0:
-        perc_ritmo = (ritmo / meta_dr) * 100
-    else:
-        perc_ritmo = 100.0 if perc >= 100 else 0.0
-
-    clamped = max(0.0, min(perc_ritmo, 100.0))
+    # Barra reflete % da meta mensal cumprida (mesmo eixo do badge).
+    # O ritmo vs meta/DU já aparece no footer em texto.
+    clamped = max(0.0, min(perc, 100.0))
 
     if is_mix:
         card_mod = "mg-prod-card--mix"
@@ -415,11 +491,20 @@ def _card_meta_produto(
             f'<span class="mg-prod-footer-ritmo">'
             f"Ritmo: {fmt(ritmo)}/DU</span>"
         )
-    elif perc >= 100 or meta_dr <= 0:
+    elif perc >= 100:
         footer = (
             f'<span class="mg-prod-footer-meta'
             f' mg-prod-footer-ok">'
             f"&#10003; Meta atingida</span>"
+            f'<span class="mg-prod-footer-ritmo">'
+            f"Ritmo: {fmt(ritmo)}/DU</span>"
+        )
+    elif meta_dr <= 0:
+        # Mes encerrado sem atingir meta — nao confundir com "meta batida"
+        footer = (
+            f'<span class="mg-prod-footer-meta'
+            f' mg-prod-footer-gap">'
+            f"Encerrado &#183; {formatar_percentual(perc)} da meta</span>"
             f'<span class="mg-prod-footer-ritmo">'
             f"Ritmo: {fmt(ritmo)}/DU</span>"
         )
@@ -532,11 +617,18 @@ def _card_qtd_produto(prod: Dict) -> None:
             f'<span class="mg-prod-footer-meta">'
             f"Proj: {fmtq(projecao)}</span>"
         )
-    elif perc >= 100 or meta_dr <= 0:
+    elif perc >= 100:
         footer_meta = (
             '<span class="mg-prod-footer-meta'
             ' mg-prod-footer-ok">'
             "&#10003; Meta atingida</span>"
+        )
+    elif meta_dr <= 0:
+        # Mes encerrado sem atingir meta — nao confundir com "meta batida"
+        footer_meta = (
+            f'<span class="mg-prod-footer-meta'
+            f' mg-prod-footer-gap">'
+            f"Encerrado &#183; {formatar_percentual(perc)} da meta</span>"
         )
     elif ritmo >= meta_dr:
         folga = ritmo - meta_dr
@@ -601,15 +693,23 @@ def criar_cards_indicadores_principais(
     kpis_analise: Dict,
     kpis_cancel: Dict,
     medias: Dict,
+    daily_pago: Optional[Sequence[float]] = None,
 ) -> None:
     """
     Renderiza os 6 cards de indicadores principais.
 
+    Layout:
+        Linha 1: Total Pago (hero 2x) | Em Analise | Cancelados
+        Linha 2: Media DU Loja | Media DU Consultor | Pontos
+
     Args:
-        kpis: KPIs gerais do dashboard
-        kpis_analise: KPIs de contratos em analise
-        kpis_cancel: KPIs de contratos cancelados
-        medias: Medias DU por loja e consultor
+        kpis: KPIs gerais do dashboard.
+        kpis_analise: KPIs de contratos em analise.
+        kpis_cancel: KPIs de contratos cancelados.
+        medias: Medias DU por loja e consultor.
+        daily_pago: Serie diaria de valor pago no mes
+            (lista ordenada por data). Se fornecida com
+            >= 2 pontos, renderiza sparkline no card hero.
     """
     sac.divider(
         label="Indicadores Principais",
@@ -618,10 +718,10 @@ def criar_cards_indicadores_principais(
         color="blue",
     )
 
-    # Primeira linha: 3 cards
-    col1, col2, col3 = st.columns(3)
+    # Primeira linha: hero + 2 suporte
+    col1, col2, col3 = st.columns([2, 1, 1])
     with col1:
-        _card_total_pago(kpis)
+        _card_total_pago(kpis, daily_values=daily_pago)
     with col2:
         _card_em_analise(kpis_analise)
     with col3:

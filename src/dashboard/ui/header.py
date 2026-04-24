@@ -10,16 +10,50 @@ Todos os componentes usam o CSS design system
 import streamlit as st
 
 
-def render_header() -> None:
-    """Renderiza cabecalho estilizado."""
+_MESES_PT = {
+    1: "Janeiro", 2: "Fevereiro", 3: "Março", 4: "Abril",
+    5: "Maio", 6: "Junho", 7: "Julho", 8: "Agosto",
+    9: "Setembro", 10: "Outubro", 11: "Novembro", 12: "Dezembro",
+}
+
+
+def render_header(
+    mes: int | None = None,
+    ano: int | None = None,
+) -> None:
+    """Renderiza cabecalho estilizado com micro-breadcrumb opcional.
+
+    Args:
+        mes: Mês ativo (1–12). Quando fornecido junto com ``ano``,
+            exibe o período como terceiro item do breadcrumb.
+        ano: Ano ativo (ex: 2026).
+    """
+    if mes and ano:
+        periodo = f"{_MESES_PT.get(mes, mes)} {ano}"
+        breadcrumb = (
+            f'<nav class="mg-breadcrumb" aria-label="breadcrumb">'
+            f"<span>MGCred</span>"
+            f'<span class="mg-breadcrumb-sep">›</span>'
+            f"<span>Dashboard de Vendas</span>"
+            f'<span class="mg-breadcrumb-sep">›</span>'
+            f'<span class="mg-breadcrumb-active">{periodo}</span>'
+            f"</nav>"
+        )
+    else:
+        breadcrumb = (
+            '<nav class="mg-breadcrumb" aria-label="breadcrumb">'
+            "<span>MGCred</span>"
+            '<span class="mg-breadcrumb-sep">›</span>'
+            '<span class="mg-breadcrumb-active">Dashboard de Vendas</span>'
+            "</nav>"
+        )
+
     st.markdown(
-        """
-        <div class="dashboard-header">
-            <h1>Dashboard de Vendas</h1>
-            <p>Analise completa de performance
-            e KPIs - MGCred</p>
-        </div>
-        """,
+        f'<div class="dashboard-header">'
+        f"{breadcrumb}"
+        f"<h1>Dashboard de Vendas</h1>"
+        f"<p>Analise completa de performance e KPIs - MGCred</p>"
+        f"</div>",
         unsafe_allow_html=True,
     )
 

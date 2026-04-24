@@ -16,27 +16,35 @@ Exporta:
 import streamlit as st
 
 
+# ─────────────────────────────────────────────────────────
+# Design tokens — Fase 1 do redesign
+#
+# Paleta baseada em OKLCH (perceptually uniform) com
+# fallback hex. Light = warm neutrals, dark = warm black
+# (inspirado em Linear, Vercel, Stripe).
+# ─────────────────────────────────────────────────────────
+
 # Paleta estendida para graficos Plotly (CSS nao alcanca)
 _CHART_THEME = {
     "light": {
-        "text": "#1a1a2e",
-        "text_secondary": "rgba(26,26,46,0.65)",
+        "text": "#1F2937",
+        "text_secondary": "rgba(31,41,55,0.62)",
         "bg": "rgba(0,0,0,0)",
-        "grid": "rgba(128,128,128,0.10)",
-        "grid_zero": "rgba(128,128,128,0.15)",
-        "tooltip_bg": "rgba(30,30,46,0.92)",
-        "tooltip_text": "#ffffff",
-        "border": "rgba(26,26,46,0.10)",
+        "grid": "rgba(31,41,55,0.06)",
+        "grid_zero": "rgba(31,41,55,0.12)",
+        "tooltip_bg": "rgba(20,20,22,0.94)",
+        "tooltip_text": "#FAFAF9",
+        "border": "rgba(31,41,55,0.08)",
     },
     "dark": {
-        "text": "#e2e4ea",
-        "text_secondary": "rgba(226,228,234,0.55)",
+        "text": "#F5F4F2",
+        "text_secondary": "rgba(245,244,242,0.58)",
         "bg": "rgba(0,0,0,0)",
-        "grid": "rgba(226,228,234,0.06)",
-        "grid_zero": "rgba(226,228,234,0.10)",
-        "tooltip_bg": "rgba(15,17,23,0.95)",
-        "tooltip_text": "#e2e4ea",
-        "border": "rgba(226,228,234,0.08)",
+        "grid": "rgba(245,244,242,0.05)",
+        "grid_zero": "rgba(245,244,242,0.10)",
+        "tooltip_bg": "rgba(10,10,11,0.96)",
+        "tooltip_text": "#F5F4F2",
+        "border": "rgba(245,244,242,0.08)",
     },
 }
 
@@ -44,93 +52,199 @@ _CHART_THEME = {
 _NATIVE_THEME = {
     "light": {
         "base": "light",
-        "primaryColor": "#2563eb",
-        "backgroundColor": "#f8f9fb",
-        "secondaryBackgroundColor": "#ffffff",
-        "textColor": "#1a1a2e",
+        "primaryColor": "#3366E6",
+        "backgroundColor": "#FAFAF9",
+        "secondaryBackgroundColor": "#FFFFFF",
+        "textColor": "#1F2937",
     },
     "dark": {
         "base": "dark",
-        "primaryColor": "#3b82f6",
-        "backgroundColor": "#0f1117",
-        "secondaryBackgroundColor": "#1a1c25",
-        "textColor": "#e2e4ea",
+        "primaryColor": "#5C8FF7",
+        "backgroundColor": "#0A0A0B",
+        "secondaryBackgroundColor": "#141416",
+        "textColor": "#F5F4F2",
     },
 }
 
 # Variaveis CSS por tema (--mg-*)
+# - bg: app background
+# - surface: card/surface background (antes: secondary-bg)
+# - surface-elevated: popovers, dropdowns, tooltips
+# - border: separadores sutis
+# - border-strong: bordas de inputs, cards com peso
+# - text / text-muted / text-subtle: hierarquia tipografica
+# - shadow-{xs,sm,md,lg}: elevation system em camadas
 _CSS_VARS = {
     "light": """
-        --mg-primary: #2563eb;
-        --mg-bg: #f8f9fb;
-        --mg-secondary-bg: #ffffff;
-        --mg-sidebar-bg: #ffffff;
-        --mg-text: #1a1a2e;
-        --mg-text-secondary: rgba(26,26,46,0.65);
-        --mg-border: rgba(26,26,46,0.10);
-        --mg-shadow: rgba(26,26,46,0.06);
-        --mg-shadow-hover: rgba(26,26,46,0.10);
-        --mg-card-border: rgba(26,26,46,0.08);
-        --mg-hover-bg: rgba(37,99,235,0.04);
-        --mg-scrollbar: rgba(26,26,46,0.18);
+        --mg-primary: #3366E6;
+        --mg-primary-hover: #2952C7;
+        --mg-primary-soft: rgba(51,102,230,0.10);
+        --mg-primary-ring: rgba(51,102,230,0.22);
+
+        --mg-bg: #FAFAF9;
+        --mg-surface: #FFFFFF;
+        --mg-surface-elevated: #FFFFFF;
+        --mg-sidebar-bg: #FFFFFF;
+        --mg-secondary-bg: #FFFFFF;
+
+        --mg-text: #1F2937;
+        --mg-text-muted: #6B7280;
+        --mg-text-subtle: #9CA3AF;
+        --mg-text-secondary: #6B7280;
+
+        --mg-border: #EBEAE8;
+        --mg-border-strong: #D9D8D4;
+        --mg-card-border: #EBEAE8;
+
+        --mg-hover-bg: rgba(51,102,230,0.05);
+        --mg-scrollbar: rgba(31,41,55,0.18);
+
+        --mg-success: #10A37F;
+        --mg-success-soft: rgba(16,163,127,0.10);
+        --mg-warning: #D97706;
+        --mg-warning-soft: rgba(217,119,6,0.10);
+        --mg-danger: #DC2626;
+        --mg-danger-soft: rgba(220,38,38,0.10);
+
+        --mg-shadow-xs: 0 1px 2px rgba(17,24,39,0.04);
+        --mg-shadow-sm: 0 2px 4px rgba(17,24,39,0.05),
+                        0 1px 2px rgba(17,24,39,0.04);
+        --mg-shadow-md: 0 4px 8px rgba(17,24,39,0.06),
+                        0 2px 4px rgba(17,24,39,0.04);
+        --mg-shadow-lg: 0 12px 24px rgba(17,24,39,0.08),
+                        0 4px 8px rgba(17,24,39,0.05);
+
+        --mg-shadow: var(--mg-shadow-xs);
+        --mg-shadow-hover: var(--mg-shadow-md);
+
+        --mg-gradient-1: linear-gradient(180deg, #3366E6, #5C8FF7);
+        --mg-gradient-2: linear-gradient(180deg, #10A37F, #34D399);
+        --mg-gradient-3: linear-gradient(180deg, #D97706, #FBBF24);
+        --mg-gradient-4: linear-gradient(180deg, #10A37F, #5EEAD4);
     """,
     "dark": """
-        --mg-primary: #3b82f6;
-        --mg-bg: #0f1117;
-        --mg-secondary-bg: #1a1c25;
-        --mg-sidebar-bg: #161820;
-        --mg-text: #e2e4ea;
-        --mg-text-secondary: rgba(226,228,234,0.55);
-        --mg-border: rgba(226,228,234,0.08);
-        --mg-shadow: rgba(0,0,0,0.20);
-        --mg-shadow-hover: rgba(0,0,0,0.35);
-        --mg-card-border: rgba(226,228,234,0.06);
-        --mg-hover-bg: rgba(59,130,246,0.08);
-        --mg-scrollbar: rgba(226,228,234,0.15);
+        --mg-primary: #5C8FF7;
+        --mg-primary-hover: #7AA5F9;
+        --mg-primary-soft: rgba(92,143,247,0.14);
+        --mg-primary-ring: rgba(92,143,247,0.32);
+
+        --mg-bg: #0A0A0B;
+        --mg-surface: #141416;
+        --mg-surface-elevated: #1C1C1F;
+        --mg-sidebar-bg: #101012;
+        --mg-secondary-bg: #141416;
+
+        --mg-text: #F5F4F2;
+        --mg-text-muted: #9A9A9F;
+        --mg-text-subtle: #6B6B70;
+        --mg-text-secondary: #9A9A9F;
+
+        --mg-border: #1F1F22;
+        --mg-border-strong: #2A2A2E;
+        --mg-card-border: #1F1F22;
+
+        --mg-hover-bg: rgba(92,143,247,0.08);
+        --mg-scrollbar: rgba(245,244,242,0.14);
+
+        --mg-success: #34D399;
+        --mg-success-soft: rgba(52,211,153,0.14);
+        --mg-warning: #FBBF24;
+        --mg-warning-soft: rgba(251,191,36,0.14);
+        --mg-danger: #F87171;
+        --mg-danger-soft: rgba(248,113,113,0.14);
+
+        --mg-shadow-xs: 0 1px 2px rgba(0,0,0,0.30);
+        --mg-shadow-sm: 0 2px 4px rgba(0,0,0,0.35),
+                        0 1px 2px rgba(0,0,0,0.30),
+                        inset 0 1px 0 rgba(255,255,255,0.03);
+        --mg-shadow-md: 0 4px 12px rgba(0,0,0,0.45),
+                        0 2px 4px rgba(0,0,0,0.35),
+                        inset 0 1px 0 rgba(255,255,255,0.04);
+        --mg-shadow-lg: 0 16px 32px rgba(0,0,0,0.55),
+                        0 6px 12px rgba(0,0,0,0.40),
+                        inset 0 1px 0 rgba(255,255,255,0.05);
+
+        --mg-shadow: var(--mg-shadow-xs);
+        --mg-shadow-hover: var(--mg-shadow-md);
+
+        --mg-gradient-1: linear-gradient(180deg, #5C8FF7, #93B5FA);
+        --mg-gradient-2: linear-gradient(180deg, #34D399, #6EE7B7);
+        --mg-gradient-3: linear-gradient(180deg, #FBBF24, #FDE047);
+        --mg-gradient-4: linear-gradient(180deg, #34D399, #5EEAD4);
     """,
 }
 
 
-# Paleta de cores para graficos (tokens semanticos)
+# Paleta de cores para graficos (tokens semanticos).
+# Sequencia pensada para categorias distintas em series
+# comparadas — mantem ordem estavel entre temas.
 CHART_COLORS = {
-    "primary": "#2563eb",
-    "primary_dark": "#1e40af",
-    "secondary": "#0d9488",
-    "success": "#059669",
-    "danger": "#dc2626",
-    "warning": "#d97706",
-    "neutral": "#64748b",
-    "purple": "#7c3aed",
-    "rose": "#e11d48",
+    "primary": "#3366E6",
+    "primary_dark": "#2952C7",
+    "secondary": "#10A37F",
+    "success": "#10A37F",
+    "danger": "#DC2626",
+    "warning": "#D97706",
+    "neutral": "#6B7280",
+    "purple": "#7C3AED",
+    "rose": "#E11D48",
     "seq": [
-        "#2563eb",
-        "#0d9488",
-        "#7c3aed",
-        "#d97706",
-        "#059669",
-        "#e11d48",
-        "#64748b",
-        "#0284c7",
+        "#3366E6",
+        "#10A37F",
+        "#D97706",
+        "#7C3AED",
+        "#0EA5E9",
+        "#E11D48",
+        "#14B8A6",
+        "#6B7280",
     ],
 }
 
 
-def get_theme() -> str:
-    """Retorna tema ativo.
+def get_theme_mode() -> str:
+    """Retorna o modo escolhido pelo usuario.
 
-    Na primeira visita, detecta preferencia do sistema
-    via localStorage (setado pelo JS de deteccao).
+    Valores: ``'light'``, ``'dark'``, ``'system'``.
+    Default: ``'system'`` (segue preferencia do SO).
     """
+    return st.session_state.get("theme_mode", "system")
+
+
+def set_theme_mode(mode: str) -> None:
+    """Define o modo do tema e invalida o tema resolvido.
+
+    Se ``mode`` for ``'light'`` ou ``'dark'``, o tema
+    ativo fica fixo. Se for ``'system'``, remove o cache
+    para que ``get_theme()`` re-resolva via JS de deteccao.
+    """
+    if mode not in ("light", "dark", "system"):
+        return
+    st.session_state["theme_mode"] = mode
+    if mode in ("light", "dark"):
+        st.session_state["theme"] = mode
+    else:
+        st.session_state.pop("theme", None)
+
+
+def get_theme() -> str:
+    """Retorna tema ativo ('light' ou 'dark') derivado do mode.
+
+    - Se mode = ``'light'``/``'dark'``: retorna explicitamente.
+    - Se mode = ``'system'``: lê do JS (query param ``_theme``)
+      ou fallback ``'light'`` no primeiro render.
+    """
+    mode = get_theme_mode()
+    if mode in ("light", "dark"):
+        return mode
+
+    # mode == "system" — detectar via JS / query param
     if "theme" not in st.session_state:
-        # Tenta ler do query param _theme (setado pelo JS)
         detected = st.query_params.get("_theme")
         if detected in ("light", "dark"):
             st.session_state["theme"] = detected
-            # Limpar o param para nao poluir a URL
             del st.query_params["_theme"]
         else:
-            # Fallback: sera corrigido pelo JS de deteccao
-            # no primeiro render (redireciona com ?_theme)
+            # Fallback: sera corrigido pelo JS no 1o render
             st.session_state["theme"] = "light"
     return st.session_state["theme"]
 
@@ -197,12 +311,25 @@ def aplicar_tema() -> None:
         unsafe_allow_html=True,
     )
 
-    # JS: detectar preferencia do sistema na primeira
-    # visita + persistir tema + tematizar iframes
-    import streamlit.components.v1 as components
+    # JS para sincronizar tema no html[data-theme] para CSS
+    is_dark = theme == "dark"
+    st.markdown(
+        f"""<script>
+        (function() {{
+            document.documentElement.setAttribute(
+                'data-theme', '{theme}'
+            );
+        }})();
+        </script>""",
+        unsafe_allow_html=True,
+    )
 
+    # JS: detectar preferencia do sistema na primeira
+    # visita + persistir tema + tematizar iframes.
+    # Usa st.iframe (substitui components.v1.html deprecated
+    # em Streamlit 1.56, removido em 2026-06-01).
     is_dark = "true" if theme == "dark" else "false"
-    components.html(
+    st.iframe(
         f"""<script>
         (function() {{
             const p = window.parent;
@@ -222,28 +349,18 @@ def aplicar_tema() -> None:
                     return;
                 }}
             }}
-            const tc = isDark ? '#e2e4ea' : '#1a1a2e';
-            const pc = isDark ? '#3b82f6' : '#2563eb';
-            const sb = isDark ? '#1a1c25' : '#ffffff';
-            const bg = isDark ? '#0f1117' : '#f8f9fb';
+            const tc = isDark ? '#F5F4F2' : '#1F2937';
+            const pc = isDark ? '#5C8FF7' : '#3366E6';
+            const sb = isDark ? '#141416' : '#FFFFFF';
+            const bg = isDark ? '#0A0A0B' : '#FAFAF9';
 
             localStorage.setItem('mgcred_theme', isDark ? 'dark' : 'light');
-
-            const VARS = {{
-                '--primary-color': pc,
-                '--background-color': bg,
-                '--secondary-background-color': sb,
-                '--text-color': tc,
-            }};
 
             function inject(iframe) {{
                 try {{
                     const doc = iframe.contentDocument
                              || iframe.contentWindow.document;
                     if (!doc || !doc.documentElement) return;
-                    const root = doc.documentElement;
-                    for (const [k, v] of Object.entries(VARS))
-                        root.style.setProperty(k, v);
                     let s = doc.getElementById('mgcred-theme');
                     if (!s) {{
                         s = doc.createElement('style');
@@ -287,17 +404,25 @@ def aplicar_tema() -> None:
             setTimeout(run, 1500);
         }})();
         </script>""",
-        height=0,
+        height=1,
     )
 
 
 def carregar_estilos_customizados() -> None:
     """Carrega CSS customizado do dashboard."""
+    import os
+
+    css_path = "assets/dashboard_style.css"
     try:
-        with open("assets/dashboard_style.css") as f:
-            st.markdown(
-                f"<style>{f.read()}</style>",
-                unsafe_allow_html=True,
-            )
+        # Cache busting: usa timestamp de modificação do arquivo
+        mtime = os.path.getmtime(css_path)
+        with open(css_path) as f:
+            css_content = f.read()
+
+        # Adiciona comment com timestamp para invalidar cache
+        st.markdown(
+            f"<style>/* CSS v{mtime} */\n{css_content}</style>",
+            unsafe_allow_html=True,
+        )
     except FileNotFoundError:
         pass

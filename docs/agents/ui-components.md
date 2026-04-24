@@ -126,12 +126,79 @@ st.rerun()  # força rerun após mudança de estado
 Sistema de tema via CSS custom properties + localStorage, implementado
 em `src/dashboard/ui/theme.py`:
 
-- `aplicar_tema()` — injeta variáveis CSS `--mg-*` e `--st-*` conforme o tema ativo.
-- `get_theme()` — lê `st.session_state["theme"]` (`"light"` | `"dark"`).
+- `get_theme_mode()` — modo escolhido: `"light"` | `"dark"` | `"system"`
+  (default `"system"`).
+- `set_theme_mode(mode)` — persiste o modo; invalida tema cacheado se
+  `"system"`.
+- `get_theme()` — tema ativo derivado do mode (`"light"` | `"dark"`).
+  Em `"system"` lê do JS via query param `_theme`.
+- `aplicar_tema()` — injeta variáveis CSS `--mg-*` e `--st-*`, sincroniza
+  tema nativo do Streamlit.
 - `carregar_estilos_customizados()` — carrega `assets/dashboard_style.css`.
-- `CHART_THEME` / `NATIVE_THEME` — paletas para Plotly e para o tema nativo do Streamlit.
+- `CHART_COLORS` / `_CHART_THEME` / `_NATIVE_THEME` — paletas para Plotly
+  e tema nativo. Todas OKLCH-aproximadas em hex (Streamlit não suporta
+  `oklch()` em `config.toml`).
 
 `app.py` chama `carregar_estilos_customizados()` e `aplicar_tema()` no
-início de `main()`; o toggle na sidebar alterna entre `light`/`dark` e
-chama `st.rerun()`. Toda cor de gráfico **deve** vir do `CHART_THEME`
-associado ao tema ativo (ver [conventions.md](conventions.md)).
+início de `main()`. O segmented toggle na sidebar (☀/🖥/🌙) alterna entre
+os 3 modos e chama `st.rerun()`. Toda cor de gráfico **deve** vir do
+`CHART_COLORS` (ver [conventions.md](conventions.md)).
+
+### Design tokens (CSS custom properties)
+
+Todos os componentes consomem tokens `--mg-*` definidos em
+`_CSS_VARS` (theme.py) e injetados no `:root`:
+
+**Cores de superfície:**
+- `--mg-bg` — app background (warm neutral light / warm black dark)
+- `--mg-surface` — card / surface background
+- `--mg-surface-elevated` — popovers, tooltips, dropdowns
+- `--mg-sidebar-bg` — background da sidebar
+
+**Texto:**
+- `--mg-text` — corpo principal
+- `--mg-text-muted` — rótulos, captions, secundário
+- `--mg-text-subtle` — terciário, hints
+
+**Bordas:**
+- `--mg-border` — separadores sutis, bordas de cards
+- `--mg-border-strong` — inputs, hover de cards
+
+**Accent + estados:**
+- `--mg-primary`, `--mg-primary-hover`, `--mg-primary-soft`,
+  `--mg-primary-ring`
+- `--mg-success` / `--mg-warning` / `--mg-danger` (+ variantes `-soft`)
+
+**Sombras (elevation system em camadas):**
+- `--mg-shadow-xs` — cards em repouso, status widgets
+- `--mg-shadow-sm` — cards default
+- `--mg-shadow-md` — cards hover, chart-card hover, hero default
+- `--mg-shadow-lg` — popovers, hero hover
+
+**Radius / spacing:**
+- `--mg-radius-sm` (6px) / `--mg-radius-md` (8px) /
+  `--mg-radius-lg` (12px) / `--mg-radius-xl` (16px)
+- `--mg-space-xs` (4) / `sm` (8) / `md` (12) / `lg` (16) /
+  `xl` (24) / `2xl` (32) / `3xl` (48)
+
+Novos componentes **devem** consumir esses tokens; nunca hardcode cores
+ou sombras em CSS ou HTML inline.
+
+### KPI cards (`.mg-prod-card`)
+
+Sistema unificado em `src/dashboard/ui/kpi_cards.py`. Variantes:
+
+| Classe | Uso |
+|---|---|
+| `.mg-prod-card` | Base neutra |
+| `.mg-prod-card--hero` | KPI principal destacado (Total Pago) |
+| `.mg-prod-card--success/warning/danger` | Status por meta |
+| `.mg-prod-card--mix` | KPI primário / mix geral |
+| `.mg-prod-card--neutral` | KPI informativo sem meta |
+
+Aliases `.mg-prod-card--accent-teal/indigo` redirecionados para
+`--neutral` (mantidos para backwards compat).
+
+Sparklines: helper `_sparkline_svg(values, width=180, height=36)`
+retorna SVG inline. Usa classes `.mg-spark-line/area/dot` que herdam
+`--mg-primary`.
