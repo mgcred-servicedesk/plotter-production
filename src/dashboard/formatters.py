@@ -20,3 +20,17 @@ def formatar_numero(valor):
 def formatar_percentual(valor):
     """Formata percentual."""
     return f"{valor:.1f}%"
+
+
+def formatar_moeda_compacta(valor: float) -> str:
+    """
+    Formata valor como moeda brasileira de forma compacta.
+    Usa sufixos M (milhão) e K (mil) para valores grandes.
+    """
+    if valor == 0:
+        return "R$ 0"
+    if valor >= 1_000_000:
+        return f"R$ {valor / 1_000_000:.1f}M".replace(".", ",")
+    if valor >= 1_000:
+        return f"R$ {valor / 1_000:.1f}K".replace(".", ",")
+    return f"R$ {valor:.0f}"

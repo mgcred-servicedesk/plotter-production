@@ -85,8 +85,8 @@ def calcular_prioridades_regiao(
     """
     Identifica as regiões com maior prioridade de ação.
 
-    Meta regional em VALOR (R$) = soma das metas-mix de produto por loja
-    (todas as colunas != "LOJA" de ``df_metas_produto``), agregada por
+    Meta regional em VALOR (R$) = soma da coluna MIX do df_metas_produto
+    (coluna MIX = meta em valor de todos os produtos da loja), agregada por
     região via mapping LOJA → REGIAO presente em ``df``.
 
     Returns:
@@ -95,20 +95,19 @@ def calcular_prioridades_regiao(
     if df.empty or "REGIAO" not in df.columns or "LOJA" not in df.columns:
         return []
 
-    # Meta por loja em valor: soma apenas das colunas em R$
-    # (exclui colunas de quantidade — EMISSAO, SUPER_CONTA, BMG_MED,
-    # VIDA_FAMILIAR — para não misturar unidades).
+    # Meta por loja em valor: usa apenas a coluna MIX (meta em R$).
+    # A coluna MIX representa o mix total de produtos em valor monetário.
+    # Não somar outras colunas (CNC, FGTS, etc) pois já estão no MIX.
     meta_por_loja: Dict[str, float] = {}
     if not df_metas_produto.empty and "LOJA" in df_metas_produto.columns:
-        cols_valor = [
-            c
-            for c in df_metas_produto.columns
-            if c != "LOJA" and c.upper() not in _META_PRODUTO_QTD_COLS
-        ]
-        if cols_valor:
-            soma = df_metas_produto[cols_valor].sum(axis=1)
+        if "MIX" in df_metas_produto.columns:
             meta_por_loja = dict(
-                zip(df_metas_produto["LOJA"], soma.astype(float))
+                zip(
+                    df_metas_produto["LOJA"],
+                    pd.to_numeric(
+                        df_metas_produto["MIX"], errors="coerce"
+                    ).fillna(0).astype(float),
+                )
             )
 
     # Mapping LOJA → REGIAO (a partir de df, fonte canônica)
@@ -172,16 +171,16 @@ def render_prioridades_acao(
     css_prioridades = """
     <style>
     .mg-prioridade-card {
-        background: var(--bg-secondary);
+        background: var(--mg-surface);
         border-radius: 12px;
         padding: 16px 20px;
         margin-bottom: 12px;
-        border-left: 4px solid var(--primary-color);
+        border-left: 4px solid var(--mg-primary);
         transition: all 0.2s ease;
     }
     .mg-prioridade-card:hover {
         transform: translateX(4px);
-        box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        box-shadow: var(--mg-shadow-sm);
     }
     .mg-prioridade-numero {
         display: inline-flex;
@@ -189,7 +188,7 @@ def render_prioridades_acao(
         justify-content: center;
         width: 28px;
         height: 28px;
-        background: var(--primary-color);
+        background: var(--mg-primary);
         color: white;
         font-size: 14px;
         font-weight: 700;
@@ -199,11 +198,11 @@ def render_prioridades_acao(
     .mg-prioridade-titulo {
         font-size: 16px;
         font-weight: 600;
-        color: var(--text-color);
+        color: var(--mg-text);
     }
     .mg-prioridade-detalhe {
         font-size: 13px;
-        color: var(--text-muted);
+        color: var(--mg-text-muted);
         margin-left: 40px;
         margin-top: 4px;
     }
@@ -303,15 +302,24 @@ def render_prioridades_acao(
         )
 
     if acoes:
+        itens = "".join(
+            f'<li style="margin-bottom: 4px;">{a}</li>'
+            for a in acoes
+        )
         st.markdown(
             f"""
-            <div style="background: linear-gradient(135deg, #dbeafe 0%, #bfdbfe 100%); 
-                        padding: 16px 20px; border-radius: 12px; margin-top: 16px;">
-                <div style="font-size: 14px; font-weight: 600; color: #1e40af; margin-bottom: 8px;">
+            <div style="background: var(--mg-primary-soft);
+                        border: 1px solid var(--mg-primary-ring);
+                        padding: 16px 20px; border-radius: 12px;
+                        margin-top: 16px;">
+                <div style="font-size: 14px; font-weight: 600;
+                            color: var(--mg-primary);
+                            margin-bottom: 8px;">
                     💡 Ações Recomendadas para Hoje:
                 </div>
-                <ul style="margin: 0; padding-left: 20px; color: #1e40af;">
-                    {"".join(f'<li style="margin-bottom: 4px;">{acao}</li>' for acao in acoes)}
+                <ul style="margin: 0; padding-left: 20px;
+                           color: var(--mg-primary);">
+                    {itens}
                 </ul>
             </div>
             """,

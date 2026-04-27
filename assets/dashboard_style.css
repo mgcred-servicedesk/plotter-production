@@ -1412,8 +1412,8 @@ div[data-testid="column"]:nth-child(4) [data-testid="stMetric"] {
     font-size: 1.05rem;
 }
 
-/* Ritmo — linha secundária */
-.mg-prod-footer-ritmo {
+/* Média — linha secundária */
+.mg-prod-footer-media {
     font-size: 0.75rem;
     color: var(--mg-text-muted);
     line-height: 1.35;
@@ -1477,18 +1477,18 @@ div[data-testid="column"]:nth-child(4) [data-testid="stMetric"] {
 .mg-rt-table {
     width: 100%;
     border-collapse: collapse;
-    font-size: 0.78rem;
+    font-size: 0.68rem;
     background: var(--mg-secondary-bg);
 }
 
 .mg-rt-th {
     background: var(--mg-bg);
     color: var(--mg-text-secondary);
-    font-size: 0.7rem;
+    font-size: 0.6rem;
     font-weight: 600;
-    letter-spacing: 0.04em;
+    letter-spacing: 0.03em;
     text-transform: uppercase;
-    padding: 5px 8px;
+    padding: 4px 5px;
     text-align: right;
     border-bottom: 1px solid var(--mg-border);
     white-space: nowrap;
@@ -1497,7 +1497,7 @@ div[data-testid="column"]:nth-child(4) [data-testid="stMetric"] {
 .mg-rt-th:first-child { text-align: left; }
 
 .mg-rt-td {
-    padding: 4px 8px;
+    padding: 3px 5px;
     color: var(--mg-text);
     text-align: right;
     border-bottom: 1px solid var(--mg-border);

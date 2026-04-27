@@ -182,7 +182,7 @@ def _card_total_pago(
         )
 
     footer_proj = (
-        f'<span class="mg-prod-footer-ritmo">'
+        f'<span class="mg-prod-footer-media">'
         f"&#8599; Proj: {fmt(projecao)}</span>"
     )
 
@@ -224,7 +224,7 @@ def _card_em_analise(kpis_analise: Dict) -> None:
     footer_ctx = ""
     if variacao > 0:
         footer_ctx = (
-            f'<span class="mg-prod-footer-ritmo">'
+            f'<span class="mg-prod-footer-media">'
             f"{formatar_percentual(variacao)} do dia"
             f" &#183; M&#233;dia: {fmt(media_diaria)}/DU"
             f"</span>"
@@ -271,7 +271,7 @@ def _card_cancelados(kpis_cancel: Dict) -> None:
         f"&#9888;&#65039; {qtd_fmt} propostas canceladas</span>"
     )
     footer_churn = (
-        f'<span class="mg-prod-footer-ritmo">Churn: '
+        f'<span class="mg-prod-footer-media">Churn: '
         f'<span style="color:{cor_churn};font-weight:700;">'
         f"{formatar_percentual(indice)}</span>"
         f" &#183; {nivel}</span>"
@@ -307,8 +307,8 @@ def _card_media_du_loja(medias: Dict) -> None:
         f'<div class="mg-prod-footer">'
         f'<span class="mg-prod-footer-meta">'
         f"&#127978; {num_lojas} lojas</span>"
-        f'<span class="mg-prod-footer-ritmo">'
-        f"Ritmo m&#233;dio por loja</span>"
+        f'<span class="mg-prod-footer-media">'
+        f"M&#233;dia por loja</span>"
         f"</div>"
         f"</div>"
     )
@@ -333,8 +333,8 @@ def _card_media_du_consultor(medias: Dict) -> None:
         f'<div class="mg-prod-footer">'
         f'<span class="mg-prod-footer-meta">'
         f"&#128100; {num_consultores} consultores</span>"
-        f'<span class="mg-prod-footer-ritmo">'
-        f"Ritmo m&#233;dio por consultor</span>"
+        f'<span class="mg-prod-footer-media">'
+        f"M&#233;dia por consultor</span>"
         f"</div>"
         f"</div>"
     )
@@ -376,7 +376,7 @@ def _card_pontos_efetivos(kpis: Dict) -> None:
             f"Meta Di&#225;ria: {formatar_numero(nec)}/DU</span>"
         )
         footer_sec = (
-            f'<span class="mg-prod-footer-ritmo">'
+            f'<span class="mg-prod-footer-media">'
             f"Faltam {formatar_numero(gap)} pts</span>"
         )
     else:
@@ -385,7 +385,7 @@ def _card_pontos_efetivos(kpis: Dict) -> None:
             "&#10003; Meta atingida</span>"
         )
         footer_sec = (
-            f'<span class="mg-prod-footer-ritmo">'
+            f'<span class="mg-prod-footer-media">'
             f"Proj: {formatar_percentual(perc_proj)} da meta</span>"
         )
 
@@ -488,16 +488,16 @@ def _card_meta_produto(
 
     if meta == 0:
         footer = (
-            f'<span class="mg-prod-footer-ritmo">'
-            f"Ritmo: {fmt(ritmo)}/DU</span>"
+            f'<span class="mg-prod-footer-media">'
+            f"Média: {fmt(ritmo)}/DU</span>"
         )
     elif perc >= 100:
         footer = (
             f'<span class="mg-prod-footer-meta'
             f' mg-prod-footer-ok">'
             f"&#10003; Meta atingida</span>"
-            f'<span class="mg-prod-footer-ritmo">'
-            f"Ritmo: {fmt(ritmo)}/DU</span>"
+            f'<span class="mg-prod-footer-media">'
+            f"Média: {fmt(ritmo)}/DU</span>"
         )
     elif meta_dr <= 0:
         # Mes encerrado sem atingir meta — nao confundir com "meta batida"
@@ -505,8 +505,8 @@ def _card_meta_produto(
             f'<span class="mg-prod-footer-meta'
             f' mg-prod-footer-gap">'
             f"Encerrado &#183; {formatar_percentual(perc)} da meta</span>"
-            f'<span class="mg-prod-footer-ritmo">'
-            f"Ritmo: {fmt(ritmo)}/DU</span>"
+            f'<span class="mg-prod-footer-media">'
+            f"Média: {fmt(ritmo)}/DU</span>"
         )
     elif ritmo >= meta_dr:
         folga = ritmo - meta_dr
@@ -515,8 +515,8 @@ def _card_meta_produto(
             f' mg-prod-footer-ok">'
             f"&#8593; Meta Di&#225;ria: {fmt(meta_dr)}/DU"
             f" <small>(+{fmt(folga)})</small></span>"
-            f'<span class="mg-prod-footer-ritmo">'
-            f"Ritmo: {fmt(ritmo)}/DU</span>"
+            f'<span class="mg-prod-footer-media">'
+            f"Média: {fmt(ritmo)}/DU</span>"
         )
     else:
         gap = meta_dr - ritmo
@@ -525,8 +525,8 @@ def _card_meta_produto(
             f' mg-prod-footer-gap">'
             f"&#8595; Meta Di&#225;ria: {fmt(meta_dr)}/DU"
             f" <small>(-{fmt(gap)})</small></span>"
-            f'<span class="mg-prod-footer-ritmo">'
-            f"Ritmo: {fmt(ritmo)}/DU</span>"
+            f'<span class="mg-prod-footer-media">'
+            f"Média: {fmt(ritmo)}/DU</span>"
         )
 
     badge_txt = (
@@ -647,15 +647,15 @@ def _card_qtd_produto(prod: Dict) -> None:
             f" <small>(-{fmtq(gap)})</small></span>"
         )
 
-    # Footer L2: Ritmo · Em análise · Projeção
+    # Footer L2: Média · Em análise · Projeção
     analise_txt = (
         f" &#183; An&#225;lise: {fmtq(qtd_analise)}"
         if qtd_analise > 0
         else ""
     )
     footer_sec = (
-        f'<span class="mg-prod-footer-ritmo">'
-        f"Ritmo: {fmtq(ritmo)}/DU"
+        f'<span class="mg-prod-footer-media">'
+        f"Média: {fmtq(ritmo)}/DU"
         f" &#183; Proj: {fmtq(projecao)}"
         f"{analise_txt}</span>"
     )

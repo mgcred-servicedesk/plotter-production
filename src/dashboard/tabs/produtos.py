@@ -8,7 +8,6 @@ import pandas as pd
 import streamlit as st
 import streamlit_antd_components as sac
 
-from src.dashboard.components.tables import exibir_tabela
 from src.dashboard.formatters import formatar_moeda
 from src.dashboard.kpis.produtos import calcular_kpis_por_produto
 from src.dashboard.kpis.regioes import (
@@ -405,26 +404,31 @@ def render_tab_produtos(
             regioes_excluir=_REGIOES_EXCLUIR_HM,
         )
 
-        col_hm, col_ev = st.columns([2, 1])
-        with col_hm:
-            if not df_ranking.empty:
+        # Layout: banner acima, heatmap + tabela evolução lado a lado
+        if not df_ranking.empty:
+            chart_card_open(
+                "Ranking Região × Produto",
+                icon="🗺️",
+                subtitle="Posição de cada região por produto"
+                " (1º = melhor atingimento)",
+            )
+
+            col_hm, col_ev = st.columns([3, 2])
+
+            with col_hm:
                 fig_hm = criar_heatmap_regiao_produto(
                     df_ranking, df_ating,
                 )
-                chart_card_open(
-                    "Ranking Região × Produto",
-                    icon="🗺️",
-                    subtitle="Posição de cada região por produto"
-                    " (1º = melhor atingimento)",
-                )
                 st.plotly_chart(fig_hm, width="stretch")
-                chart_card_close()
-        with col_ev:
-            if not df_evol.empty:
-                st.markdown(
-                    _html_tabela_evolucao(df_evol),
-                    unsafe_allow_html=True,
-                )
+
+            with col_ev:
+                if not df_evol.empty:
+                    st.markdown(
+                        _html_tabela_evolucao(df_evol),
+                        unsafe_allow_html=True,
+                    )
+
+            chart_card_close()
 
     fig = criar_grafico_produtos(df_prod)
     chart_card_open(
@@ -434,18 +438,6 @@ def render_tab_produtos(
     )
     st.plotly_chart(fig, width="stretch")
     chart_card_close()
-
-    sac.divider(
-        label="KPIs por Produto",
-        icon="table",
-        align="left",
-        color="gray",
-    )
-    exibir_tabela(df_prod)
-    st.info(
-        "FGTS/Ant. Ben./CNC 13o: conjunto FGTS + "
-        "Antecipação de Benefício + CNC 13º"
-    )
 
     # ── Análise Regional: Emissão e Seguros ─────────
     if df_analise is not None:

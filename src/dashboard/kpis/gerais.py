@@ -73,6 +73,7 @@ def calcular_kpis_gerais(
         df[df["VALOR"] > 0]
     )
 
+    # Metas GERAL (escopo LOJA, produto GERAL)
     meta_prata = 0
     meta_ouro = 0
     if "META_PRATA" in df_metas.columns:
@@ -85,6 +86,15 @@ def calcular_kpis_gerais(
         meta_ouro = (
             pd.to_numeric(
                 df_metas["META_OURO"], errors="coerce"
+            ).fillna(0).sum()
+        )
+
+    # Meta MIX (produto MIX) - soma das metas MIX por loja
+    meta_mix = 0
+    if not df_metas_produto.empty and "MIX" in df_metas_produto.columns:
+        meta_mix = (
+            pd.to_numeric(
+                df_metas_produto["MIX"], errors="coerce"
             ).fillna(0).sum()
         )
 
@@ -145,6 +155,7 @@ def calcular_kpis_gerais(
         "total_transacoes": total_transacoes,
         "meta_prata": meta_prata,
         "meta_ouro": meta_ouro,
+        "meta_mix": meta_mix,  # Nova meta MIX por produto
         "meta_diaria_pts": meta_diaria_pts,
         "meta_diaria_restante_pts": meta_diaria_restante_pts,
         "perc_ating_prata": perc_prata,

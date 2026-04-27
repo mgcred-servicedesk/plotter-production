@@ -797,11 +797,9 @@ def main():
             du_decorridos,
         )
 
-        # Meta global em VALOR (R$) = soma do mix de produtos.
+        # Meta global em VALOR (R$) = meta_mix do calcular_kpis_gerais.
         # Diferente de `meta_prata`, que está em PONTOS.
-        meta_global_valor = sum(
-            float(p.get("meta_total", 0) or 0) for p in metas_prod_diarias
-        )
+        meta_global_valor = float(kpis.get("meta_mix", 0) or 0)
         total_vendas_valor = float(kpis.get("total_vendas", 0) or 0)
         kpis["meta_global_valor"] = meta_global_valor
         kpis["perc_ating_valor"] = (
@@ -843,22 +841,24 @@ def main():
         # Consultor nao ve cards gerenciais; sua aba
         # renderiza os cards pessoais
         if pode_ver("cards_gerenciais", role):
-            # NOVA REFORMA UX/UI: Bloco 1 - Onde Estamos
-            # Resumo Executivo
-            render_resumo_executivo(
-                kpis=kpis,
-                kpis_analise=kpis_analise,
-                kpis_cancel=kpis_cancel,
-                metas_produto=metas_prod_diarias,
-            )
-
-            # KPIs Principais Reformulados (3 principais + contexto)
+            # KPIs Principais Reformulados
+            # (3 principais + contexto + MIX + Aceleradores + Média/Projeção)
             render_kpis_reforma(
                 kpis=kpis,
                 kpis_analise=kpis_analise,
                 kpis_cancel=kpis_cancel,
                 medias=medias,
+                metas_produto=metas_prod_diarias,
+                kpis_qtd=kpis_qtd,
                 daily_pago=daily_pago,
+            )
+
+            # Resumo Executivo comentado (após KPIs visuais)
+            render_resumo_executivo(
+                kpis=kpis,
+                kpis_analise=kpis_analise,
+                kpis_cancel=kpis_cancel,
+                metas_produto=metas_prod_diarias,
             )
 
             # NOVA REFORMA UX/UI: Bloco 3 - Prioridades de Ação

@@ -13,15 +13,15 @@ import streamlit as st
 CSS_RESUMO = """
 <style>
 .mg-resumo-card {
-    background: var(--background-color, #fafafa);
+    background: var(--mg-surface);
     border-radius: 16px;
-    border: 1px solid var(--border-color, #e5e7eb);
+    border: 1px solid var(--mg-border);
     overflow: hidden;
     margin-bottom: 24px;
-    box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1);
+    box-shadow: var(--mg-shadow-md);
 }
 .mg-resumo-header {
-    background: linear-gradient(135deg, var(--primary-color, #3b82f6) 0%, var(--primary-color, #3b82f6) 100%);
+    background: var(--mg-primary);
     color: white;
     padding: 12px 20px;
     font-size: 14px;
@@ -40,30 +40,39 @@ CSS_RESUMO = """
     border-radius: 12px;
     margin-bottom: 16px;
 }
-.mg-status-success { background: #dcfce7; border-left: 4px solid #22c55e; }
-.mg-status-warning { background: #fef3c7; border-left: 4px solid #f59e0b; }
-.mg-status-danger { background: #fee2e2; border-left: 4px solid #ef4444; }
+.mg-status-success {
+    background: var(--mg-success-soft);
+    border-left: 4px solid var(--mg-success);
+}
+.mg-status-warning {
+    background: var(--mg-warning-soft);
+    border-left: 4px solid var(--mg-warning);
+}
+.mg-status-danger {
+    background: var(--mg-danger-soft);
+    border-left: 4px solid var(--mg-danger);
+}
 .mg-status-icon { font-size: 24px; }
-.mg-status-text { font-size: 18px; font-weight: 700; color: #1f2937; }
+.mg-status-text { font-size: 18px; font-weight: 700; color: var(--mg-text); }
 .mg-info-row {
     display: flex;
     gap: 24px;
     padding: 12px 16px;
-    background: #f3f4f6;
+    background: var(--mg-hover-bg);
     border-radius: 8px;
     margin-bottom: 16px;
 }
-.mg-info-item { font-size: 15px; color: #374151; }
-.mg-info-item strong { color: #111827; }
-.mg-text-success { color: #22c55e; font-weight: 600; }
-.mg-text-warning { color: #f59e0b; font-weight: 600; }
-.mg-text-danger { color: #ef4444; font-weight: 600; }
-.mg-divider { border-top: 1px dashed #d1d5db; margin: 16px 0; }
+.mg-info-item { font-size: 15px; color: var(--mg-text-muted); }
+.mg-info-item strong { color: var(--mg-text); }
+.mg-text-success { color: var(--mg-success); font-weight: 600; }
+.mg-text-warning { color: var(--mg-warning); font-weight: 600; }
+.mg-text-danger  { color: var(--mg-danger);  font-weight: 600; }
+.mg-divider { border-top: 1px dashed var(--mg-border-strong); margin: 16px 0; }
 .mg-section-title {
     font-size: 12px;
     font-weight: 600;
     text-transform: uppercase;
-    color: #6b7280;
+    color: var(--mg-text-muted);
     letter-spacing: 0.5px;
     margin-bottom: 10px;
 }
@@ -77,8 +86,8 @@ CSS_RESUMO = """
     font-size: 13px;
     font-weight: 500;
 }
-.mg-tag-up { background: #dcfce7; color: #166534; }
-.mg-tag-down { background: #fee2e2; color: #991b1b; }
+.mg-tag-up   { background: var(--mg-success-soft); color: var(--mg-success); }
+.mg-tag-down { background: var(--mg-danger-soft);  color: var(--mg-danger);  }
 .mg-pills { display: flex; gap: 8px; flex-wrap: wrap; }
 .mg-pill {
     display: inline-flex;
@@ -88,9 +97,21 @@ CSS_RESUMO = """
     font-size: 12px;
     font-weight: 500;
 }
-.mg-pill-red { background: #fee2e2; color: #991b1b; border: 1px solid #fecaca; }
-.mg-pill-yellow { background: #fef3c7; color: #92400e; border: 1px solid #fde68a; }
-.mg-pill-blue { background: #dbeafe; color: #1e40af; border: 1px solid #bfdbfe; }
+.mg-pill-red {
+    background: var(--mg-danger-soft);
+    color: var(--mg-danger);
+    border: 1px solid var(--mg-danger);
+}
+.mg-pill-yellow {
+    background: var(--mg-warning-soft);
+    color: var(--mg-warning);
+    border: 1px solid var(--mg-warning);
+}
+.mg-pill-blue {
+    background: var(--mg-primary-soft);
+    color: var(--mg-primary);
+    border: 1px solid var(--mg-primary);
+}
 </style>
 """
 
@@ -168,7 +189,7 @@ def render_resumo_executivo(
     # Pills de prioridades
     pills_html = ""
     if desvio_ritmo < -20:
-        pills_html += f'<span class="mg-pill mg-pill-red">🔥 Ritmo {abs(desvio_ritmo):.0f}% abaixo</span>'
+        pills_html += f'<span class="mg-pill mg-pill-red">🔥 Média {abs(desvio_ritmo):.0f}% abaixo</span>'
     if indice_perda > 20:
         pills_html += (
             f'<span class="mg-pill mg-pill-yellow">⚠️ Churn {indice_perda:.1f}%</span>'

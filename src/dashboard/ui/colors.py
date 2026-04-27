@@ -149,25 +149,25 @@ def get_churn_status(indice_perda: float) -> Tuple[str, str, str]:
 
 
 # ═══════════════════════════════════════════════════════
-# Cores para Ritmo vs Meta
+# Cores para Média vs Meta
 # ═══════════════════════════════════════════════════════
 
 def get_ritmo_status(desvio_percentual: float) -> Tuple[str, str, str]:
     """
-    Retorna status para desvio de ritmo.
+    Retorna status para desvio de média.
     
     Args:
-        desvio_percentual: Desvio do ritmo necessário (ex: -36 para 36% abaixo)
+        desvio_percentual: Desvio da média necessária (ex: -36 para 36% abaixo)
     
     Returns:
         Tuple: (cor, emoji, status_texto)
     """
     if desvio_percentual >= 0:
-        return (StatusColors.SUCCESS, "✓", "No ritmo")
+        return (StatusColors.SUCCESS, "✓", "Na média")
     elif desvio_percentual >= -20:
         return (StatusColors.WARNING, "⚠", "Atenção")
     else:
-        return (StatusColors.DANGER, "🔴", "Abaixo do ritmo")
+        return (StatusColors.DANGER, "🔴", "Abaixo da média")
 
 
 # ═══════════════════════════════════════════════════════

@@ -421,14 +421,13 @@ def criar_heatmap_regiao_produto(
             )
         hover.append(row)
 
-    # Texto exibido nas celulas: posicao + % atingimento
+    # Texto exibido nas celulas: apenas posicao em negrito/branco
     text = []
     for i in range(len(regioes)):
         row = []
         for j in range(len(produtos)):
             pos = int(z[i][j])
-            ating = df_ating.iloc[i, j]
-            row.append(f"{pos}º<br>{ating:.1f}%")
+            row.append(f"<b>{pos}º</b>")
         text.append(row)
 
     # Escala invertida: 1 (melhor) = verde, max = vermelho
@@ -445,7 +444,7 @@ def criar_heatmap_regiao_produto(
             y=y_labels,
             text=text,
             texttemplate="%{text}",
-            textfont=dict(size=13, color=ct["text"]),
+            textfont=dict(size=13, color="#FFFFFF"),
             hovertext=hover,
             hoverinfo="text",
             colorscale=colorscale,
@@ -482,9 +481,9 @@ def criar_heatmap_regiao_produto(
 
     fig.update_layout(
         title="Mapa de Calor: Ranking por Produto x Regiao",
-        xaxis_title="Produto",
+        xaxis=dict(side="top", title="Produto"),
         yaxis_title="Regiao",
-        height=max(380, 80 * n_regioes),
+        height=max(340, 75 * n_regioes),
         autosize=True,
         yaxis=dict(autorange="reversed"),
     )
