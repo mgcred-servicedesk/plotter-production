@@ -403,10 +403,7 @@ def criar_heatmap_regiao_produto(
     destaque = set(regioes_destaque or [])
 
     # Labels do eixo Y com marcador para regioes destacadas
-    y_labels = [
-        f"★ {r}" if r in destaque else r
-        for r in regioes
-    ]
+    y_labels = [f"★ {r}" if r in destaque else r for r in regioes]
 
     # Texto de hover com % atingimento
     hover = []
@@ -456,13 +453,10 @@ def criar_heatmap_regiao_produto(
             zmax=n_regioes,
             showscale=True,
             colorbar=dict(
-                title="Posicao",
-                titlefont=dict(color=ct["text"]),
+                title=dict(text="Posicao", font=dict(color=ct["text"])),
                 tickfont=dict(color=ct["text"]),
                 tickvals=list(range(1, n_regioes + 1)),
-                ticktext=[
-                    f"{i}º" for i in range(1, n_regioes + 1)
-                ],
+                ticktext=[f"{i}º" for i in range(1, n_regioes + 1)],
             ),
             xgap=3,
             ygap=3,

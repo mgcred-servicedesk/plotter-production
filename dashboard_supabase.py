@@ -386,11 +386,8 @@ def _aplicar_tema():
     )
 
     # Injetar JS para tematizar iframes (sac components).
-    # st.markdown sanitiza <script>, entao usamos
-    # st.components.v1.html com height=0.
-    import streamlit.components.v1 as components
-
-    components.html(
+    # st.markdown sanitiza <script>, entao usamos st.iframe.
+    st.iframe(
         f"""<script>
         (function() {{
             const p = window.parent;
@@ -571,7 +568,7 @@ def carregar_contratos_pagos(
             .eq("periodo_id", periodo["id"])
             .or_(
                 'status_pagamento_cliente.eq."PAGO AO CLIENTE",'
-                'and(sub_status_banco.eq.Liquidada,'
+                "and(sub_status_banco.eq.Liquidada,"
                 'tipo_operacao.in.("BMG MED",Seguro))'
             )
             .order("id")
@@ -732,9 +729,7 @@ def carregar_contratos_em_analise(
     df = pd.DataFrame(rows)
 
     if "DATA_CADASTRO" in df.columns:
-        df["DATA_CADASTRO"] = pd.to_datetime(
-            df["DATA_CADASTRO"], errors="coerce"
-        )
+        df["DATA_CADASTRO"] = pd.to_datetime(df["DATA_CADASTRO"], errors="coerce")
 
     return df
 
@@ -861,9 +856,7 @@ def carregar_metas_produto(
 
     # Deduplicar por (LOJA, produto_meta) — constraint
     # UNIQUE com nivel NULL nao impede duplicatas no PG
-    df = df.drop_duplicates(
-        subset=["LOJA", "produto_meta"], keep="first"
-    )
+    df = df.drop_duplicates(subset=["LOJA", "produto_meta"], keep="first")
 
     # Pivotar para ter uma coluna por produto_meta
     if not df.empty:
@@ -949,9 +942,7 @@ def consolidar_dados(
     mask_sem_cat = df["categoria_codigo"] == ""
     if mask_sem_cat.any() and "TIPO_PRODUTO" in df.columns:
         df.loc[mask_sem_cat, "categoria_codigo"] = (
-            df.loc[mask_sem_cat, "TIPO_PRODUTO"]
-            .map(_TIPO_PARA_CATEGORIA)
-            .fillna("")
+            df.loc[mask_sem_cat, "TIPO_PRODUTO"].map(_TIPO_PARA_CATEGORIA).fillna("")
         )
 
         # Preencher grupo_dashboard, grupo_meta, conta_valor,
@@ -968,10 +959,9 @@ def consolidar_dados(
                 "conta_pontuacao",
             ]:
                 if campo in cat_map.columns:
-                    df.loc[preenchidos, campo] = (
-                        df.loc[preenchidos, "categoria_codigo"]
-                        .map(cat_map[campo])
-                    )
+                    df.loc[preenchidos, campo] = df.loc[
+                        preenchidos, "categoria_codigo"
+                    ].map(cat_map[campo])
 
     # Mapear pontos por categoria_codigo
     if not df_pontos.empty:
@@ -1009,15 +999,11 @@ def consolidar_dados(
         "com_categoria": int(com_cat),
         "com_pontos_mapeados": int(com_pontos),
         "sem_pontos_mapeados": int(sem_pontos),
-        "categorias_no_contrato": (
-            sorted(df["categoria_codigo"].unique().tolist())
-        ),
+        "categorias_no_contrato": (sorted(df["categoria_codigo"].unique().tolist())),
         "categorias_na_pontuacao": (
             sorted(mapa_pontos.keys()) if not df_pontos.empty else []
         ),
-        "mapa_pontos": (
-            mapa_pontos if not df_pontos.empty else {}
-        ),
+        "mapa_pontos": (mapa_pontos if not df_pontos.empty else {}),
         "tipos_sem_categoria": tipos_sem_cat,
     }
     st.session_state["_diag_pontuacao"] = _diag
@@ -1151,24 +1137,14 @@ def calcular_kpis_gerais(
         num_consultores = len(consultores_unicos)
 
     qtd_super_conta = (
-        int(df["is_super_conta"].sum())
-        if "is_super_conta" in df.columns
-        else 0
+        int(df["is_super_conta"].sum()) if "is_super_conta" in df.columns else 0
     )
     qtd_emissao_cartao = (
-        int(df["is_emissao_cartao"].sum())
-        if "is_emissao_cartao" in df.columns
-        else 0
+        int(df["is_emissao_cartao"].sum()) if "is_emissao_cartao" in df.columns else 0
     )
-    qtd_bmg_med = (
-        int(df["is_bmg_med"].sum())
-        if "is_bmg_med" in df.columns
-        else 0
-    )
+    qtd_bmg_med = int(df["is_bmg_med"].sum()) if "is_bmg_med" in df.columns else 0
     qtd_seguro_vida = (
-        int(df["is_seguro_vida"].sum())
-        if "is_seguro_vida" in df.columns
-        else 0
+        int(df["is_seguro_vida"].sum()) if "is_seguro_vida" in df.columns else 0
     )
 
     return {
@@ -2033,11 +2009,7 @@ def criar_cards_pipeline(df_analise, kpis_pagos):
     qtd_analise = len(df_analise)
     ticket_analise = valor_analise / qtd_analise if qtd_analise > 0 else 0
     valor_pagos = kpis_pagos["total_vendas"]
-    razao = (
-        (valor_analise / valor_pagos * 100)
-        if valor_pagos > 0
-        else 0
-    )
+    razao = (valor_analise / valor_pagos * 100) if valor_pagos > 0 else 0
 
     col1, col2, col3, col4 = st.columns(4)
 
@@ -2053,11 +2025,7 @@ def criar_cards_pipeline(df_analise, kpis_pagos):
             formatar_moeda(ticket_analise),
         )
     with col3:
-        num_lojas = (
-            df_analise["LOJA"].nunique()
-            if "LOJA" in df_analise.columns
-            else 0
-        )
+        num_lojas = df_analise["LOJA"].nunique() if "LOJA" in df_analise.columns else 0
         st.metric(
             "Lojas com Pipeline",
             formatar_numero(num_lojas),
@@ -2692,17 +2660,13 @@ def _render_tab_analiticos(df, df_sup):
             if "is_seguro_vida" in df.columns:
                 mask_cards = mask_cards | df["is_seguro_vida"]
             df_cards = df[mask_cards].copy()
-            df_cards["PRODUTO_MIX"] = df_cards[
-                "grupo_dashboard"
-            ].fillna("OUTROS")
+            df_cards["PRODUTO_MIX"] = df_cards["grupo_dashboard"].fillna("OUTROS")
             if "is_bmg_med" in df_cards.columns:
-                df_cards.loc[
-                    df_cards["is_bmg_med"], "PRODUTO_MIX"
-                ] = "BMG Med"
+                df_cards.loc[df_cards["is_bmg_med"], "PRODUTO_MIX"] = "BMG Med"
             if "is_seguro_vida" in df_cards.columns:
-                df_cards.loc[
-                    df_cards["is_seguro_vida"], "PRODUTO_MIX"
-                ] = "Vida Familiar"
+                df_cards.loc[df_cards["is_seguro_vida"], "PRODUTO_MIX"] = (
+                    "Vida Familiar"
+                )
             if filt_c != "Todos":
                 df_cards = df_cards[df_cards["CONSULTOR"] == filt_c]
             if filt_p != "Todos":
@@ -2711,9 +2675,7 @@ def _render_tab_analiticos(df, df_sup):
             total_valor = df_cards["VALOR"].sum()
             total_pts = df_cards["pontos"].sum()
             total_trans = len(df_cards[df_cards["VALOR"] > 0])
-            tk_medio = (
-                total_valor / total_trans if total_trans > 0 else 0
-            )
+            tk_medio = total_valor / total_trans if total_trans > 0 else 0
 
             col1, col2, col3 = st.columns(3)
             with col1:
@@ -2839,18 +2801,14 @@ def _render_tab_em_analise(df_analise, df_sup):
     with col2:
         if "REGIAO" in df_a.columns:
             regioes = ["Todas"] + sorted(df_a["REGIAO"].unique().tolist())
-            filt_reg = st.selectbox(
-                "Regiao", regioes, key="analise_regiao"
-            )
+            filt_reg = st.selectbox("Regiao", regioes, key="analise_regiao")
         else:
             filt_reg = "Todas"
     with col3:
         status_opts = ["Todos"] + sorted(
             [str(x) for x in df_a["STATUS_BANCO"].unique() if pd.notna(x)]
         )
-        filt_status = st.selectbox(
-            "Status Banco", status_opts, key="analise_status"
-        )
+        filt_status = st.selectbox("Status Banco", status_opts, key="analise_status")
 
     if filt_loja != "Todas":
         df_a = df_a[df_a["LOJA"] == filt_loja]
@@ -3215,9 +3173,7 @@ def main():
         st.caption("**PACK**: FGTS + ANT. BEN. + CNC 13o")
 
     try:
-        with st.status(
-            "Carregando dados...", expanded=False
-        ) as _status:
+        with st.status("Carregando dados...", expanded=False) as _status:
             _status.update(label="Carregando contratos pagos...")
             df, df_metas, df_sup = consolidar_dados(mes, ano)
 
@@ -3232,9 +3188,7 @@ def main():
             n_analise = len(df_analise)
             _status.update(
                 label=(
-                    f"Dados carregados — "
-                    f"{n_pagos:,} pagos · "
-                    f"{n_analise:,} em analise"
+                    f"Dados carregados — {n_pagos:,} pagos · {n_analise:,} em analise"
                 ).replace(",", "."),
                 state="complete",
             )
@@ -3255,9 +3209,7 @@ def main():
 
                 st.markdown("**Categorias nos contratos:**")
                 st.code(
-                    ", ".join(
-                        c for c in diag["categorias_no_contrato"] if c
-                    )
+                    ", ".join(c for c in diag["categorias_no_contrato"] if c)
                     or "(vazio)",
                 )
 
@@ -3283,9 +3235,7 @@ def main():
                     )
 
                 # Categorias sem match
-                cats_contrato = {
-                    c for c in diag["categorias_no_contrato"] if c
-                }
+                cats_contrato = {c for c in diag["categorias_no_contrato"] if c}
                 cats_pontuacao = set(diag["categorias_na_pontuacao"])
                 sem_match = sorted(cats_contrato - cats_pontuacao)
                 if sem_match:
@@ -3338,13 +3288,15 @@ def main():
 
         if df.empty:
             st.info(
-                "Nenhum contrato pago no periodo. "
-                "Exibindo apenas propostas em analise."
+                "Nenhum contrato pago no periodo. Exibindo apenas propostas em analise."
             )
             df_analise = aplicar_rls(df_analise)
-            criar_cards_pipeline(df_analise, {
-                "total_vendas": 0,
-            })
+            criar_cards_pipeline(
+                df_analise,
+                {
+                    "total_vendas": 0,
+                },
+            )
             _render_tab_em_analise(df_analise, df_sup)
             return
 

@@ -73,6 +73,9 @@ from src.dashboard.ui.kpi_cards import (
     criar_cards_metas_produto,
     criar_cards_qtd_produto,
 )
+from src.dashboard.ui.kpi_cards_reforma import render_kpis_reforma
+from src.dashboard.ui.prioridades_acao import render_prioridades_acao
+from src.dashboard.ui.resumo_executivo import render_resumo_executivo
 from src.dashboard.ui.skeleton import render_skeleton
 from src.dashboard.ui.theme import (
     aplicar_tema,
@@ -162,14 +165,9 @@ def _render_sidebar_usuario():
     )
 
     escopo_html = ""
-    if (
-        user["perfil"] not in ("admin", "gestor")
-        and user.get("escopo")
-    ):
+    if user["perfil"] not in ("admin", "gestor") and user.get("escopo"):
         escopo_txt = ", ".join(user["escopo"])
-        escopo_html = (
-            f'<div class="mg-user-escopo">{escopo_txt}</div>'
-        )
+        escopo_html = f'<div class="mg-user-escopo">{escopo_txt}</div>'
 
     st.markdown(
         f'<div class="mg-sidebar-user">'
@@ -349,6 +347,7 @@ def main():
                     st.session_state["mes_padrao"] = _ultimo["mes"]
                 else:
                     from datetime import datetime as _dt
+
                     _hoje = _dt.now()
                     st.session_state["ano_padrao"] = _hoje.year
                     st.session_state["mes_padrao"] = _hoje.month
@@ -357,9 +356,7 @@ def main():
             _ano_padrao = st.session_state.get("ano_padrao", 2026)
             _mes_padrao = st.session_state.get("mes_padrao", 1)
             _idx_ano = (
-                _anos.index(_ano_padrao)
-                if _ano_padrao in _anos
-                else len(_anos) - 1
+                _anos.index(_ano_padrao) if _ano_padrao in _anos else len(_anos) - 1
             )
 
             ano = st.selectbox("Ano", _anos, index=_idx_ano)
@@ -454,13 +451,9 @@ def main():
         with skeleton_ph:
             render_skeleton()
 
-        _is_admin = (
-            usuario_logado() or {}
-        ).get("perfil") == "admin"
+        _is_admin = (usuario_logado() or {}).get("perfil") == "admin"
 
-        with st.status(
-            "Carregando dados...", expanded=False
-        ) as _status:
+        with st.status("Carregando dados...", expanded=False) as _status:
             _status.update(label="Carregando contratos pagos...")
             df, df_metas, df_sup = consolidar_dados(mes, ano)
 
@@ -473,20 +466,14 @@ def main():
 
             # Zerar VALOR de produtos que nao contam
             # valor (emissoes de cartao, seguros)
-            if (
-                not df_analise.empty
-                and "conta_valor" in df_analise.columns
-            ):
+            if not df_analise.empty and "conta_valor" in df_analise.columns:
                 df_analise.loc[
                     df_analise["conta_valor"] == False,  # noqa
                     "VALOR",
                 ] = 0
             # Zerar emissoes por TIPO OPER. (Venda Pre-Adesao
             # com produto CONSIG nao tem conta_valor=false)
-            if (
-                not df_analise.empty
-                and "TIPO OPER." in df_analise.columns
-            ):
+            if not df_analise.empty and "TIPO OPER." in df_analise.columns:
                 df_analise.loc[
                     df_analise["TIPO OPER."].isin(
                         ["CARTÃO BENEFICIO", "Venda Pré-Adesão"]
@@ -495,21 +482,13 @@ def main():
                 ] = 0
 
             _status.update(label="Carregando cancelados...")
-            df_cancelados = carregar_contratos_cancelados(
-                mes, ano
-            )
-            if (
-                not df_cancelados.empty
-                and "conta_valor" in df_cancelados.columns
-            ):
+            df_cancelados = carregar_contratos_cancelados(mes, ano)
+            if not df_cancelados.empty and "conta_valor" in df_cancelados.columns:
                 df_cancelados.loc[
                     df_cancelados["conta_valor"] == False,  # noqa
                     "VALOR",
                 ] = 0
-            if (
-                not df_cancelados.empty
-                and "TIPO OPER." in df_cancelados.columns
-            ):
+            if not df_cancelados.empty and "TIPO OPER." in df_cancelados.columns:
                 df_cancelados.loc[
                     df_cancelados["TIPO OPER."].isin(
                         ["CARTÃO BENEFICIO", "Venda Pré-Adesão"]
@@ -526,8 +505,7 @@ def main():
                     df_analise["DATA_CADASTRO"] >= data_corte
                 ].copy()
 
-            if not df_cancelados.empty and \
-                    "DATA_CADASTRO" in df_cancelados.columns:
+            if not df_cancelados.empty and "DATA_CADASTRO" in df_cancelados.columns:
                 df_cancelados = df_cancelados[
                     df_cancelados["DATA_CADASTRO"] >= data_corte
                 ].copy()
@@ -562,17 +540,15 @@ def main():
             if frame.empty or "grupo_dashboard" not in frame.columns:
                 return frame
             return frame.assign(
-                grupo_dashboard=frame["grupo_dashboard"].replace(
-                    NOMES_DISPLAY_PRODUTO
-                )
+                grupo_dashboard=frame["grupo_dashboard"].replace(NOMES_DISPLAY_PRODUTO)
             )
 
         df = _aplicar_nomes_display(df)
         categorias = categorias.copy()
         if "grupo_dashboard" in categorias.columns:
-            categorias["grupo_dashboard"] = categorias[
-                "grupo_dashboard"
-            ].replace(NOMES_DISPLAY_PRODUTO)
+            categorias["grupo_dashboard"] = categorias["grupo_dashboard"].replace(
+                NOMES_DISPLAY_PRODUTO
+            )
         df_analise = _aplicar_nomes_display(df_analise)
         df_cancelados = _aplicar_nomes_display(df_cancelados)
 
@@ -592,9 +568,7 @@ def main():
 
                 st.markdown("**Categorias nos contratos:**")
                 st.code(
-                    ", ".join(
-                        c for c in diag["categorias_no_contrato"] if c
-                    )
+                    ", ".join(c for c in diag["categorias_no_contrato"] if c)
                     or "(vazio)",
                 )
 
@@ -620,9 +594,7 @@ def main():
                     )
 
                 # Categorias sem match
-                cats_contrato = {
-                    c for c in diag["categorias_no_contrato"] if c
-                }
+                cats_contrato = {c for c in diag["categorias_no_contrato"] if c}
                 cats_pontuacao = set(diag["categorias_na_pontuacao"])
                 sem_match = sorted(cats_contrato - cats_pontuacao)
                 if sem_match:
@@ -633,6 +605,7 @@ def main():
 
         # Calcular dias uteis do periodo (para usar nos KPIs)
         from datetime import datetime
+
         hoje = datetime.now()
         dia_ref = hoje.day if (ano == hoje.year and mes == hoje.month) else 1
         _, du_decorridos, _ = calcular_dias_uteis(ano, mes, dia_ref)
@@ -643,8 +616,7 @@ def main():
 
         if df.empty:
             st.info(
-                "Nenhum contrato pago no periodo. "
-                "Exibindo apenas propostas em analise."
+                "Nenhum contrato pago no periodo. Exibindo apenas propostas em analise."
             )
             df_analise = aplicar_rls(df_analise)
             # Sem contratos pagos, mostrar apenas card de analise
@@ -683,9 +655,7 @@ def main():
             df_ant_full = _aplicar_nomes_display(df_ant_full)
         except Exception:
             df_ant_full = pd.DataFrame()
-        du_dec_ant = calcular_dias_uteis(
-            ano_ant, mes_ant, 1
-        )[0]
+        du_dec_ant = calcular_dias_uteis(ano_ant, mes_ant, 1)[0]
 
         # ── RLS: filtrar dados por perfil ─────────
         df = aplicar_rls(df)
@@ -747,7 +717,9 @@ def main():
             if not df_analise_f.empty and "REGIAO" in df_analise_f.columns:
                 df_analise_f = df_analise_f[df_analise_f["REGIAO"] == filtro_regiao]
             if not df_cancelados_f.empty and "REGIAO" in df_cancelados_f.columns:
-                df_cancelados_f = df_cancelados_f[df_cancelados_f["REGIAO"] == filtro_regiao]
+                df_cancelados_f = df_cancelados_f[
+                    df_cancelados_f["REGIAO"] == filtro_regiao
+                ]
 
         render_status_bar(
             len(df_f),
@@ -825,6 +797,20 @@ def main():
             du_decorridos,
         )
 
+        # Meta global em VALOR (R$) = soma do mix de produtos.
+        # Diferente de `meta_prata`, que está em PONTOS.
+        meta_global_valor = sum(
+            float(p.get("meta_total", 0) or 0) for p in metas_prod_diarias
+        )
+        total_vendas_valor = float(kpis.get("total_vendas", 0) or 0)
+        kpis["meta_global_valor"] = meta_global_valor
+        kpis["perc_ating_valor"] = (
+            (total_vendas_valor / meta_global_valor * 100)
+            if meta_global_valor > 0
+            else 0
+        )
+        kpis["gap_valor"] = max(0, meta_global_valor - total_vendas_valor)
+
         kpis_qtd = calcular_kpis_qtd_produtos(
             df_f,
             df_analise_f,
@@ -835,12 +821,9 @@ def main():
 
         # ── Perfil efetivo (para gating de UI) ────
         from src.dashboard.rls import _obter_perfil_efetivo
+
         perfil_efetivo = _obter_perfil_efetivo()
-        role = (
-            perfil_efetivo["perfil"]
-            if perfil_efetivo
-            else None
-        )
+        role = perfil_efetivo["perfil"] if perfil_efetivo else None
 
         # Serie diaria de valor pago (para sparkline do
         # card hero). Agrega sem custo extra de query:
@@ -850,9 +833,7 @@ def main():
             df_com_data = df_f.dropna(subset=["DATA"])
             if not df_com_data.empty:
                 serie = (
-                    df_com_data.groupby(
-                        df_com_data["DATA"].dt.date
-                    )["VALOR"]
+                    df_com_data.groupby(df_com_data["DATA"].dt.date)["VALOR"]
                     .sum()
                     .sort_index()
                 )
@@ -862,15 +843,31 @@ def main():
         # Consultor nao ve cards gerenciais; sua aba
         # renderiza os cards pessoais
         if pode_ver("cards_gerenciais", role):
-            criar_cards_indicadores_principais(
-                kpis,
-                kpis_analise,
-                kpis_cancel,
-                medias,
+            # NOVA REFORMA UX/UI: Bloco 1 - Onde Estamos
+            # Resumo Executivo
+            render_resumo_executivo(
+                kpis=kpis,
+                kpis_analise=kpis_analise,
+                kpis_cancel=kpis_cancel,
+                metas_produto=metas_prod_diarias,
+            )
+
+            # KPIs Principais Reformulados (3 principais + contexto)
+            render_kpis_reforma(
+                kpis=kpis,
+                kpis_analise=kpis_analise,
+                kpis_cancel=kpis_cancel,
+                medias=medias,
                 daily_pago=daily_pago,
             )
-            criar_cards_metas_produto(metas_prod_diarias)
-            criar_cards_qtd_produto(kpis_qtd)
+
+            # NOVA REFORMA UX/UI: Bloco 3 - Prioridades de Ação
+            render_prioridades_acao(
+                metas_produto=metas_prod_diarias,
+                df=df_f,
+                df_metas_produto=df_metas_prod_f,
+                kpis=kpis,
+            )
 
         # ── Navegacao principal ───────────────────
 
@@ -892,9 +889,7 @@ def main():
         ]
 
         if not tab_items:
-            st.warning(
-                "Nenhuma aba disponivel para seu perfil."
-            )
+            st.warning("Nenhuma aba disponivel para seu perfil.")
             return
 
         tab = sac.tabs(
@@ -905,11 +900,7 @@ def main():
 
         if tab == "Meu Dashboard":
             # Escopo do consultor (nome vindo do escopo)
-            escopo = (
-                perfil_efetivo.get("escopo", [])
-                if perfil_efetivo
-                else []
-            )
+            escopo = perfil_efetivo.get("escopo", []) if perfil_efetivo else []
             consultor_nome = escopo[0] if escopo else ""
             loja_consultor = None
             if (
@@ -919,19 +910,17 @@ def main():
             ):
                 loja_consultor = df_f["LOJA"].iloc[0]
             elif (
-                consultor_nome
-                and not df_full.empty
-                and "CONSULTOR" in df_full.columns
+                consultor_nome and not df_full.empty and "CONSULTOR" in df_full.columns
             ):
-                sub = df_full[
-                    df_full["CONSULTOR"] == consultor_nome
-                ]
+                sub = df_full[df_full["CONSULTOR"] == consultor_nome]
                 if not sub.empty and "LOJA" in sub.columns:
                     loja_consultor = sub["LOJA"].iloc[0]
 
             metas_cons = (
                 carregar_metas_consultor(
-                    mes, ano, loja_consultor,
+                    mes,
+                    ano,
+                    loja_consultor,
                 )
                 if loja_consultor
                 else {"meta_prata": 0.0, "meta_ouro": 0.0}
@@ -987,7 +976,9 @@ def main():
             )
         elif tab == "Analiticos":
             render_tab_analiticos(
-                df_f, df_sup_f, df_analise_f,
+                df_f,
+                df_sup_f,
+                df_analise_f,
                 df_cancelados_f,
             )
         elif tab == "Evolucao":

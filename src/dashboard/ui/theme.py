@@ -265,9 +265,7 @@ def aplicar_tema() -> None:
     # Sincronizar tema nativo (widgets, st.dataframe, st.metric)
     set_option("theme.base", native["base"])
     set_option("theme.primaryColor", native["primaryColor"])
-    set_option(
-        "theme.backgroundColor", native["backgroundColor"]
-    )
+    set_option("theme.backgroundColor", native["backgroundColor"])
     set_option(
         "theme.secondaryBackgroundColor",
         native["secondaryBackgroundColor"],
@@ -326,8 +324,7 @@ def aplicar_tema() -> None:
 
     # JS: detectar preferencia do sistema na primeira
     # visita + persistir tema + tematizar iframes.
-    # Usa st.iframe (substitui components.v1.html deprecated
-    # em Streamlit 1.56, removido em 2026-06-01).
+    # Usa st.iframe (novo em Streamlit 1.56, substitui st.components.v1.html).
     is_dark = "true" if theme == "dark" else "false"
     st.iframe(
         f"""<script>
