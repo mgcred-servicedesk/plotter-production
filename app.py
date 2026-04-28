@@ -54,7 +54,6 @@ from src.dashboard.rls import (
     aplicar_rls,
     aplicar_rls_metas,
     aplicar_rls_supervisores,
-    obter_regioes_permitidas,
 )
 from src.dashboard.tabs.analiticos import render_tab_analiticos
 from src.dashboard.tabs.consultor import render_tab_consultor
@@ -84,6 +83,7 @@ from src.dashboard.ui.theme import (
     get_theme_mode,
     set_theme_mode,
 )
+from src.dashboard.ui.theme_claro_avancado import aplicar_tema_claro_avancado
 from src.dashboard.user_mgmt import render_pagina_usuarios
 from src.dashboard.feriados_mgmt import render_pagina_feriados
 from src.shared.dias_uteis import calcular_dias_uteis
@@ -126,12 +126,10 @@ def _render_theme_toggle() -> None:
     cols = st.columns(3, gap="small")
     for col, (mode, icon, label) in zip(cols, opcoes):
         with col:
-            btype = "primary" if current == mode else "secondary"
             if st.button(
                 icon,
                 key=f"theme_mode_{mode}",
                 help=f"Tema {label}",
-                type=btype,
                 width="stretch",
             ):
                 if mode != current:
@@ -211,21 +209,23 @@ def _render_sidebar_usuario():
 
 
 def _render_sidebar_visualizar_como(df_full):
-    """Seletor 'Visualizar como' para admin.
+    """Seletor 'Visualizar como' para admin e gestor.
 
     Recebe df_full (pre-RLS) para que as opcoes de regiao/loja/
     consultor reflitam sempre o universo completo, independente
     do escopo simulado atual.
     """
     user = usuario_logado()
-    if not user or user["perfil"] != "admin":
+    if not user or user["perfil"] not in ("admin", "gestor"):
         return
 
-    sac.divider(
-        label="Visualizar Como",
-        icon="eye-fill",
-        align="center",
-        color="gray",
+    st.markdown(
+        '<div class="mg-sim-card">'
+        '<div class="mg-sim-header">'
+        '<span class="mg-sim-icon">👁️</span>'
+        '<span class="mg-sim-title">Visualizar Como</span>'
+        "</div></div>",
+        unsafe_allow_html=True,
     )
 
     opcoes = [
@@ -238,6 +238,7 @@ def _render_sidebar_visualizar_como(df_full):
         "Simular perfil",
         opcoes,
         key="sel_visualizar_perfil",
+        label_visibility="collapsed",
     )
 
     _anterior = st.session_state.get("visualizar_como")
@@ -316,6 +317,11 @@ def main():
     carregar_estilos_customizados()
     aplicar_tema()
 
+    # Camada complementar Aurora — só no modo claro,
+    # SEMPRE depois de aplicar_tema() (sobrescreve tokens).
+    if get_theme() == "light":
+        aplicar_tema_claro_avancado()
+
     # ── Autenticacao ──────────────────────────────
     if not tela_login():
         return
@@ -359,34 +365,29 @@ def main():
                 _anos.index(_ano_padrao) if _ano_padrao in _anos else len(_anos) - 1
             )
 
-            ano = st.selectbox("Ano", _anos, index=_idx_ano)
-            mes = st.selectbox(
-                "Mes",
-                list(range(1, 13)),
-                index=_mes_padrao - 1,
-                format_func=lambda x: {
-                    1: "Janeiro",
-                    2: "Fevereiro",
-                    3: "Marco",
-                    4: "Abril",
-                    5: "Maio",
-                    6: "Junho",
-                    7: "Julho",
-                    8: "Agosto",
-                    9: "Setembro",
-                    10: "Outubro",
-                    11: "Novembro",
-                    12: "Dezembro",
-                }[x],
-            )
-
-            with st.expander(
-                ":material/info: Legenda",
-                expanded=False,
-            ):
-                st.caption("**DU**: Dias Úteis")
-                st.caption("**Meta Prata**: Meta principal")
-                st.caption("**Meta Ouro**: Meta desafio")
+            c_ano, c_mes = st.columns(2)
+            with c_ano:
+                ano = st.selectbox("Ano", _anos, index=_idx_ano)
+            with c_mes:
+                mes = st.selectbox(
+                    "Mes",
+                    list(range(1, 13)),
+                    index=_mes_padrao - 1,
+                    format_func=lambda x: {
+                        1: "Janeiro",
+                        2: "Fevereiro",
+                        3: "Marco",
+                        4: "Abril",
+                        5: "Maio",
+                        6: "Junho",
+                        7: "Julho",
+                        8: "Agosto",
+                        9: "Setembro",
+                        10: "Outubro",
+                        11: "Novembro",
+                        12: "Dezembro",
+                    }[x],
+                )
 
             # ── Botao para forcar atualizacao do cache ──
             if st.button(
@@ -400,6 +401,8 @@ def main():
                 width="stretch",
             ):
                 st.cache_data.clear()
+                st.session_state.pop("_kpis_cache", None)
+                st.session_state.pop("_kpis_chave", None)
                 st.rerun()
 
     render_header(mes=mes, ano=ano)
@@ -647,15 +650,10 @@ def main():
         df_full = df.copy()
         df_metas_produto_full = df_metas_produto.copy()
 
-        # ── Dados do mês anterior (pre-RLS, evolução) ─
-        mes_ant = mes - 1 if mes > 1 else 12
-        ano_ant = ano if mes > 1 else ano - 1
-        try:
-            df_ant_full, _, _ = consolidar_dados(mes_ant, ano_ant)
-            df_ant_full = _aplicar_nomes_display(df_ant_full)
-        except Exception:
-            df_ant_full = pd.DataFrame()
-        du_dec_ant = calcular_dias_uteis(ano_ant, mes_ant, 1)[0]
+        # ── Dados do mês anterior: lazy, só na aba Produtos ─
+        # Carregamento adiado para dentro de `if tab == "Produtos":`.
+        df_ant_full = pd.DataFrame()
+        du_dec_ant = 0
 
         # ── RLS: filtrar dados por perfil ─────────
         df = aplicar_rls(df)
@@ -675,29 +673,9 @@ def main():
             dia_atual = datetime.now().day
         _, du_decorridos, _ = calcular_dias_uteis(ano, mes, dia_atual)
 
-        # ── Regioes permitidas pelo RLS ───────────
-        regioes_todas = ["Todas"]
-        if "REGIAO" in df.columns:
-            regioes_todas += sorted(df["REGIAO"].unique().tolist())
-        regioes_disp = obter_regioes_permitidas(
-            regioes_todas,
-        )
-
+        # ── Dados filtrados (RLS ja aplicado, filtros de UI removidos) ─
         with st.sidebar:
             _render_sidebar_visualizar_como(df_full)
-
-            if regioes_disp:
-                with st.expander(
-                    ":material/filter_alt: Filtros Globais",
-                    expanded=True,
-                ):
-                    filtro_regiao = st.selectbox(
-                        "Regiao",
-                        regioes_disp,
-                        help="Filtrar dados por regiao",
-                    )
-            else:
-                filtro_regiao = "Todas"
 
         df_f = df.copy()
         df_metas_f = df_metas.copy()
@@ -706,25 +684,10 @@ def main():
         df_analise_f = df_analise.copy()
         df_cancelados_f = df_cancelados.copy()
 
-        if filtro_regiao != "Todas" and "REGIAO" in df.columns:
-            df_f = df_f[df_f["REGIAO"] == filtro_regiao]
-            lojas_r = df_f["LOJA"].unique()
-            df_metas_f = df_metas_f[df_metas_f["LOJA"].isin(lojas_r)]
-            if not df_metas_prod_f.empty:
-                df_metas_prod_f = df_metas_prod_f[df_metas_prod_f["LOJA"].isin(lojas_r)]
-            if "REGIAO" in df_sup.columns:
-                df_sup_f = df_sup_f[df_sup_f["REGIAO"] == filtro_regiao]
-            if not df_analise_f.empty and "REGIAO" in df_analise_f.columns:
-                df_analise_f = df_analise_f[df_analise_f["REGIAO"] == filtro_regiao]
-            if not df_cancelados_f.empty and "REGIAO" in df_cancelados_f.columns:
-                df_cancelados_f = df_cancelados_f[
-                    df_cancelados_f["REGIAO"] == filtro_regiao
-                ]
-
         render_status_bar(
             len(df_f),
             ultima_data,
-            filtro_regiao,
+            "Todas",
             num_em_analise=len(df_analise_f),
         )
 
@@ -761,82 +724,109 @@ def main():
                         )
                     )
 
-        # ── Calculos de KPIs ─────────────────────
-        kpis = calcular_kpis_gerais(
-            df_f,
-            df_metas_f,
-            df_metas_prod_f,
-            ano,
-            mes,
-            dia_atual,
-            df_sup_f,
-        )
-
-        kpis_analise = calcular_kpis_analise(
-            df_analise_f,
-            df_f,
-            du_decorridos,
-        )
-
-        kpis_cancel = calcular_kpis_cancelados(
-            df_cancelados_f,
-            df_f,
-            df_analise_f,
-        )
-
-        medias = calcular_medias_du_por_nivel(
-            df_f,
-            du_decorridos,
-            df_sup_f,
-        )
-
-        metas_prod_diarias = calcular_metas_produto_diarias(
-            df_f,
-            df_metas_prod_f,
-            kpis.get("du_total", 0),
-            du_decorridos,
-        )
-
-        # Meta global em VALOR (R$) = meta_mix do calcular_kpis_gerais.
-        # Diferente de `meta_prata`, que está em PONTOS.
-        meta_global_valor = float(kpis.get("meta_mix", 0) or 0)
-        total_vendas_valor = float(kpis.get("total_vendas", 0) or 0)
-        kpis["meta_global_valor"] = meta_global_valor
-        kpis["perc_ating_valor"] = (
-            (total_vendas_valor / meta_global_valor * 100)
-            if meta_global_valor > 0
-            else 0
-        )
-        kpis["gap_valor"] = max(0, meta_global_valor - total_vendas_valor)
-
-        kpis_qtd = calcular_kpis_qtd_produtos(
-            df_f,
-            df_analise_f,
-            df_metas_prod_f,
-            kpis.get("du_total", 0),
-            du_decorridos,
-        )
-
         # ── Perfil efetivo (para gating de UI) ────
         from src.dashboard.rls import _obter_perfil_efetivo
 
         perfil_efetivo = _obter_perfil_efetivo()
         role = perfil_efetivo["perfil"] if perfil_efetivo else None
 
-        # Serie diaria de valor pago (para sparkline do
-        # card hero). Agrega sem custo extra de query:
-        # df_f ja esta carregado/filtrado.
-        daily_pago = None
-        if "DATA" in df_f.columns and not df_f.empty:
-            df_com_data = df_f.dropna(subset=["DATA"])
-            if not df_com_data.empty:
-                serie = (
-                    df_com_data.groupby(df_com_data["DATA"].dt.date)["VALOR"]
-                    .sum()
-                    .sort_index()
-                )
-                if len(serie) >= 2:
-                    daily_pago = serie.tolist()
+        # ── Calculos de KPIs (memoizados em session_state) ──
+        # Cache local por (mes, ano, regiao, role): troca de aba
+        # nao recalcula. Invalidado pelo botao "Atualizar Dados".
+        chave_kpis = (
+            mes,
+            ano,
+            role,
+            tuple(perfil_efetivo.get("escopo", []) if perfil_efetivo else []),
+        )
+        if st.session_state.get("_kpis_chave") != chave_kpis:
+            kpis = calcular_kpis_gerais(
+                df_f,
+                df_metas_f,
+                df_metas_prod_f,
+                ano,
+                mes,
+                dia_atual,
+                df_sup_f,
+            )
+
+            kpis_analise = calcular_kpis_analise(
+                df_analise_f,
+                df_f,
+                du_decorridos,
+            )
+
+            kpis_cancel = calcular_kpis_cancelados(
+                df_cancelados_f,
+                df_f,
+                df_analise_f,
+            )
+
+            medias = calcular_medias_du_por_nivel(
+                df_f,
+                du_decorridos,
+                df_sup_f,
+            )
+
+            metas_prod_diarias = calcular_metas_produto_diarias(
+                df_f,
+                df_metas_prod_f,
+                kpis.get("du_total", 0),
+                du_decorridos,
+            )
+
+            # Meta global em VALOR (R$) = meta_mix do calcular_kpis_gerais.
+            # Diferente de `meta_prata`, que está em PONTOS.
+            meta_global_valor = float(kpis.get("meta_mix", 0) or 0)
+            total_vendas_valor = float(kpis.get("total_vendas", 0) or 0)
+            kpis["meta_global_valor"] = meta_global_valor
+            kpis["perc_ating_valor"] = (
+                (total_vendas_valor / meta_global_valor * 100)
+                if meta_global_valor > 0
+                else 0
+            )
+            kpis["gap_valor"] = max(0, meta_global_valor - total_vendas_valor)
+
+            kpis_qtd = calcular_kpis_qtd_produtos(
+                df_f,
+                df_analise_f,
+                df_metas_prod_f,
+                kpis.get("du_total", 0),
+                du_decorridos,
+            )
+
+            # Serie diaria de valor pago (para sparkline do card hero).
+            daily_pago = None
+            if "DATA" in df_f.columns and not df_f.empty:
+                df_com_data = df_f.dropna(subset=["DATA"])
+                if not df_com_data.empty:
+                    serie = (
+                        df_com_data.groupby(df_com_data["DATA"].dt.date)["VALOR"]
+                        .sum()
+                        .sort_index()
+                    )
+                    if len(serie) >= 2:
+                        daily_pago = serie.tolist()
+
+            st.session_state["_kpis_cache"] = {
+                "kpis": kpis,
+                "kpis_analise": kpis_analise,
+                "kpis_cancel": kpis_cancel,
+                "medias": medias,
+                "metas_prod_diarias": metas_prod_diarias,
+                "kpis_qtd": kpis_qtd,
+                "daily_pago": daily_pago,
+            }
+            st.session_state["_kpis_chave"] = chave_kpis
+        else:
+            _cached = st.session_state["_kpis_cache"]
+            kpis = _cached["kpis"]
+            kpis_analise = _cached["kpis_analise"]
+            kpis_cancel = _cached["kpis_cancel"]
+            medias = _cached["medias"]
+            metas_prod_diarias = _cached["metas_prod_diarias"]
+            kpis_qtd = _cached["kpis_qtd"]
+            daily_pago = _cached["daily_pago"]
 
         # Consultor nao ve cards gerenciais; sua aba
         # renderiza os cards pessoais
@@ -938,6 +928,18 @@ def main():
                 dia_atual=dia_atual,
             )
         elif tab == "Produtos":
+            # Lazy load do mes anterior — so a aba Produtos consome.
+            # Evita query Supabase + consolidacao quando usuario fica
+            # em outras abas.
+            mes_ant = mes - 1 if mes > 1 else 12
+            ano_ant = ano if mes > 1 else ano - 1
+            try:
+                df_ant_full, _, _ = consolidar_dados(mes_ant, ano_ant)
+                df_ant_full = _aplicar_nomes_display(df_ant_full)
+            except Exception:
+                df_ant_full = pd.DataFrame()
+            du_dec_ant = calcular_dias_uteis(ano_ant, mes_ant, 1)[0]
+
             render_tab_produtos(
                 df_f,
                 df_metas_prod_f,

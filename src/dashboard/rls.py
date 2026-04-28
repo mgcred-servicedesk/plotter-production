@@ -22,14 +22,14 @@ import streamlit as st
 def _obter_perfil_efetivo() -> Optional[dict]:
     """
     Retorna o perfil efetivo (considera 'visualizar como'
-    para admin).
+    para admin e gestor).
     """
     usuario = st.session_state.get("usuario_logado")
     if not usuario:
         return None
 
     visualizar_como = st.session_state.get("visualizar_como")
-    if visualizar_como and usuario["perfil"] == "admin":
+    if visualizar_como and usuario["perfil"] in ("admin", "gestor"):
         return visualizar_como
 
     return usuario
@@ -129,9 +129,7 @@ def aplicar_rls_supervisores(
     if role == "consultor" and escopo:
         # Consultor vê apenas supervisores da(s) loja(s)
         # onde ele tem contratos.
-        if coluna_loja in df_supervisores.columns and (
-            coluna_loja in df_dados.columns
-        ):
+        if coluna_loja in df_supervisores.columns and (coluna_loja in df_dados.columns):
             lojas_permitidas = df_dados[coluna_loja].unique()
             return df_supervisores[
                 df_supervisores[coluna_loja].isin(lojas_permitidas)

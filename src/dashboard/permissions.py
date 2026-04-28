@@ -31,71 +31,97 @@ from typing import Optional
 # False = perfil NAO ve o elemento
 MATRIZ: dict[str, dict[str, bool]] = {
     # Abas principais
-    "tab_produtos":       {
-        "admin": True, "gestor": True,
-        "gerente_comercial": True, "supervisor": True,
+    "tab_produtos": {
+        "admin": True,
+        "gestor": True,
+        "gerente_comercial": True,
+        "supervisor": True,
         "consultor": False,
     },
-    "tab_regioes":        {
-        "admin": True, "gestor": True,
-        "gerente_comercial": True, "supervisor": False,
+    "tab_regioes": {
+        "admin": True,
+        "gestor": True,
+        "gerente_comercial": True,
+        "supervisor": False,
         "consultor": False,
     },
     "tab_rankings_lojas": {
-        "admin": True, "gestor": True,
-        "gerente_comercial": True, "supervisor": False,
+        "admin": True,
+        "gestor": True,
+        "gerente_comercial": True,
+        "supervisor": False,
         "consultor": False,
     },
-    "tab_rankings_cons":  {
-        "admin": True, "gestor": True,
-        "gerente_comercial": True, "supervisor": True,
+    "tab_rankings_cons": {
+        "admin": True,
+        "gestor": True,
+        "gerente_comercial": True,
+        "supervisor": True,
         "consultor": True,
     },
-    "tab_analiticos":     {
-        "admin": True, "gestor": True,
-        "gerente_comercial": True, "supervisor": True,
+    "tab_analiticos": {
+        "admin": True,
+        "gestor": True,
+        "gerente_comercial": True,
+        "supervisor": True,
         "consultor": False,
     },
-    "tab_evolucao":       {
-        "admin": True, "gestor": True,
-        "gerente_comercial": True, "supervisor": True,
+    "tab_evolucao": {
+        "admin": True,
+        "gestor": True,
+        "gerente_comercial": True,
+        "supervisor": True,
         "consultor": True,
     },
-    "tab_em_analise":     {
-        "admin": True, "gestor": True,
-        "gerente_comercial": True, "supervisor": True,
+    "tab_em_analise": {
+        "admin": True,
+        "gestor": True,
+        "gerente_comercial": True,
+        "supervisor": True,
         "consultor": True,
     },
-    "tab_detalhes":       {
-        "admin": True, "gestor": True,
-        "gerente_comercial": True, "supervisor": True,
+    "tab_detalhes": {
+        "admin": True,
+        "gestor": True,
+        "gerente_comercial": True,
+        "supervisor": True,
         "consultor": True,
     },
-    "tab_consultor":      {
-        "admin": False, "gestor": False,
-        "gerente_comercial": False, "supervisor": False,
+    "tab_consultor": {
+        "admin": False,
+        "gestor": False,
+        "gerente_comercial": False,
+        "supervisor": False,
         "consultor": True,
     },
     # Grupos de cards
-    "cards_gerenciais":   {
-        "admin": True, "gestor": True,
-        "gerente_comercial": True, "supervisor": True,
+    "cards_gerenciais": {
+        "admin": True,
+        "gestor": True,
+        "gerente_comercial": True,
+        "supervisor": True,
         "consultor": False,
     },
-    "cards_consultor":    {
-        "admin": False, "gestor": False,
-        "gerente_comercial": False, "supervisor": False,
+    "cards_consultor": {
+        "admin": False,
+        "gestor": False,
+        "gerente_comercial": False,
+        "supervisor": False,
         "consultor": True,
     },
     # Ferramentas
-    "visualizar_como":    {
-        "admin": True, "gestor": False,
-        "gerente_comercial": False, "supervisor": False,
+    "visualizar_como": {
+        "admin": True,
+        "gestor": True,
+        "gerente_comercial": False,
+        "supervisor": False,
         "consultor": False,
     },
-    "gestao_usuarios":    {
-        "admin": True, "gestor": False,
-        "gerente_comercial": False, "supervisor": False,
+    "gestao_usuarios": {
+        "admin": True,
+        "gestor": False,
+        "gerente_comercial": False,
+        "supervisor": False,
         "consultor": False,
     },
 }
@@ -126,6 +152,7 @@ def abas_visiveis(perfil: Optional[str]) -> list[str]:
     para o perfil, na ordem definida em MATRIZ.
     """
     return [
-        chave for chave in MATRIZ
+        chave
+        for chave in MATRIZ
         if chave.startswith("tab_") and pode_ver(chave, perfil)
     ]

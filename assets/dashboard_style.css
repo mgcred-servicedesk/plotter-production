@@ -51,7 +51,9 @@ section[data-testid="stSidebar"] > div,
 [data-testid="stExpander"],
 [data-testid="stExpander"] > details,
 [data-testid="stAlert"],
-.stButton > button,
+[data-testid="stButton"] > button,
+[data-testid="stButton"] > button[kind="secondaryFormSubmit"],
+[data-testid="stButton"] > button[kind="primaryFormSubmit"],
 [data-baseweb="select"] > div,
 [data-baseweb="input"],
 .status-bar,
@@ -251,22 +253,81 @@ div[data-testid="column"] {
 }
 
 /* ── Buttons ─────────────────────────────────────── */
-.stButton > button,
-button[kind="secondary"] {
+/* Ultra especificidade para sobrescrever inline styles do Streamlit */
+[data-testid="stButton"] > button[kind="secondaryFormSubmit"],
+[data-testid="stButton"] > button[kind="secondary"],
+[data-testid="stButton"] > button[kind="primaryFormSubmit"],
+[data-testid="stButton"] > button[kind="primary"] {
+    background: var(--mg-secondary-bg) !important;
     background-color: var(--mg-secondary-bg) !important;
     color: var(--mg-text) !important;
+    border: 1px solid var(--mg-border) !important;
     border-color: var(--mg-border) !important;
     border-radius: 8px !important;
     font-weight: 600 !important;
-    transition: transform 0.15s ease, box-shadow 0.15s ease;
+    box-shadow: none !important;
+    transition: all 0.15s ease !important;
 }
 
-.stButton > button:hover,
-button[kind="secondary"]:hover {
+[data-testid="stButton"] > button[kind="secondaryFormSubmit"]:hover,
+[data-testid="stButton"] > button[kind="secondary"]:hover,
+[data-testid="stButton"] > button[kind="primaryFormSubmit"]:hover,
+[data-testid="stButton"] > button[kind="primary"]:hover {
+    background: var(--mg-hover-bg) !important;
     background-color: var(--mg-hover-bg) !important;
-    border-color: var(--mg-primary) !important;
-    color: var(--mg-primary) !important;
+    border-color: var(--mg-border-strong) !important;
+    color: var(--mg-text) !important;
     transform: translateY(-1px);
+}
+
+/* Botao primary: tom sóbrio (cinza escuro) ao inves de azul */
+[data-testid="stButton"] > button[kind="primaryFormSubmit"],
+[data-testid="stButton"] > button[kind="primary"] {
+    background: var(--mg-text) !important;
+    background-color: var(--mg-text) !important;
+    color: var(--mg-bg) !important;
+    border-color: var(--mg-text) !important;
+}
+
+[data-testid="stButton"] > button[kind="primaryFormSubmit"]:hover,
+[data-testid="stButton"] > button[kind="primary"]:hover {
+    background: var(--mg-text-secondary) !important;
+    background-color: var(--mg-text-secondary) !important;
+    border-color: var(--mg-text-secondary) !important;
+    color: var(--mg-bg) !important;
+}
+
+/* Focus ring sóbrio */
+[data-testid="stButton"] > button:focus-visible {
+    outline: 2px solid var(--mg-border-strong) !important;
+    outline-offset: 2px !important;
+}
+
+/* ── Visualizar Como card ─────────────────── */
+.mg-sim-card {
+    background: var(--mg-surface);
+    border: 1px solid var(--mg-border);
+    border-radius: var(--mg-radius-md);
+    padding: var(--mg-space-md);
+    margin-bottom: var(--mg-space-md);
+    box-shadow: var(--mg-shadow-xs);
+}
+
+.mg-sim-header {
+    display: flex;
+    align-items: center;
+    gap: var(--mg-space-sm);
+    margin-bottom: var(--mg-space-sm);
+}
+
+.mg-sim-icon {
+    font-size: 1.1rem;
+}
+
+.mg-sim-title {
+    font-weight: 700;
+    font-size: 0.9rem;
+    color: var(--mg-text);
 }
 
 /* ── st.status ────────────────────────────── */
@@ -767,7 +828,9 @@ html[data-theme="dark"] .mg-badge-gestor {
     gap: 2px !important;
 }
 
-.mg-theme-seg-wrapper + div .stButton > button {
+.mg-theme-seg-wrapper + div [data-testid="stButton"] > button,
+.mg-theme-seg-wrapper + div [data-testid="stButton"] > button[kind="secondaryFormSubmit"],
+.mg-theme-seg-wrapper + div [data-testid="stButton"] > button[kind="primaryFormSubmit"] {
     padding: 0.35rem !important;
     min-height: 2rem !important;
     border-radius: var(--mg-radius-sm) !important;
@@ -775,16 +838,17 @@ html[data-theme="dark"] .mg-badge-gestor {
 
 /* ── Focus / Accessibility ──────────────────────── */
 /* Ring visivel para navegacao por teclado */
-.stButton > button:focus-visible,
-button[kind="secondary"]:focus-visible,
+[data-testid="stButton"] > button:focus-visible,
+[data-testid="stButton"] > button[kind="secondaryFormSubmit"]:focus-visible,
+[data-testid="stButton"] > button[kind="primaryFormSubmit"]:focus-visible,
 [data-baseweb="select"] > div:focus-visible,
 [data-baseweb="input"]:focus-visible,
 [data-testid="stSelectbox"] > div > div:focus-visible,
 [data-testid="stTextInput"] input:focus-visible,
 [data-testid="stNumberInput"] input:focus-visible {
-    outline: 2px solid var(--mg-primary) !important;
+    outline: 2px solid var(--mg-border-strong) !important;
     outline-offset: 2px !important;
-    box-shadow: 0 0 0 4px var(--mg-primary-ring) !important;
+    box-shadow: 0 0 0 4px var(--mg-shadow) !important;
 }
 
 /* Tabs: focus visivel */
@@ -802,8 +866,9 @@ button[kind="secondary"]:focus-visible,
 }
 
 /* Botao ativo (pressed) */
-.stButton > button:active,
-button[kind="secondary"]:active {
+[data-testid="stButton"] > button:active,
+[data-testid="stButton"] > button[kind="secondaryFormSubmit"]:active,
+[data-testid="stButton"] > button[kind="primaryFormSubmit"]:active {
     transform: translateY(0px) scale(0.98) !important;
     transition: transform 0.1s ease !important;
 }
@@ -964,7 +1029,9 @@ iframe[title*="streamlit_antd_components"] {
     }
 
     /* Buttons */
-    .stButton > button {
+    [data-testid="stButton"] > button,
+    [data-testid="stButton"] > button[kind="secondaryFormSubmit"],
+    [data-testid="stButton"] > button[kind="primaryFormSubmit"] {
         font-size: 0.82rem !important;
         padding: 0.4rem 0.75rem !important;
     }
@@ -1536,7 +1603,9 @@ div[data-testid="column"]:nth-child(4) [data-testid="stMetric"] {
     [data-testid="stHeader"],
     [data-testid="stBottomBlockContainer"],
     [data-testid="stStatusWidget"],
-    .stButton,
+    [data-testid="stButton"] > button,
+    [data-testid="stButton"] > button[kind="secondaryFormSubmit"],
+    [data-testid="stButton"] > button[kind="primaryFormSubmit"],
     iframe,
     .mg-skeleton {
         display: none !important;
