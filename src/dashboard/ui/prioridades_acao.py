@@ -263,7 +263,7 @@ def render_prioridades_acao(
         color: var(--mg-text);
     }
     .mg-prioridade-detalhe {
-        font-size: 13px;
+        font-size: 14px;
         color: var(--mg-text-muted);
         margin-left: 40px;
         margin-top: 4px;
@@ -272,7 +272,7 @@ def render_prioridades_acao(
         display: inline-block;
         padding: 2px 8px;
         border-radius: 4px;
-        font-size: 12px;
+        font-size: 13px;
         font-weight: 600;
         margin-left: 8px;
     }
@@ -305,7 +305,7 @@ def render_prioridades_acao(
                             </span>
                         </div>
                         <div class="mg-prioridade-detalhe">
-                            Gap: {formatar_moeda(prio["gap_valor"])}
+                            Falta: {formatar_moeda(prio["gap_valor"])}
                         </div>
                     </div>
                     """,
@@ -389,7 +389,7 @@ def render_prioridades_acao(
     if prioridades_prod:
         top_prod = prioridades_prod[0]
         acoes.append(
-            f"Focar em **{top_prod['produto']}** (gap de {formatar_moeda(top_prod['gap_valor'])})"
+            f"Focar em **{top_prod['produto']}** (falta de {formatar_moeda(top_prod['gap_valor'])})"
         )
     if prioridades_reg:
         top_reg = prioridades_reg[0]

@@ -15,11 +15,8 @@ Elementos (keys):
     tab_evolucao          Evolucao temporal
     tab_em_analise        Pipeline em analise
     tab_detalhes          Tabela detalhada
-    tab_consultor         Dashboard individual do consultor
     cards_gerenciais      Cards agregados (num consultores,
                           ticket medio/consultor etc.)
-    cards_consultor       Cards pessoais (meus pagos,
-                          meus pontos, minha meta etc.)
     visualizar_como       Seletor 'Visualizar Como'
     gestao_usuarios       Pagina de gestao de usuarios
 """
@@ -36,7 +33,7 @@ MATRIZ: dict[str, dict[str, bool]] = {
         "gestor": True,
         "gerente_comercial": True,
         "supervisor": True,
-        "consultor": False,
+        "consultor": True,
     },
     "tab_regioes": {
         "admin": True,
@@ -64,7 +61,7 @@ MATRIZ: dict[str, dict[str, bool]] = {
         "gestor": True,
         "gerente_comercial": True,
         "supervisor": True,
-        "consultor": False,
+        "consultor": True,
     },
     "tab_evolucao": {
         "admin": True,
@@ -87,26 +84,12 @@ MATRIZ: dict[str, dict[str, bool]] = {
         "supervisor": True,
         "consultor": True,
     },
-    "tab_consultor": {
-        "admin": False,
-        "gestor": False,
-        "gerente_comercial": False,
-        "supervisor": False,
-        "consultor": True,
-    },
     # Grupos de cards
     "cards_gerenciais": {
         "admin": True,
         "gestor": True,
         "gerente_comercial": True,
         "supervisor": True,
-        "consultor": False,
-    },
-    "cards_consultor": {
-        "admin": False,
-        "gestor": False,
-        "gerente_comercial": False,
-        "supervisor": False,
         "consultor": True,
     },
     # Ferramentas

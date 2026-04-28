@@ -35,6 +35,7 @@ from src.dashboard.kpis.gerais import (
     calcular_kpis_cancelados,
     calcular_kpis_qtd_produtos,
     calcular_medias_du_por_nivel,
+    calcular_medias_organizacao,
     calcular_metas_produto_diarias,
 )
 from src.dashboard.loaders import (
@@ -43,7 +44,6 @@ from src.dashboard.loaders import (
     carregar_contratos_cancelados,
     carregar_contratos_em_analise,
     carregar_lojas_regioes,
-    carregar_metas_consultor,
     carregar_metas_produto,
     carregar_pontuacao_efetiva,
     carregar_ultimo_periodo,
@@ -56,7 +56,6 @@ from src.dashboard.rls import (
     aplicar_rls_supervisores,
 )
 from src.dashboard.tabs.analiticos import render_tab_analiticos
-from src.dashboard.tabs.consultor import render_tab_consultor
 from src.dashboard.tabs.detalhes import render_tab_detalhes
 from src.dashboard.tabs.em_analise import render_tab_em_analise
 from src.dashboard.tabs.evolucao import render_tab_evolucao
@@ -649,6 +648,11 @@ def main():
         # ── Copias pre-RLS para heatmap comparativo ──
         df_full = df.copy()
         df_metas_produto_full = df_metas_produto.copy()
+        df_sup_full = df_sup.copy()
+
+        # Médias da organização são calculadas após resolver o perfil
+        # efetivo (ver bloco de KPIs abaixo), pois dependem do nível
+        # do perfil para definir a granularidade do agrupamento.
 
         # ── Dados do mês anterior: lazy, só na aba Produtos ─
         # Carregamento adiado para dentro de `if tab == "Produtos":`.
@@ -795,6 +799,15 @@ def main():
                 du_decorridos,
             )
 
+            # ── Médias da organização (pre-RLS, granularidade por perfil) ──
+            # Comparação "Média empresa" no card de produtos MIX.
+            medias_organizacao = calcular_medias_organizacao(
+                df_full,
+                du_decorridos=du_decorridos,
+                perfil=role,
+                df_sup=df_sup_full,
+            )
+
             # Serie diaria de valor pago (para sparkline do card hero).
             daily_pago = None
             if "DATA" in df_f.columns and not df_f.empty:
@@ -814,6 +827,7 @@ def main():
                 "kpis_cancel": kpis_cancel,
                 "medias": medias,
                 "metas_prod_diarias": metas_prod_diarias,
+                "medias_organizacao": medias_organizacao,
                 "kpis_qtd": kpis_qtd,
                 "daily_pago": daily_pago,
             }
@@ -825,6 +839,7 @@ def main():
             kpis_cancel = _cached["kpis_cancel"]
             medias = _cached["medias"]
             metas_prod_diarias = _cached["metas_prod_diarias"]
+            medias_organizacao = _cached["medias_organizacao"]
             kpis_qtd = _cached["kpis_qtd"]
             daily_pago = _cached["daily_pago"]
 
@@ -841,6 +856,8 @@ def main():
                 metas_produto=metas_prod_diarias,
                 kpis_qtd=kpis_qtd,
                 daily_pago=daily_pago,
+                medias_organizacao=medias_organizacao,
+                perfil=role,
             )
 
             # Resumo Executivo comentado (após KPIs visuais)
@@ -863,7 +880,6 @@ def main():
 
         # Monta abas conforme a matriz de permissoes
         abas_disponiveis = [
-            ("tab_consultor", "Meu Dashboard", "speedometer2"),
             ("tab_produtos", "Produtos", "tags-fill"),
             ("tab_regioes", "Regioes", "map-fill"),
             ("tab_rankings_lojas", "Rankings", "trophy-fill"),
@@ -888,46 +904,7 @@ def main():
             variant="outline",
         )
 
-        if tab == "Meu Dashboard":
-            # Escopo do consultor (nome vindo do escopo)
-            escopo = perfil_efetivo.get("escopo", []) if perfil_efetivo else []
-            consultor_nome = escopo[0] if escopo else ""
-            loja_consultor = None
-            if (
-                not df_f.empty
-                and "LOJA" in df_f.columns
-                and not df_f["LOJA"].isna().all()
-            ):
-                loja_consultor = df_f["LOJA"].iloc[0]
-            elif (
-                consultor_nome and not df_full.empty and "CONSULTOR" in df_full.columns
-            ):
-                sub = df_full[df_full["CONSULTOR"] == consultor_nome]
-                if not sub.empty and "LOJA" in sub.columns:
-                    loja_consultor = sub["LOJA"].iloc[0]
-
-            metas_cons = (
-                carregar_metas_consultor(
-                    mes,
-                    ano,
-                    loja_consultor,
-                )
-                if loja_consultor
-                else {"meta_prata": 0.0, "meta_ouro": 0.0}
-            )
-
-            render_tab_consultor(
-                df_meu=df_f,
-                df_analise_meu=df_analise_f,
-                df_cancelados_meu=df_cancelados_f,
-                df_full=df_full,
-                metas_consultor=metas_cons,
-                consultor_nome=consultor_nome,
-                ano=ano,
-                mes=mes,
-                dia_atual=dia_atual,
-            )
-        elif tab == "Produtos":
+        if tab == "Produtos":
             # Lazy load do mes anterior — so a aba Produtos consome.
             # Evita query Supabase + consolidacao quando usuario fica
             # em outras abas.

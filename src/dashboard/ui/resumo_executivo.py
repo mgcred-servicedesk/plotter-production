@@ -192,7 +192,7 @@ def render_resumo_executivo(
         pills_html += f'<span class="mg-pill mg-pill-red">🔥 Média {abs(desvio_ritmo):.0f}% abaixo</span>'
     if indice_perda > 20:
         pills_html += (
-            f'<span class="mg-pill mg-pill-yellow">⚠️ Churn {indice_perda:.1f}%</span>'
+            f'<span class="mg-pill mg-pill-yellow">⚠️ Cancelamento {indice_perda:.1f}%</span>'
         )
     if produtos_abaixo:
         pills_html += (
@@ -225,7 +225,7 @@ def render_resumo_executivo(
         f'<div class="mg-info-row">'
         f'<span class="mg-info-item">📈 <strong>Projeção:</strong> '
         f'<span class="{proj_class}">{perc_proj:.1f}%</span></span>'
-        f'<span class="mg-info-item">🎯 <strong>Gap:</strong> '
+        f'<span class="mg-info-item">🎯 <strong>Diferença:</strong> '
         f'<span class="mg-text-danger">{gap_fmt}</span> faltantes</span>'
         f'</div>'
         f'{produtos_block}'

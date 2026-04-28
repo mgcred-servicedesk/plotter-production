@@ -4,7 +4,7 @@ KPI Cards Reformulados — Prioridade 2 da Reforma UX/UI.
 Novo layout: 3 KPIs principais dominantes + KPIs de contexto.
 - Realizado (fonte grande, destaque)
 - % Meta (com indicador visual de status)
-- Gap (faltante para meta)
+- Falta (faltante para meta)
 
 Cores semânticas: Verde (>100%), Amarelo (60-99%), Vermelho (<60%)
 """
@@ -50,7 +50,7 @@ def render_kpis_principais(
     Renderiza os 3 KPIs principais em linha dominante.
 
     Layout:
-        | REALIZADO | % META | GAP |
+        | REALIZADO | % META | FALTA |
 
     Args:
         kpis: KPIs gerais (total_vendas, perc_ating, meta, etc)
@@ -83,7 +83,7 @@ def render_kpis_principais(
         box-shadow: var(--mg-shadow-lg);
     }
     .mg-kpi-label {
-        font-size: 13px;
+        font-size: 14px;
         font-weight: 500;
         text-transform: uppercase;
         letter-spacing: 0.8px;
@@ -112,7 +112,7 @@ def render_kpis_principais(
         color: var(--mg-danger);
     }
     .mg-kpi-sub {
-        font-size: 13px;
+        font-size: 15px;
         color: var(--mg-text-muted);
         margin-top: 8px;
     }
@@ -139,8 +139,8 @@ def render_kpis_principais(
             <div class="mg-kpi-hero">
                 <div class="mg-kpi-label">💰 Pagos</div>
                 <div class="mg-kpi-valor">{pagos_fmt}</div>
-                <div class="mg-kpi-sub" style="font-size: 15px; font-weight: 500;">
-                    {pagos_total} <span style="color: var(--mg-text-muted); font-size: 13px;">
+                <div class="mg-kpi-sub" style="font-size: 16px; font-weight: 500;">
+                    {pagos_total} <span style="color: var(--mg-text-muted); font-size: 14px;">
                     → Proj: {proj_fmt}</span>
                 </div>
             </div>
@@ -158,7 +158,7 @@ def render_kpis_principais(
                 <div class="mg-kpi-valor" style="color: {cor_status};">
                     {formatar_percentual(perc_ating)}
                 </div>
-                <div class="mg-kpi-sub" style="font-size: 13px;">
+                <div class="mg-kpi-sub" style="font-size: 14px;">
                     Projeção: {formatar_percentual(perc_proj)} |
                     MIX: {meta_mix_fmt}
                 </div>
@@ -168,7 +168,7 @@ def render_kpis_principais(
         )
 
     with col3:
-        # Card: Gap (com falta e valor por dia)
+        # Card: Falta para Meta (gap em valor e por dia)
         if gap > 0:
             gap_fmt = _formatar_valor_moeda(gap)
             gap_por_dia = gap / du_restantes if du_restantes > 1 else gap
@@ -176,9 +176,9 @@ def render_kpis_principais(
             st.markdown(
                 f"""
                 <div class="mg-kpi-hero">
-                    <div class="mg-kpi-label">🎯 Gap para Meta</div>
+                    <div class="mg-kpi-label">🎯 Falta para Meta</div>
                     <div class="mg-kpi-valor mg-kpi-gap">-{gap_fmt}</div>
-                    <div class="mg-kpi-sub" style="font-size: 13px;">
+                    <div class="mg-kpi-sub" style="font-size: 14px;">
                         Falta: {_formatar_valor_moeda_total(gap)}<br>
                         <strong>{gap_por_dia_fmt}/dia</strong>
                     </div>
@@ -190,11 +190,11 @@ def render_kpis_principais(
             st.markdown(
                 f"""
                 <div class="mg-kpi-hero">
-                    <div class="mg-kpi-label">🎯 Gap para Meta</div>
+                    <div class="mg-kpi-label">🎯 Falta para Meta</div>
                     <div class="mg-kpi-valor" style="color: #10A37F;">
                     ✓ Meta Atingida
                 </div>
-                    <div class="mg-kpi-sub" style="font-size: 13px;">
+                    <div class="mg-kpi-sub" style="font-size: 14px;">
                         +{_formatar_valor_moeda_total(abs(gap))} acima
                     </div>
                 </div>
@@ -266,19 +266,19 @@ def render_kpis_contexto(
         box-shadow: var(--mg-shadow-md);
     }
     .mg-kpi-ctx-label {
-        font-size: 12px;
+        font-size: 13px;
         font-weight: 500;
         text-transform: uppercase;
         color: var(--mg-text-muted);
         margin-bottom: 8px;
     }
     .mg-kpi-ctx-valor {
-        font-size: 24px;
+        font-size: 26px;
         font-weight: 600;
         color: var(--mg-text);
     }
     .mg-kpi-ctx-sub {
-        font-size: 12px;
+        font-size: 14px;
         color: var(--mg-text-muted);
         margin-top: 6px;
         line-height: 1.4;
@@ -313,7 +313,7 @@ def render_kpis_contexto(
                 <div class="mg-kpi-ctx-label">⚠️ Cancelados</div>
                 <div class="mg-kpi-ctx-valor">{formatar_moeda(valor_cancel)}</div>
                 <div class="mg-kpi-ctx-sub">
-                    Churn: <strong style="color: {cor_churn};">{formatar_percentual(indice_perda)}</strong> {emoji_churn}<br>
+                    % Cancelamento: <strong style="color: {cor_churn};">{formatar_percentual(indice_perda)}</strong> {emoji_churn}<br>
                     📉 Nível: <strong>{nivel_churn}</strong> | Impacto: <strong>-{impacto_cancel:.1f}% da meta</strong>
                 </div>
             </div>
@@ -418,34 +418,34 @@ def render_bloco_media_projecao(kpis: Dict) -> None:
             <div style="display: flex; justify-content: space-between; align-items: center;
                         margin-bottom: 16px;">
                 <div style="text-align: center; flex: 1;">
-                    <div style="font-size: 11px; color: var(--mg-text-muted);
+                    <div style="font-size: 13px; color: var(--mg-text-muted);
                                 text-transform: uppercase;
                                 letter-spacing: 0.5px; margin-bottom: 4px;">
                         Média Atual
                     </div>
-                    <div style="font-size: 22px; font-weight: 700; color: {cor_media};">
+                    <div style="font-size: 24px; font-weight: 700; color: {cor_media};">
                         {formatar_moeda_compacta(media_du)}/dia
                     </div>
                 </div>
                 <div style="font-size: 24px; color: var(--mg-text-subtle); margin: 0 12px;">→</div>
                 <div style="text-align: center; flex: 1;">
-                    <div style="font-size: 11px; color: var(--mg-text-muted);
+                    <div style="font-size: 13px; color: var(--mg-text-muted);
                                 text-transform: uppercase;
                                 letter-spacing: 0.5px; margin-bottom: 4px;">
                         Necessário
                     </div>
-                    <div style="font-size: 22px; font-weight: 700; color: var(--mg-text);">
+                    <div style="font-size: 24px; font-weight: 700; color: var(--mg-text);">
                         {formatar_moeda_compacta(media_necessaria)}/dia
                     </div>
                 </div>
                 <div style="font-size: 24px; color: var(--mg-text-subtle); margin: 0 12px;">→</div>
                 <div style="text-align: center; flex: 1;">
-                    <div style="font-size: 11px; color: var(--mg-text-muted);
+                    <div style="font-size: 13px; color: var(--mg-text-muted);
                                 text-transform: uppercase;
                                 letter-spacing: 0.5px; margin-bottom: 4px;">
                         Projeção Fim
                     </div>
-                    <div style="font-size: 22px; font-weight: 700; color: {cor_proj};">
+                    <div style="font-size: 24px; font-weight: 700; color: {cor_proj};">
                         {formatar_moeda_compacta(projecao)} ({formatar_percentual(perc_proj)})
                     </div>
                 </div>
@@ -453,7 +453,7 @@ def render_bloco_media_projecao(kpis: Dict) -> None:
             <!-- Barra de progresso temporal -->
             <div style="margin-bottom: 12px;">
                 <div style="display: flex; justify-content: space-between;
-                            font-size: 11px; color: var(--mg-text-muted); margin-bottom: 6px;">
+                            font-size: 13px; color: var(--mg-text-muted); margin-bottom: 6px;">
                     <span>Início do mês</span>
                     <span>{du_decorridos} de {du_total} dias úteis ({perc_tempo:.0f}%)</span>
                     <span>Fechamento</span>
@@ -467,7 +467,7 @@ def render_bloco_media_projecao(kpis: Dict) -> None:
             </div>
             <!-- Mensagem contextual -->
             <div style="display: flex; justify-content: center; gap: 24px;
-                        font-size: 13px; color: var(--mg-text-muted);">
+                        font-size: 14px; color: var(--mg-text-muted);">
                 <span><strong style="color: {cor_media};">{msg_desvio}</strong></span>
                 <span>·</span>
                 <span><strong style="color: {cor_proj};">{msg_fechamento}</strong></span>
@@ -490,8 +490,53 @@ def _display_name_produto(produto: str) -> str:
     return nomes.get(produto, produto)
 
 
+def _calcular_indicador_media(
+    valor_atual: float, media_org: float
+) -> tuple[str, str, str, str]:
+    """
+    Calcula indicador visual de comparação com média da organização.
+
+    Compara a Média DU do perfil contra a Média DU empresa (mesma
+    granularidade conceitual: ritmo diário). Faróis:
+      - Acima (>= +10%): verde
+      - Na média (-10% a +10%): amarelo
+      - Abaixo (<= -10%): vermelho
+
+    Retorna: (emoji, cor, label, descricao)
+    """
+    if media_org <= 0:
+        return "➡️", "#6B7280", "—", "Sem dados"
+
+    razao = valor_atual / media_org
+    perc_diff = (razao - 1) * 100
+
+    if razao >= 1.10:
+        return (
+            "🟢",
+            "#10A37F",
+            f"+{perc_diff:.0f}%",
+            "Acima da média",
+        )
+    elif razao <= 0.90:
+        return (
+            "🔴",
+            "#EF4444",
+            f"{perc_diff:.0f}%",
+            "Abaixo da média",
+        )
+    else:
+        return (
+            "🟡",
+            "#F59E0B",
+            f"{perc_diff:+.0f}%",
+            "Na média",
+        )
+
+
 def render_cards_produto_mix(
     metas_produto: List[Dict],
+    medias_organizacao: Optional[Dict[str, float]] = None,
+    perfil: Optional[str] = None,
 ) -> None:
     """Renderiza cards compactos para cada produto do MIX."""
     if not metas_produto:
@@ -507,6 +552,15 @@ def render_cards_produto_mix(
     if not produtos_mix:
         return
 
+    # Perfis que devem ver o comparativo com média da organização.
+    # A granularidade da "média empresa" é definida em
+    # ``calcular_medias_organizacao`` (gerais.py):
+    #   - gerente_comercial: média DU entre regiões (sem ALEXANDRE)
+    #   - supervisor: média DU entre lojas
+    #   - consultor: média DU entre consultores (sem supervisores)
+    perfis_comparativo = {"gerente_comercial", "supervisor", "consultor"}
+    mostrar_comparativo = perfil in perfis_comparativo
+
     st.markdown("---")
     st.markdown("### 🏷️ Produtos MIX")
 
@@ -518,27 +572,58 @@ def render_cards_produto_mix(
         meta_total = float(prod.get("meta_total", 0) or 0)
         meta_dia = float(prod.get("meta_diaria", 0) or 0)
         media_du = float(prod.get("ritmo_diario", 0) or 0)
-        perc = float(prod.get("perc_atingido", 0) or 0)
 
-        cor = "#10A37F" if perc >= 100 else "#F59E0B" if perc >= 70 else "#EF4444"
+        # Indicador de comparação com média da organização.
+        # IMPORTANTE: comparamos a Média DU do perfil (`media_du`)
+        # com a Média DU empresa (`media_org`) — ambas no mesmo
+        # ritmo diário, calculadas em ``calcular_medias_organizacao``.
+        linha_comparativo = ""
+        if mostrar_comparativo and medias_organizacao:
+            media_org = float(
+                medias_organizacao.get(prod.get("produto", ""), 0) or 0
+            )
+            emoji, cor_ind, label_ind, descricao = (
+                _calcular_indicador_media(media_du, media_org)
+            )
+            linha_comparativo = (
+                f'<div style="margin-top: 6px; padding-top: 6px; '
+                f'border-top: 1px solid var(--mg-border);">'
+                f'<span style="font-size: 13px; '
+                f'color: var(--mg-text-muted);">'
+                f'Média empresa: </span>'
+                f'<strong style="color: {cor_ind};">'
+                f'{formatar_moeda(media_org)}</strong> '
+                f'<span style="color: {cor_ind}; font-size: 13px;">'
+                f'{emoji} {descricao} ({label_ind})</span></div>'
+            )
+        else:
+            # Admin/gestor: mostrar % atingimento (métrica de gestão)
+            perc = float(prod.get("perc_atingido", 0) or 0)
+            cor = (
+                "#10A37F" if perc >= 100
+                else "#F59E0B" if perc >= 70
+                else "#EF4444"
+            )
+            linha_comparativo = (
+                f"<span style='color: {cor}; font-weight: 600;'>"
+                f"{perc:.1f}%</span>"
+            )
 
         with col:
             st.markdown(
                 f"""
                 <div class="mg-kpi-context" style="padding: 14px 16px;">
-                    <div class="mg-kpi-ctx-label" style="font-size: 12px;">
+                    <div class="mg-kpi-ctx-label" style="font-size: 14px;">
                         {nome}
                     </div>
-                    <div class="mg-kpi-ctx-valor" style="font-size: 20px;">
+                    <div class="mg-kpi-ctx-valor" style="font-size: 22px;">
                         {formatar_moeda(valor)}
                     </div>
-                    <div class="mg-kpi-ctx-sub" style="font-size: 13px; line-height: 1.5;">
+                    <div class="mg-kpi-ctx-sub" style="font-size: 14px; line-height: 1.5;">
                         Meta: <strong>{formatar_moeda(meta_total)}</strong><br>
                         Meta/dia: <strong>{formatar_moeda(meta_dia)}</strong><br>
                         Média DU: <strong>{formatar_moeda(media_du)}</strong><br>
-                        <span style="color: {cor}; font-weight: 600;">
-                            {perc:.1f}%
-                        </span>
+                        {linha_comparativo}
                     </div>
                 </div>
                 """,
@@ -569,13 +654,13 @@ def render_cards_aceleradores(
             st.markdown(
                 f"""
                 <div class="mg-kpi-context" style="padding: 16px 18px;">
-                    <div class="mg-kpi-ctx-label" style="font-size: 13px;">
+                    <div class="mg-kpi-ctx-label" style="font-size: 14px;">
                         {nome}
                     </div>
-                    <div class="mg-kpi-ctx-valor" style="font-size: 24px;">
+                    <div class="mg-kpi-ctx-valor" style="font-size: 26px;">
                         {qtd:,}
                     </div>
-                    <div class="mg-kpi-ctx-sub" style="font-size: 14px; line-height: 1.6;">
+                    <div class="mg-kpi-ctx-sub" style="font-size: 15px; line-height: 1.6;">
                         Projeção: <strong>{proj:,}</strong><br>
                         Média DU: <strong>{media_du:.1f}</strong><br>
                         Análise: <strong>{qtd_analise:,}</strong>
@@ -594,6 +679,8 @@ def render_kpis_reforma(
     metas_produto: Optional[List[Dict]] = None,
     kpis_qtd: Optional[List[Dict]] = None,
     daily_pago: Optional[Sequence[float]] = None,
+    medias_organizacao: Optional[Dict[str, float]] = None,
+    perfil: Optional[str] = None,
 ) -> None:
     """
     Renderiza o novo bloco de KPIs reformulado.
@@ -615,7 +702,11 @@ def render_kpis_reforma(
     render_kpis_contexto(kpis, kpis_analise, kpis_cancel, medias)
 
     # 3. Cards por produto MIX
-    render_cards_produto_mix(metas_produto)
+    render_cards_produto_mix(
+        metas_produto,
+        medias_organizacao=medias_organizacao,
+        perfil=perfil,
+    )
 
     # 4. Cards Aceleradores (por quantidade)
     render_cards_aceleradores(kpis_qtd)

@@ -305,6 +305,77 @@ def calcular_medias_du_por_nivel(
     }
 
 
+# Regiões excluídas das médias da organização (projeto à parte)
+_REGIOES_EXCLUIR_MEDIA: frozenset = frozenset({"ALEXANDRE"})
+
+
+def calcular_medias_organizacao(
+    df: pd.DataFrame,
+    du_decorridos: int = 1,
+    perfil: Optional[str] = None,
+    df_sup: Optional[pd.DataFrame] = None,
+) -> Dict[str, float]:
+    """Calcula a Média DU empresa por produto, com granularidade por perfil.
+
+    Usa ``df`` PRE-RLS para que o resultado represente toda a empresa,
+    independente do perfil logado. A granularidade do agrupamento varia:
+
+    - ``gerente_comercial``: média entre as Médias DU regionais,
+      excluindo a região ``ALEXANDRE`` (projeto à parte).
+    - ``supervisor``: média entre as Médias DU por loja.
+    - ``consultor``: média entre as Médias DU por consultor (sem
+      supervisores, via ``df_sup``).
+    - Outros perfis: retorna dict vazio (sem comparativo).
+
+    Retorna dict: produto_display -> Média DU empresa.
+    """
+    if df.empty or du_decorridos <= 0 or perfil not in {
+        "gerente_comercial", "supervisor", "consultor"
+    }:
+        return {}
+
+    # Define a coluna de agrupamento e o df base por perfil
+    if perfil == "gerente_comercial":
+        if "REGIAO" not in df.columns:
+            return {}
+        df_base = df[
+            ~df["REGIAO"].fillna("").str.upper().isin(_REGIOES_EXCLUIR_MEDIA)
+        ]
+        coluna_grupo = "REGIAO"
+    elif perfil == "supervisor":
+        if "LOJA" not in df.columns:
+            return {}
+        df_base = df
+        coluna_grupo = "LOJA"
+    else:  # consultor
+        if "CONSULTOR" not in df.columns:
+            return {}
+        df_base = excluir_supervisores(
+            df, df_sup
+        )
+        coluna_grupo = "CONSULTOR"
+
+    if df_base.empty:
+        return {}
+
+    medias: Dict[str, float] = {}
+    for produto_display, categorias in PRODUTOS_DASHBOARD.items():
+        mask = df_base["categoria_codigo"].isin(categorias)
+        df_prod = df_base.loc[mask]
+        if df_prod.empty:
+            medias[produto_display] = 0.0
+            continue
+        soma_por_grupo = df_prod.groupby(coluna_grupo)["VALOR"].sum()
+        if soma_por_grupo.empty:
+            medias[produto_display] = 0.0
+            continue
+        # Média DU empresa = média aritmética das Médias DU por grupo
+        medias[produto_display] = float(
+            soma_por_grupo.mean() / du_decorridos
+        )
+    return medias
+
+
 def calcular_metas_produto_diarias(
     df: pd.DataFrame,
     df_metas_produto: pd.DataFrame,
@@ -319,10 +390,14 @@ def calcular_metas_produto_diarias(
         mask_produto = df["categoria_codigo"].isin(categorias)
         valor_atual = df.loc[mask_produto, "VALOR"].sum()
 
+        # Definir lojas ativas (usado para meta e média organizacional)
+        lojas_ativas = (
+            df["LOJA"].unique() if "LOJA" in df.columns else []
+        )
+
         # Calcular meta total do produto (soma das metas das lojas presentes no df)
         meta_total = 0
         if not df_metas_produto.empty and "LOJA" in df.columns:
-            lojas_ativas = df["LOJA"].unique()
             colunas_meta = [c for c in df_metas_produto.columns if c != "LOJA"]
 
             for col in colunas_meta:
@@ -338,7 +413,6 @@ def calcular_metas_produto_diarias(
                 if col == "LOJA":
                     continue
                 if produto_display.upper() in col.upper():
-                    lojas_ativas = df["LOJA"].unique()
                     meta_total += df_metas_produto.loc[
                         df_metas_produto["LOJA"].isin(lojas_ativas), col
                     ].sum()
@@ -354,7 +428,9 @@ def calcular_metas_produto_diarias(
             gap / dias_restantes if dias_restantes > 0 else 0
         )
 
-        perc_atingido = (valor_atual / meta_total * 100) if meta_total > 0 else 0
+        perc_atingido = (
+            (valor_atual / meta_total * 100) if meta_total > 0 else 0
+        )
 
         resultados.append({
             "produto": produto_display,

@@ -271,7 +271,7 @@ def _card_cancelados(kpis_cancel: Dict) -> None:
         f"&#9888;&#65039; {qtd_fmt} propostas canceladas</span>"
     )
     footer_churn = (
-        f'<span class="mg-prod-footer-media">Churn: '
+        f'<span class="mg-prod-footer-media">% Cancelamento: '
         f'<span style="color:{cor_churn};font-weight:700;">'
         f"{formatar_percentual(indice)}</span>"
         f" &#183; {nivel}</span>"
