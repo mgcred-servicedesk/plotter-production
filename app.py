@@ -512,27 +512,13 @@ def main():
                     df_cancelados["DATA_CADASTRO"] >= data_corte
                 ].copy()
 
-            if _is_admin:
-                n_pagos = len(df)
-                n_analise = len(df_analise)
-                n_cancel = len(df_cancelados)
-                _status.update(
-                    label=(
-                        f"Dados carregados — "
-                        f"{n_pagos:,} pagos · "
-                        f"{n_analise:,} em analise · "
-                        f"{n_cancel:,} cancelados"
-                    ).replace(",", "."),
-                    state="complete",
-                )
-            else:
-                _status.update(
-                    label="Dados carregados",
-                    state="complete",
-                )
+            _status.update(label="Dados carregados", state="complete")
 
-        # Limpar skeleton apos carregamento
+        # Limpar spinner e skeleton apos carregamento
+        _status.empty()
         skeleton_ph.empty()
+
+        _n_cancel_admin = len(df_cancelados) if _is_admin else 0
 
         # ── Nomes de display: renomear grupo_dashboard ─
         # Substitui chaves internas (ex: 'PACK') pelo label
@@ -693,6 +679,7 @@ def main():
             ultima_data,
             "Todas",
             num_em_analise=len(df_analise_f),
+            num_cancelados=_n_cancel_admin,
         )
 
         # ── Aviso de pontuacao com fallback ───────

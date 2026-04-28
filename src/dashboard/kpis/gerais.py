@@ -156,6 +156,7 @@ def calcular_kpis_gerais(
         "meta_prata": meta_prata,
         "meta_ouro": meta_ouro,
         "meta_mix": meta_mix,  # Nova meta MIX por produto
+        "meta_diaria": meta_diaria_pts,  # Alias para evolucao.py
         "meta_diaria_pts": meta_diaria_pts,
         "meta_diaria_restante_pts": meta_diaria_restante_pts,
         "perc_ating_prata": perc_prata,

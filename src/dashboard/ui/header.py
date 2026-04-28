@@ -63,6 +63,7 @@ def render_status_bar(
     ultima_data,
     filtro_regiao: str,
     num_em_analise: int = 0,
+    num_cancelados: int = 0,
 ) -> None:
     """Renderiza barra de status com totais e filtros."""
     regiao_txt = (
@@ -80,11 +81,16 @@ def render_status_bar(
         if num_em_analise > 0
         else ""
     )
+    cancel_txt = (
+        f" &middot; <strong>{num_cancelados:,}</strong> cancelados"
+        if num_cancelados > 0
+        else ""
+    )
     st.markdown(
         '<div class="status-bar fade-in">'
         '<span class="status-dot"></span>'
         f"<span><strong>{num_registros:,}</strong>"
-        f" pagos{analise_txt}"
+        f" pagos{analise_txt}{cancel_txt}"
         f" &middot; Atualizado em"
         f" <strong>{data_str}</strong>"
         f"{regiao_txt}</span></div>",
