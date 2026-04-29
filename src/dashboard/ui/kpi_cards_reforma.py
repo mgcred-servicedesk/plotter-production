@@ -313,8 +313,11 @@ def render_kpis_contexto(
                 <div class="mg-kpi-ctx-label">⚠️ Cancelados</div>
                 <div class="mg-kpi-ctx-valor">{formatar_moeda(valor_cancel)}</div>
                 <div class="mg-kpi-ctx-sub">
-                    % Cancelamento: <strong style="color: {cor_churn};">{formatar_percentual(indice_perda)}</strong> {emoji_churn}<br>
-                    📉 Nível: <strong>{nivel_churn}</strong> | Impacto: <strong>-{impacto_cancel:.1f}% da meta</strong>
+                    % Cancelamento:
+                    <strong style="color: {cor_churn};">{formatar_percentual(indice_perda)}</strong>
+                    {emoji_churn}<br>
+                    📉 Nível: <strong>{nivel_churn}</strong>
+                    | Impacto: <strong>-{impacto_cancel:.1f}% da meta</strong>
                 </div>
             </div>
             """,

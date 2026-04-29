@@ -45,6 +45,7 @@ from src.dashboard.loaders import (
     carregar_contratos_em_analise,
     carregar_lojas_regioes,
     carregar_metas_produto,
+    carregar_metas_produto_consultor,
     carregar_pontuacao_efetiva,
     carregar_ultimo_periodo,
     consolidar_dados,
@@ -66,7 +67,7 @@ from src.dashboard.ui.header import (
     render_header,
     render_status_bar,
 )
-from src.dashboard.ui.kpi_cards import (
+from src.dashboard.ui.kpi_cards import (  # noqa: F401  (re-exports: criar_cards_metas_produto, criar_cards_qtd_produto)
     criar_cards_indicadores_principais,
     criar_cards_metas_produto,
     criar_cards_qtd_produto,
@@ -207,12 +208,69 @@ def _render_sidebar_usuario():
             st.rerun()
 
 
+def _limpar_filtros_ui() -> None:
+    """Apaga sub-filtros de UI (Loja, Consultor)."""
+    st.session_state.pop("ui_filtro_lojas", None)
+    st.session_state.pop("ui_filtro_consultor", None)
+    st.session_state.pop("_ui_lojas_ant", None)
+
+
+def _aplicar_filtros_ui(df: pd.DataFrame) -> pd.DataFrame:
+    """Aplica filtros granulares de loja/consultor sobre df já com RLS."""
+    lojas = st.session_state.get("ui_filtro_lojas") or []
+    consultor = st.session_state.get("ui_filtro_consultor") or ""
+    if lojas and "LOJA" in df.columns:
+        df = df[df["LOJA"].isin(lojas)].copy()
+    if consultor and "CONSULTOR" in df.columns:
+        df = df[df["CONSULTOR"] == consultor].copy()
+    return df
+
+
+def _render_consultor_subselect(
+    df_source: pd.DataFrame,
+    df_sup: pd.DataFrame,
+    key: str,
+) -> None:
+    """Renderiza o selectbox de consultor e persiste em ui_filtro_consultor.
+
+    Exclui supervisores da lista. Reseta automaticamente se o consultor
+    anterior não está mais nas opções (loja mudou).
+    """
+    supervisores: set = set()
+    if not df_sup.empty and "SUPERVISOR" in df_sup.columns:
+        supervisores = set(df_sup["SUPERVISOR"].dropna())
+
+    consultores = []
+    if "CONSULTOR" in df_source.columns:
+        consultores = sorted(
+            c for c in df_source["CONSULTOR"].dropna().unique() if c not in supervisores
+        )
+
+    if not consultores:
+        st.session_state["ui_filtro_consultor"] = ""
+        return
+
+    opcoes = [""] + consultores
+    atual = st.session_state.get("ui_filtro_consultor", "")
+    idx = opcoes.index(atual) if atual in opcoes else 0
+
+    sel = st.selectbox(
+        "Consultor",
+        opcoes,
+        index=idx,
+        key=key,
+        format_func=lambda x: "Todos" if x == "" else x,
+    )
+    st.session_state["ui_filtro_consultor"] = sel
+
+
 def _render_sidebar_visualizar_como(df_full):
     """Seletor 'Visualizar como' para admin e gestor.
 
-    Recebe df_full (pre-RLS) para que as opcoes de regiao/loja/
-    consultor reflitam sempre o universo completo, independente
-    do escopo simulado atual.
+    Define apenas o perfil simulado e seu escopo de RLS
+    (regiao/loja). A cadeia granular Loja → Consultor é
+    renderizada por _render_sidebar_filtros_perfil, que já
+    considera o perfil efetivo (inclusive o simulado).
     """
     user = usuario_logado()
     if not user or user["perfil"] not in ("admin", "gestor"):
@@ -240,10 +298,16 @@ def _render_sidebar_visualizar_como(df_full):
         label_visibility="collapsed",
     )
 
+    # Limpa sub-filtros granulares ao trocar o perfil simulado
+    if st.session_state.get("_vc_sel_ant") != sel:
+        _limpar_filtros_ui()
+        st.session_state["_vc_sel_ant"] = sel
+
     _anterior = st.session_state.get("visualizar_como")
 
     if sel == "Admin (padrao)":
         st.session_state.pop("visualizar_como", None)
+
     elif sel == "Gerente Comercial":
         regioes = (
             sorted(df_full["REGIAO"].dropna().unique().tolist())
@@ -262,6 +326,7 @@ def _render_sidebar_visualizar_como(df_full):
             }
         else:
             st.session_state.pop("visualizar_como", None)
+
     elif sel == "Supervisor":
         lojas = (
             sorted(df_full["LOJA"].dropna().unique().tolist())
@@ -280,6 +345,7 @@ def _render_sidebar_visualizar_como(df_full):
             }
         else:
             st.session_state.pop("visualizar_como", None)
+
     elif sel == "Consultor":
         consultores = (
             sorted(df_full["CONSULTOR"].dropna().unique().tolist())
@@ -304,6 +370,60 @@ def _render_sidebar_visualizar_como(df_full):
     # garantindo que o RLS use o novo escopo no mesmo ciclo.
     if st.session_state.get("visualizar_como") != _anterior:
         st.rerun()
+
+
+def _render_sidebar_filtros_perfil(
+    df: pd.DataFrame,
+    df_sup: pd.DataFrame,
+    role: str,
+) -> None:
+    """Filtros granulares Loja → Consultor para Gerente e Supervisor nativos.
+
+    Renderiza dentro do sidebar. Escreve em ui_filtro_lojas e
+    ui_filtro_consultor — os mesmos keys usados por _aplicar_filtros_ui.
+    Não exibe nada para admin/gestor (eles usam o Visualizar Como).
+    """
+    if role not in ("gerente_comercial", "supervisor"):
+        return
+
+    sac.divider(
+        label="Filtrar Por",
+        icon="funnel-fill",
+        align="left",
+        color="blue",
+    )
+
+    if role == "gerente_comercial":
+        lojas_disp = (
+            sorted(df["LOJA"].dropna().unique().tolist())
+            if "LOJA" in df.columns
+            else []
+        )
+        if not lojas_disp:
+            return
+
+        lojas_ant = st.session_state.get("_ui_lojas_ant") or []
+        lojas_sel = st.multiselect(
+            "Loja",
+            lojas_disp,
+            default=[lj for lj in lojas_ant if lj in lojas_disp],
+            key="sel_filtro_lojas",
+            placeholder="Todas as lojas",
+        )
+        if set(lojas_sel) != set(lojas_ant):
+            st.session_state["ui_filtro_consultor"] = ""
+            st.session_state["_ui_lojas_ant"] = lojas_sel
+        st.session_state["ui_filtro_lojas"] = lojas_sel
+
+        if lojas_sel:
+            df_lojas = df[df["LOJA"].isin(lojas_sel)]
+            _render_consultor_subselect(df_lojas, df_sup, key="sel_filtro_cons_ger")
+        else:
+            st.session_state["ui_filtro_consultor"] = ""
+
+    elif role == "supervisor":
+        _render_consultor_subselect(df, df_sup, key="sel_filtro_cons_sup")
+        st.session_state["ui_filtro_lojas"] = []
 
 
 # ══════════════════════════════════════════════════════
@@ -663,16 +783,36 @@ def main():
             dia_atual = datetime.now().day
         _, du_decorridos, _ = calcular_dias_uteis(ano, mes, dia_atual)
 
-        # ── Dados filtrados (RLS ja aplicado, filtros de UI removidos) ─
-        with st.sidebar:
-            _render_sidebar_visualizar_como(df_full)
-
+        # ── Dados filtrados (RLS ja aplicado) ─────────
         df_f = df.copy()
         df_metas_f = df_metas.copy()
         df_metas_prod_f = df_metas_produto.copy()
         df_sup_f = df_sup.copy()
         df_analise_f = df_analise.copy()
         df_cancelados_f = df_cancelados.copy()
+
+        # ── Perfil efetivo (para gating de UI e filtros) ──
+        from src.dashboard.rls import _obter_perfil_efetivo
+
+        perfil_efetivo = _obter_perfil_efetivo()
+        role = perfil_efetivo["perfil"] if perfil_efetivo else None
+
+        # ── Sidebar: Visualizar Como (admin/gestor) +
+        #             Filtros nativos (gerente/supervisor) ─
+        with st.sidebar:
+            _render_sidebar_visualizar_como(df_full)
+            _render_sidebar_filtros_perfil(df_f, df_sup_f, role or "")
+
+        # ── Aplicar filtros granulares de UI (pos-RLS) ─
+        _ui_lojas = st.session_state.get("ui_filtro_lojas") or []
+        _ui_cons = st.session_state.get("ui_filtro_consultor") or ""
+        if _ui_lojas or _ui_cons:
+            df_f = _aplicar_filtros_ui(df_f)
+            df_analise_f = _aplicar_filtros_ui(df_analise_f)
+            df_cancelados_f = _aplicar_filtros_ui(df_cancelados_f)
+            df_metas_f = aplicar_rls_metas(df_metas_f, df_f)
+            df_metas_prod_f = aplicar_rls_metas(df_metas_prod_f, df_f)
+            df_sup_f = aplicar_rls_supervisores(df_sup_f, df_f)
 
         render_status_bar(
             len(df_f),
@@ -715,11 +855,15 @@ def main():
                         )
                     )
 
-        # ── Perfil efetivo (para gating de UI) ────
-        from src.dashboard.rls import _obter_perfil_efetivo
-
-        perfil_efetivo = _obter_perfil_efetivo()
-        role = perfil_efetivo["perfil"] if perfil_efetivo else None
+        # ── Meta MIX por consultor: troca df_metas_prod_f ─
+        # Ativa quando o perfil nativo é consultor OU quando outro perfil
+        # filtrou até um consultor específico via filtro granular de UI.
+        _consultor_selecionado = bool(st.session_state.get("ui_filtro_consultor"))
+        if role == "consultor" or _consultor_selecionado:
+            _mpc = carregar_metas_produto_consultor(mes, ano)
+            _mpc = aplicar_rls_metas(_mpc, df_f)
+            if not _mpc.empty:
+                df_metas_prod_f = _mpc
 
         # ── Calculos de KPIs (memoizados em session_state) ──
         # Cache local por (mes, ano, regiao, role): troca de aba
@@ -729,6 +873,8 @@ def main():
             ano,
             role,
             tuple(perfil_efetivo.get("escopo", []) if perfil_efetivo else []),
+            tuple(sorted(st.session_state.get("ui_filtro_lojas") or [])),
+            st.session_state.get("ui_filtro_consultor") or "",
         )
         if st.session_state.get("_kpis_chave") != chave_kpis:
             kpis = calcular_kpis_gerais(
@@ -787,11 +933,19 @@ def main():
             )
 
             # ── Médias da organização (pre-RLS, granularidade por perfil) ──
-            # Comparação "Média empresa" no card de produtos MIX.
+            # Granularidade acompanha o filtro de UI: se o usuário afunilou
+            # até consultor → granularidade consultor; até loja → supervisor;
+            # sem filtro extra → granularidade nativa do perfil.
+            if _consultor_selecionado:
+                _perfil_media = "consultor"
+            elif _ui_lojas and role == "gerente_comercial":
+                _perfil_media = "supervisor"
+            else:
+                _perfil_media = role
             medias_organizacao = calcular_medias_organizacao(
                 df_full,
                 du_decorridos=du_decorridos,
-                perfil=role,
+                perfil=_perfil_media,
                 df_sup=df_sup_full,
             )
 
@@ -861,6 +1015,9 @@ def main():
                 df=df_f,
                 df_metas_produto=df_metas_prod_f,
                 kpis=kpis,
+                perfil=role,
+                df_sup=df_sup_f,
+                du_decorridos=du_decorridos,
             )
 
         # ── Navegacao principal ───────────────────

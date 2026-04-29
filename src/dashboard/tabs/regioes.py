@@ -59,4 +59,3 @@ def render_tab_regioes(
         exibir_tabela(df_reg)
     else:
         st.warning("Dados regionais nao disponiveis")
-

@@ -589,11 +589,90 @@ def _metas_produto_historico(mes: int, ano: int) -> pd.DataFrame:
 
 
 # ══════════════════════════════════════════════════════
+# Metas por produto — escopo CONSULTOR
+# ══════════════════════════════════════════════════════
+
+
+def carregar_metas_produto_consultor(
+    mes: int,
+    ano: int,
+) -> pd.DataFrame:
+    """Carrega metas por produto com escopo CONSULTOR.
+
+    Retorna o mesmo formato pivotado de carregar_metas_produto
+    (LOJA | MIX | CNC | ...), mas com os valores por consultor
+    em vez de por loja. Usado quando o perfil logado é consultor.
+
+    TTL real: 6h para mes corrente, 24h para historico.
+    """
+    if _eh_mes_atual(mes, ano):
+        return _metas_produto_consultor_atual(mes, ano)
+    return _metas_produto_consultor_historico(mes, ano)
+
+
+def _fetch_metas_produto_consultor(mes: int, ano: int) -> pd.DataFrame:
+    """Executa a query de metas por produto (escopo CONSULTOR) sem cache."""
+    periodo = carregar_periodo(mes, ano)
+    if not periodo:
+        return pd.DataFrame()
+
+    resp = (
+        _sb()
+        .table("metas")
+        .select("produto, escopo, nivel, valor, lojas(nome)")
+        .eq("periodo_id", periodo["id"])
+        .eq("escopo", "CONSULTOR")
+        .is_("nivel", "null")
+        .execute()
+    )
+
+    if not resp.data:
+        return pd.DataFrame()
+
+    rows = []
+    for m in resp.data:
+        loja = m.get("lojas") or {}
+        rows.append(
+            {
+                "LOJA": loja.get("nome", ""),
+                "produto_meta": m["produto"],
+                "valor": float(m.get("valor", 0)),
+            }
+        )
+
+    df = pd.DataFrame(rows)
+    df = df.drop_duplicates(subset=["LOJA", "produto_meta"], keep="first")
+
+    if not df.empty:
+        df_pivot = df.pivot_table(
+            index="LOJA",
+            columns="produto_meta",
+            values="valor",
+            aggfunc="sum",
+            fill_value=0,
+        ).reset_index()
+        return df_pivot
+
+    return pd.DataFrame(columns=["LOJA"])
+
+
+@st.cache_data(ttl=21600)
+def _metas_produto_consultor_atual(mes: int, ano: int) -> pd.DataFrame:
+    """Metas por produto (CONSULTOR) — mes corrente. TTL 6h."""
+    return _fetch_metas_produto_consultor(mes, ano)
+
+
+@st.cache_data(ttl=86400)
+def _metas_produto_consultor_historico(mes: int, ano: int) -> pd.DataFrame:
+    """Metas por produto (CONSULTOR) — historico. TTL 24h."""
+    return _fetch_metas_produto_consultor(mes, ano)
+
+
+# ══════════════════════════════════════════════════════
 # Lojas, regioes e consultores de cadastro
 # ══════════════════════════════════════════════════════
 
 
-@st.cache_data(ttl=21600)
 @st.cache_data(ttl=86400)
 def carregar_lojas_regioes() -> tuple[list[str], list[str]]:
     """Retorna (lojas, regioes) para selects de configuracao. TTL 24h."""

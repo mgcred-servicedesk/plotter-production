@@ -89,14 +89,27 @@ def calcular_kpis_gerais(
             ).fillna(0).sum()
         )
 
-    # Meta MIX (produto MIX) - soma das metas MIX por loja
+    # Meta MIX: coluna "MIX" para escopo LOJA, ou soma dos produtos
+    # componentes para escopo CONSULTOR (que não tem linha MIX no banco).
+    _MIX_COMPONENTES = [
+        "CNC", "CLT", "SAQUE", "CONSIGNADO", "FGTS_ANT_BEN_CNC13",
+    ]
     meta_mix = 0
-    if not df_metas_produto.empty and "MIX" in df_metas_produto.columns:
-        meta_mix = (
-            pd.to_numeric(
-                df_metas_produto["MIX"], errors="coerce"
-            ).fillna(0).sum()
-        )
+    if not df_metas_produto.empty:
+        if "MIX" in df_metas_produto.columns:
+            meta_mix = (
+                pd.to_numeric(df_metas_produto["MIX"], errors="coerce")
+                .fillna(0)
+                .sum()
+            )
+        else:
+            for _col in _MIX_COMPONENTES:
+                if _col in df_metas_produto.columns:
+                    meta_mix += (
+                        pd.to_numeric(df_metas_produto[_col], errors="coerce")
+                        .fillna(0)
+                        .sum()
+                    )
 
     perc_prata = (
         (total_pontos / meta_prata * 100)

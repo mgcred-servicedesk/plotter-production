@@ -2,8 +2,6 @@
 Módulo para carregamento de tabelas de pontuação mensais.
 """
 import pandas as pd
-from pathlib import Path
-from typing import Optional
 from src.config.settings import MESES_ARQUIVO, BASE_DIR
 
 
@@ -53,7 +51,7 @@ def carregar_pontuacao_mensal(mes: int, ano: int) -> pd.DataFrame:
 def criar_mapeamento_tipo_produto():
     """
     Cria mapeamento entre TIPO_PRODUTO dos dados e nomes da tabela de pontuação.
-    
+
     Baseado na tabela de pontuação mensal (pontos_{mes}.xlsx):
     - CNC: 5.0 pontos
     - CNC 13: 1.5 pontos
@@ -64,7 +62,7 @@ def criar_mapeamento_tipo_produto():
     - CONSIG C6: 1.0 pontos
     - CONSIG PRIV: 3.0 pontos
     - ANT. DE BENEF.: 1.5 pontos
-    
+
     Returns:
         Dicionário com mapeamento
     """
@@ -116,7 +114,7 @@ def adicionar_pontuacao_mensal(
         )
 
     mapeamento = criar_mapeamento_tipo_produto()
-    
+
     df_vendas['PRODUTO_PONTUACAO'] = (
         df_vendas['TIPO_PRODUTO'].map(mapeamento)
     )
@@ -141,15 +139,15 @@ def adicionar_pontuacao_mensal(
 def verificar_produtos_sem_pontuacao(df: pd.DataFrame) -> dict:
     """
     Verifica produtos sem pontuação e retorna informações detalhadas.
-    
+
     Args:
         df: DataFrame com dados de vendas processados
-        
+
     Returns:
         Dicionário com informações sobre produtos sem pontuação
     """
     sem_pontuacao = df[df['PONTOS'] == 0]
-    
+
     if len(sem_pontuacao) == 0:
         return {
             'tem_problemas': False,
@@ -157,13 +155,13 @@ def verificar_produtos_sem_pontuacao(df: pd.DataFrame) -> dict:
             'valor_total': 0,
             'produtos': []
         }
-    
+
     produtos_detalhes = sem_pontuacao.groupby('PRODUTO').agg({
         'VALOR': 'sum',
         'TIPO_PRODUTO': 'first'
     }).reset_index()
     produtos_detalhes = produtos_detalhes.sort_values('VALOR', ascending=False)
-    
+
     return {
         'tem_problemas': True,
         'total_registros': len(sem_pontuacao),
@@ -196,7 +194,7 @@ def calcular_pontos_com_tabela_mensal(
         raise ValueError("DataFrame deve ter coluna 'VALOR'")
 
     df['pontos'] = df['VALOR'] * df['PONTOS']
-    
+
     if mostrar_avisos:
         info = verificar_produtos_sem_pontuacao(df)
         if info['tem_problemas']:
@@ -216,7 +214,7 @@ def calcular_pontos_com_tabela_mensal(
                 )
             if len(info['produtos']) > 5:
                 msg += f"   ... e mais {len(info['produtos']) - 5} produtos\n"
-            
+
             warnings.warn(msg, UserWarning, stacklevel=2)
 
     return df

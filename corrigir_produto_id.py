@@ -10,7 +10,6 @@ Uso: python corrigir_produto_id.py [caminho_planilha]
 """
 import os
 import sys
-from pathlib import Path
 
 from dotenv import load_dotenv
 import pandas as pd

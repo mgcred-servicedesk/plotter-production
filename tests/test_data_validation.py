@@ -1,13 +1,12 @@
 """
 Testes para validação de dados e integridade.
 """
-import pytest
+import pytest  # noqa: F401  (registra fixtures/markers)
 import pandas as pd
 
 from src.data_processing.column_mapper import (
     mapear_digitacao,
     aplicar_regras_exclusao_valor_pontos,
-    identificar_tipo_produto_real
 )
 
 

@@ -19,7 +19,6 @@ from reportlab.platypus import (
     Table,
     TableStyle,
 )
-from reportlab.lib.enums import TA_CENTER
 
 from src.config.settings import (
     MESES_PT,
@@ -38,9 +37,7 @@ from src.reports.pdf_styles import (
     criar_rodape,
     get_titulo_style,
     get_subtitulo_style,
-    get_secao_style,
 )
-from src.reports.resumo_geral import criar_resumo_geral
 
 
 def criar_capa_regional(regiao, mes, ano):
@@ -50,13 +47,13 @@ def criar_capa_regional(regiao, mes, ano):
     titulo_style = get_titulo_style(22)
     subtitulo_style = get_subtitulo_style(14)
 
-    elementos.append(Spacer(1, 2*cm))
-    
+    elementos.append(Spacer(1, 2 * cm))
+
     logo_path = Path('assets/logotipo-mg-cred.png')
     if logo_path.exists():
-        logo = Image(str(logo_path), width=5*cm, height=2.5*cm)
+        logo = Image(str(logo_path), width=5 * cm, height=2.5 * cm)
         elementos.append(logo)
-        elementos.append(Spacer(1, 1*cm))
+        elementos.append(Spacer(1, 1 * cm))
 
     titulo = Paragraph(
         f"RELATÓRIO REGIONAL<br/>{regiao}",
@@ -70,7 +67,7 @@ def criar_capa_regional(regiao, mes, ano):
     )
     elementos.append(subtitulo)
 
-    elementos.append(Spacer(1, 2*cm))
+    elementos.append(Spacer(1, 2 * cm))
 
     data_geracao = Paragraph(
         f"Gerado em: {datetime.now().strftime('%d/%m/%Y às %H:%M')}",
@@ -98,7 +95,7 @@ def criar_resumo_regiao(df_regiao, regiao, df_metas):
     )
 
     elementos.append(Paragraph(f"RESUMO DA REGIÃO {regiao}", titulo_style))
-    elementos.append(Spacer(1, 0.3*cm))
+    elementos.append(Spacer(1, 0.3 * cm))
 
     total_qtd = len(df_regiao[df_regiao['VALOR'] > 0])
     total_valor = df_regiao['VALOR'].sum()
@@ -124,7 +121,7 @@ def criar_resumo_regiao(df_regiao, regiao, df_metas):
         ['Ticket Médio', formatar_moeda(ticket_medio)],
     ]
 
-    tabela = Table(dados_tabela, colWidths=[10*cm, 6*cm])
+    tabela = Table(dados_tabela, colWidths=[10 * cm, 6 * cm])
     tabela.setStyle(TableStyle([
         ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#1F4E78')),
         ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
@@ -139,7 +136,7 @@ def criar_resumo_regiao(df_regiao, regiao, df_metas):
     ]))
 
     elementos.append(tabela)
-    elementos.append(Spacer(1, 0.5*cm))
+    elementos.append(Spacer(1, 0.5 * cm))
 
     return elementos
 
@@ -159,7 +156,7 @@ def criar_top_lojas_regiao(df_regiao):
     )
 
     elementos.append(Paragraph("TOP LOJAS DA REGIÃO", titulo_style))
-    elementos.append(Spacer(1, 0.3*cm))
+    elementos.append(Spacer(1, 0.3 * cm))
 
     df_valido = df_regiao[df_regiao['VALOR'] > 0].copy()
 
@@ -189,9 +186,9 @@ def criar_top_lojas_regiao(df_regiao):
             '#1F4E78'
         )
 
-        img = Image(grafico, width=16*cm, height=8*cm)
+        img = Image(grafico, width=16 * cm, height=8 * cm)
         elementos.append(img)
-        elementos.append(Spacer(1, 0.5*cm))
+        elementos.append(Spacer(1, 0.5 * cm))
 
         dados_tabela = [['Pos', 'Loja', 'Qtd', 'Pontos', 'Ticket Médio']]
 
@@ -206,7 +203,7 @@ def criar_top_lojas_regiao(df_regiao):
 
         tabela = Table(
             dados_tabela,
-            colWidths=[2*cm, 6*cm, 3*cm, 4*cm, 4*cm]
+            colWidths=[2 * cm, 6 * cm, 3 * cm, 4 * cm, 4 * cm]
         )
         tabela.setStyle(TableStyle([
             ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#1F4E78')),
@@ -242,7 +239,7 @@ def criar_top_consultores_regiao(df_regiao):
     )
 
     elementos.append(Paragraph("TOP CONSULTORES DA REGIÃO", titulo_style))
-    elementos.append(Spacer(1, 0.3*cm))
+    elementos.append(Spacer(1, 0.3 * cm))
 
     df_valido = df_regiao[df_regiao['VALOR'] > 0].copy()
 
@@ -275,9 +272,9 @@ def criar_top_consultores_regiao(df_regiao):
             '#28A745'
         )
 
-        img = Image(grafico, width=16*cm, height=8*cm)
+        img = Image(grafico, width=16 * cm, height=8 * cm)
         elementos.append(img)
-        elementos.append(Spacer(1, 0.5*cm))
+        elementos.append(Spacer(1, 0.5 * cm))
 
         dados_tabela = [[
             'Pos', 'Consultor', 'Loja', 'Qtd', 'Pontos', 'Ticket Médio'
@@ -295,7 +292,7 @@ def criar_top_consultores_regiao(df_regiao):
 
         tabela = Table(
             dados_tabela,
-            colWidths=[1.5*cm, 5*cm, 3*cm, 2.5*cm, 3*cm, 3*cm]
+            colWidths=[1.5 * cm, 5 * cm, 3 * cm, 2.5 * cm, 3 * cm, 3 * cm]
         )
         tabela.setStyle(TableStyle([
             ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#28A745')),
@@ -332,7 +329,7 @@ def criar_produtos_regiao(df_regiao):
     )
 
     elementos.append(Paragraph("PRODUTOS DA REGIÃO (MIX)", titulo_style))
-    elementos.append(Spacer(1, 0.3*cm))
+    elementos.append(Spacer(1, 0.3 * cm))
 
     df_valido = df_regiao[df_regiao['VALOR'] > 0].copy()
 
@@ -361,9 +358,9 @@ def criar_produtos_regiao(df_regiao):
             'Distribuição de Pontos por Produto na Região'
         )
 
-        img = Image(grafico, width=14*cm, height=10*cm)
+        img = Image(grafico, width=14 * cm, height=10 * cm)
         elementos.append(img)
-        elementos.append(Spacer(1, 0.5*cm))
+        elementos.append(Spacer(1, 0.5 * cm))
 
         dados_tabela = [['Produto', 'Qtd', 'Valor', 'Pontos', '%']]
 
@@ -380,7 +377,7 @@ def criar_produtos_regiao(df_regiao):
                 formatar_percentual(percentual)
             ])
 
-        tabela = Table(dados_tabela, colWidths=[4*cm, 3*cm, 4*cm, 4*cm, 3*cm])
+        tabela = Table(dados_tabela, colWidths=[4 * cm, 3 * cm, 4 * cm, 4 * cm, 3 * cm])
         tabela.setStyle(TableStyle([
             ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#1F4E78')),
             ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
@@ -394,8 +391,8 @@ def criar_produtos_regiao(df_regiao):
         ]))
 
         elementos.append(tabela)
-        elementos.append(Spacer(1, 0.3*cm))
-        
+        elementos.append(Spacer(1, 0.3 * cm))
+
         nota = Paragraph(
             "<i>* PACK = FGTS, ANT. BEN. e CNC 13º</i>",
             styles['Normal']
@@ -443,10 +440,10 @@ def gerar_relatorio_regional_pdf(df, mes, ano, df_metas, dia_atual=None):
         doc = SimpleDocTemplate(
             str(arquivo_pdf),
             pagesize=A4,
-            rightMargin=2*cm,
-            leftMargin=2*cm,
-            topMargin=2*cm,
-            bottomMargin=2*cm
+            rightMargin=2 * cm,
+            leftMargin=2 * cm,
+            topMargin=2 * cm,
+            bottomMargin=2 * cm
         )
 
         elementos = []

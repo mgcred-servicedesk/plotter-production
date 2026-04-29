@@ -144,6 +144,101 @@ def calcular_prioridades_loja(
     return prioridades[:top_n]
 
 
+def calcular_prioridades_consultor(
+    df: pd.DataFrame,
+    df_sup: pd.DataFrame,
+    du_decorridos: int,
+    top_n: int = 4,
+) -> List[Dict]:
+    """
+    Identifica consultores abaixo da média da própria loja.
+
+    Exclui supervisores e consultores com poucos dias de atividade
+    (considerados novos no período — menos de metade dos DU decorridos,
+    mínimo 3 dias).
+
+    Returns:
+        Lista de dicts: consultor, loja, regiao, valor, perc_media, score
+    """
+    if df.empty or "CONSULTOR" not in df.columns or "VALOR" not in df.columns:
+        return []
+
+    # Nomes de supervisores para exclusão
+    supervisores: set = set()
+    if not df_sup.empty and "SUPERVISOR" in df_sup.columns:
+        supervisores = set(df_sup["SUPERVISOR"].dropna().str.strip())
+
+    # Consultor é "novo" se tiver menos de metade dos DU decorridos
+    # em dias únicos de venda (mínimo 3 dias como piso).
+    min_dias_ativos = max(3, du_decorridos // 2) if du_decorridos > 0 else 3
+
+    dias_por_consultor: Dict[str, int] = {}
+    if "DATA" in df.columns:
+        dias_por_consultor = (
+            df.groupby("CONSULTOR")["DATA"]
+            .apply(lambda s: s.dt.date.nunique())
+            .to_dict()
+        )
+
+    # Agregar valor e loja por consultor
+    cols_agg: Dict[str, str] = {"VALOR": "sum", "LOJA": "first"}
+    if "REGIAO" in df.columns:
+        cols_agg["REGIAO"] = "first"
+
+    grp = df.groupby("CONSULTOR").agg(cols_agg).reset_index()
+    grp = grp.rename(columns={"VALOR": "valor_total", "LOJA": "loja"})
+    if "REGIAO" in grp.columns:
+        grp = grp.rename(columns={"REGIAO": "regiao"})
+    else:
+        grp["regiao"] = ""
+
+    # Excluir supervisores
+    grp = grp[~grp["CONSULTOR"].isin(supervisores)].copy()
+
+    # Excluir consultores novos
+    grp["dias_ativos"] = (
+        grp["CONSULTOR"].map(dias_por_consultor).fillna(0).astype(int)
+    )
+    grp = grp[grp["dias_ativos"] >= min_dias_ativos].copy()
+
+    if grp.empty:
+        return []
+
+    # Valor diário por consultor
+    grp["valor_du"] = grp["valor_total"] / max(du_decorridos, 1)
+
+    # Média diária da loja (entre consultores não-novos, não-supervisores)
+    media_loja = grp.groupby("loja")["valor_du"].mean().to_dict()
+    grp["media_loja_du"] = grp["loja"].map(media_loja).fillna(0)
+
+    grp["perc_media"] = grp.apply(
+        lambda r: (r["valor_du"] / r["media_loja_du"] * 100)
+        if r["media_loja_du"] > 0
+        else 0,
+        axis=1,
+    )
+
+    # Apenas consultores abaixo de 80 % da média da loja
+    abaixo = grp[grp["perc_media"] < 80].sort_values("perc_media")
+
+    result = []
+    for _, row in abaixo.head(top_n).iterrows():
+        result.append(
+            {
+                "consultor": row["CONSULTOR"],
+                "loja": row["loja"],
+                "regiao": row.get("regiao", ""),
+                "valor": float(row["valor_total"]),
+                "valor_du": float(row["valor_du"]),
+                "media_loja_du": float(row["media_loja_du"]),
+                "perc_media": float(row["perc_media"]),
+                "score": 100 - float(row["perc_media"]),
+            }
+        )
+
+    return result
+
+
 def calcular_prioridades_regiao(
     df: pd.DataFrame,
     df_metas_produto: pd.DataFrame,
@@ -212,15 +307,26 @@ def render_prioridades_acao(
     df: pd.DataFrame,
     df_metas_produto: pd.DataFrame,
     kpis: Dict,
+    perfil: str = "",
+    df_sup: pd.DataFrame = None,
+    du_decorridos: int = 0,
 ) -> None:
     """
     Renderiza o bloco de Prioridades de Ação.
 
-    Layout:
-    - Lista numerada de prioridades
-    - Produtos críticos
-    - Regiões críticas
+    Layout padrão (3 colunas):
+      col1: Produtos que Precisam de Atenção
+      col2: Regiões que Precisam de Atenção
+      col3: Lojas que Precisam de Atenção
+
+    Layout Gerente Comercial:
+      col1: Produtos que Precisam de Atenção
+      col2: Lojas que Precisam de Atenção
+      col3: Consultores que Precisam de Atenção
     """
+    if df_sup is None:
+        df_sup = pd.DataFrame()
+
     st.markdown("---")
     st.markdown("### 🎯 Onde Agir Agora (Prioridades)")
 
@@ -228,6 +334,15 @@ def render_prioridades_acao(
     prioridades_prod = calcular_prioridades_produto(metas_produto, top_n=3)
     prioridades_reg = calcular_prioridades_regiao(df, df_metas_produto, top_n=2)
     prioridades_loja = calcular_prioridades_loja(df, df_metas_produto, top_n=4)
+
+    _eh_gerente = perfil == "gerente_comercial"
+
+    if _eh_gerente:
+        prioridades_consultor = calcular_prioridades_consultor(
+            df, df_sup, du_decorridos, top_n=4
+        )
+    else:
+        prioridades_consultor = []
 
     # Container principal
     css_prioridades = """
@@ -283,7 +398,7 @@ def render_prioridades_acao(
     col1, col2, col3 = st.columns(3)
 
     with col1:
-        st.markdown("**🔥 Produtos Prioritários**")
+        st.markdown("**🔥 Produtos que Precisam de Atenção**")
 
         if prioridades_prod:
             for i, prio in enumerate(prioridades_prod, 1):
@@ -315,71 +430,138 @@ def render_prioridades_acao(
             st.info("Todos os produtos atingiram a meta! 🎉")
 
     with col2:
-        st.markdown("**📍 Regiões que Precisam de Atenção**")
+        if _eh_gerente:
+            st.markdown("**🏪 Lojas que Precisam de Atenção**")
 
-        if prioridades_reg:
-            for i, prio in enumerate(prioridades_reg, 1):
-                perc = prio["perc_ating"]
-                cor = get_status_color(perc)
-                bg_cor = get_status_bg_color(perc)
-                label = get_status_label(perc)
+            if prioridades_loja:
+                for i, prio in enumerate(prioridades_loja, 1):
+                    perc = prio["perc_ating"]
+                    cor = get_status_color(perc)
+                    bg_cor = get_status_bg_color(perc)
+                    label = get_status_label(perc)
+                    regiao_label = f" ({prio['regiao']})" if prio.get("regiao") else ""
 
-                st.markdown(
-                    f"""
-                    <div class="mg-prioridade-card" style="border-left-color: {cor};">
-                        <div style="display: flex; align-items: center;">
-                            <span class="mg-prioridade-numero" style="background: {cor};">{i}</span>
-                            <span class="mg-prioridade-titulo">
-                                {prio["regiao"]}
-                                <span class="mg-prioridade-badge" style="background: {bg_cor}; color: {cor};">
-                                    {formatar_percentual(perc)} · {label}
+                    st.markdown(
+                        f"""
+                        <div class="mg-prioridade-card" style="border-left-color: {cor};">
+                            <div style="display: flex; align-items: center;">
+                                <span class="mg-prioridade-numero" style="background: {cor};">{i}</span>
+                                <span class="mg-prioridade-titulo">
+                                    {prio["loja"]}{regiao_label}
+                                    <span class="mg-prioridade-badge" style="background: {bg_cor}; color: {cor};">
+                                        {formatar_percentual(perc)} · {label}
+                                    </span>
                                 </span>
-                            </span>
+                            </div>
+                            <div class="mg-prioridade-detalhe">
+                                Realizado: {formatar_moeda(prio["valor"])}
+                                / Meta: {formatar_moeda(prio["meta"])}
+                            </div>
                         </div>
-                        <div class="mg-prioridade-detalhe">
-                            Realizado: {formatar_moeda(prio["valor"])} 
-                            / Meta: {formatar_moeda(prio["meta"])}
-                        </div>
-                    </div>
-                    """,
-                    unsafe_allow_html=True,
-                )
+                        """,
+                        unsafe_allow_html=True,
+                    )
+            else:
+                st.info("Todas as lojas estão acima da meta! 🎉")
         else:
-            st.info("Todas as regiões estão acima da meta! 🎉")
+            st.markdown("**📍 Regiões que Precisam de Atenção**")
+
+            if prioridades_reg:
+                for i, prio in enumerate(prioridades_reg, 1):
+                    perc = prio["perc_ating"]
+                    cor = get_status_color(perc)
+                    bg_cor = get_status_bg_color(perc)
+                    label = get_status_label(perc)
+
+                    st.markdown(
+                        f"""
+                        <div class="mg-prioridade-card" style="border-left-color: {cor};">
+                            <div style="display: flex; align-items: center;">
+                                <span class="mg-prioridade-numero" style="background: {cor};">{i}</span>
+                                <span class="mg-prioridade-titulo">
+                                    {prio["regiao"]}
+                                    <span class="mg-prioridade-badge" style="background: {bg_cor}; color: {cor};">
+                                        {formatar_percentual(perc)} · {label}
+                                    </span>
+                                </span>
+                            </div>
+                            <div class="mg-prioridade-detalhe">
+                                Realizado: {formatar_moeda(prio["valor"])}
+                                / Meta: {formatar_moeda(prio["meta"])}
+                            </div>
+                        </div>
+                        """,
+                        unsafe_allow_html=True,
+                    )
+            else:
+                st.info("Todas as regiões estão acima da meta! 🎉")
 
     with col3:
-        st.markdown("**🏪 Lojas que Precisam de Atenção**")
+        if _eh_gerente:
+            st.markdown("**👤 Consultores que Precisam de Atenção**")
 
-        if prioridades_loja:
-            for i, prio in enumerate(prioridades_loja, 1):
-                perc = prio["perc_ating"]
-                cor = get_status_color(perc)
-                bg_cor = get_status_bg_color(perc)
-                label = get_status_label(perc)
-                regiao_label = f" ({prio['regiao']})" if prio.get("regiao") else ""
+            if prioridades_consultor:
+                for i, prio in enumerate(prioridades_consultor, 1):
+                    perc = prio["perc_media"]
+                    cor = get_status_color(perc)
+                    bg_cor = get_status_bg_color(perc)
+                    loja_label = f" · {prio['loja']}" if prio.get("loja") else ""
 
-                st.markdown(
-                    f"""
-                    <div class="mg-prioridade-card" style="border-left-color: {cor};">
-                        <div style="display: flex; align-items: center;">
-                            <span class="mg-prioridade-numero" style="background: {cor};">{i}</span>
-                            <span class="mg-prioridade-titulo">
-                                {prio["loja"]}{regiao_label}
-                                <span class="mg-prioridade-badge" style="background: {bg_cor}; color: {cor};">
-                                    {formatar_percentual(perc)} · {label}
+                    st.markdown(
+                        f"""
+                        <div class="mg-prioridade-card" style="border-left-color: {cor};">
+                            <div style="display: flex; align-items: center;">
+                                <span class="mg-prioridade-numero" style="background: {cor};">{i}</span>
+                                <span class="mg-prioridade-titulo">
+                                    {prio["consultor"]}
+                                    <span class="mg-prioridade-badge" style="background: {bg_cor}; color: {cor};">
+                                        {formatar_percentual(perc)} da média
+                                    </span>
                                 </span>
-                            </span>
+                            </div>
+                            <div class="mg-prioridade-detalhe">
+                                {loja_label} · Média/DU: {formatar_moeda(prio["valor_du"])}
+                                vs média loja: {formatar_moeda(prio["media_loja_du"])}
+                            </div>
                         </div>
-                        <div class="mg-prioridade-detalhe">
-                            Realizado: {formatar_moeda(prio["valor"])}
-                            / Meta: {formatar_moeda(prio["meta"])}
-                        </div>
-                    </div>
-                    """,
-                    unsafe_allow_html=True,
-                )
+                        """,
+                        unsafe_allow_html=True,
+                    )
+            else:
+                st.info("Todos os consultores estão acima de 80% da média da loja! 🎉")
         else:
-            st.info("Todas as lojas estão acima da meta! 🎉")
+            st.markdown("**🏪 Lojas que Precisam de Atenção**")
+
+            if prioridades_loja:
+                for i, prio in enumerate(prioridades_loja, 1):
+                    perc = prio["perc_ating"]
+                    cor = get_status_color(perc)
+                    bg_cor = get_status_bg_color(perc)
+                    label = get_status_label(perc)
+                    regiao_label = f" ({prio['regiao']})" if prio.get("regiao") else ""
+
+                    st.markdown(
+                        f"""
+                        <div class="mg-prioridade-card" style="border-left-color: {cor};">
+                            <div style="display: flex; align-items: center;">
+                                <span class="mg-prioridade-numero" style="background: {cor};">{i}</span>
+                                <span class="mg-prioridade-titulo">
+                                    {prio["loja"]}{regiao_label}
+                                    <span class="mg-prioridade-badge" style="background: {bg_cor}; color: {cor};">
+                                        {formatar_percentual(perc)} · {label}
+                                    </span>
+                                </span>
+                            </div>
+                            <div class="mg-prioridade-detalhe">
+                                Realizado: {formatar_moeda(prio["valor"])}
+                                / Meta: {formatar_moeda(prio["meta"])}
+                            </div>
+                        </div>
+                        """,
+                        unsafe_allow_html=True,
+                    )
+            else:
+                st.info("Todas as lojas estão acima da meta! 🎉")
 
     # Resumo de ação
     st.markdown("---")
@@ -391,16 +573,28 @@ def render_prioridades_acao(
         acoes.append(
             f"Focar em **{top_prod['produto']}** (falta de {formatar_moeda(top_prod['gap_valor'])})"
         )
-    if prioridades_reg:
-        top_reg = prioridades_reg[0]
-        acoes.append(
-            f"Apoiar região **{top_reg['regiao']}** ({formatar_percentual(top_reg['perc_ating'])} da meta)"
-        )
-    if prioridades_loja:
-        top_loja = prioridades_loja[0]
-        acoes.append(
-            f"Atuar na loja **{top_loja['loja']}** ({formatar_percentual(top_loja['perc_ating'])} da meta)"
-        )
+    if _eh_gerente:
+        if prioridades_loja:
+            top_loja = prioridades_loja[0]
+            acoes.append(
+                f"Atuar na loja **{top_loja['loja']}** ({formatar_percentual(top_loja['perc_ating'])} da meta)"
+            )
+        if prioridades_consultor:
+            top_cons = prioridades_consultor[0]
+            acoes.append(
+                f"Apoiar **{top_cons['consultor']}** ({formatar_percentual(top_cons['perc_media'])} da média da loja)"
+            )
+    else:
+        if prioridades_reg:
+            top_reg = prioridades_reg[0]
+            acoes.append(
+                f"Apoiar região **{top_reg['regiao']}** ({formatar_percentual(top_reg['perc_ating'])} da meta)"
+            )
+        if prioridades_loja:
+            top_loja = prioridades_loja[0]
+            acoes.append(
+                f"Atuar na loja **{top_loja['loja']}** ({formatar_percentual(top_loja['perc_ating'])} da meta)"
+            )
 
     if acoes:
         itens = "".join(f'<li style="margin-bottom: 4px;">{a}</li>' for a in acoes)

@@ -13,7 +13,6 @@ from src.data_processing.consolidator import (
     criar_resumo_periodo,
     calcular_dias_uteis
 )
-from src.reports.kpi_calculator import calcular_kpis_completos
 
 st.set_page_config(
     page_title=DASHBOARD_TITLE,
@@ -37,18 +36,18 @@ def carregar_resumo(mes: int, ano: int):
 
 def main():
     """Função principal do dashboard."""
-    
+
     st.title(f"{DASHBOARD_ICON} {DASHBOARD_TITLE}")
-    
+
     with st.sidebar:
         st.header("Filtros")
-        
+
         ano = st.selectbox(
             "Ano",
             options=[2024, 2025, 2026],
             index=2
         )
-        
+
         mes = st.selectbox(
             "Mês",
             options=list(range(1, 13)),
@@ -59,9 +58,9 @@ def main():
             }[x],
             index=2
         )
-        
+
         st.divider()
-        
+
         st.markdown("### Navegação")
         st.markdown("""
         Use as páginas no menu lateral para:
@@ -72,18 +71,18 @@ def main():
         - 📦 **Produtos**: Análise de produtos
         - 📈 **Comparativos**: Comparações
         """)
-    
+
     try:
         with st.spinner('Carregando dados...'):
             df = carregar_dados(mes, ano)
             resumo = carregar_resumo(mes, ano)
-        
+
         st.success(f"✓ Dados carregados: {len(df)} registros")
-        
+
         st.header("Resumo Executivo")
-        
+
         col1, col2, col3, col4 = st.columns(4)
-        
+
         with col1:
             st.metric(
                 "Total de Vendas",
@@ -92,7 +91,7 @@ def main():
                 .replace("X", "."),
                 help="Valor total de vendas no período"
             )
-        
+
         with col2:
             st.metric(
                 "Total de Pontos",
@@ -100,57 +99,57 @@ def main():
                 .replace(",", "."),
                 help="Pontuação total acumulada"
             )
-        
+
         with col3:
             st.metric(
                 "Consultores",
                 resumo.get('num_consultores', 0),
                 help="Número de consultores ativos"
             )
-        
+
         with col4:
             st.metric(
                 "Lojas",
                 resumo.get('num_lojas', 0),
                 help="Número de lojas"
             )
-        
+
         st.divider()
-        
+
         col1, col2 = st.columns(2)
-        
+
         with col1:
             st.subheader("Dias Úteis")
             dias_dec, dias_rest = calcular_dias_uteis(mes, ano)
-            
+
             st.metric("Dias Úteis Decorridos", dias_dec)
             st.metric("Dias Úteis Restantes", dias_rest)
-        
+
         with col2:
             st.subheader("Produtos Especiais")
-            
+
             col_a, col_b = st.columns(2)
             with col_a:
                 st.metric("Emissões de Cartão", resumo.get('emissoes_cartao', 0))
                 st.metric("Seguros Med", resumo.get('seguros_med', 0))
-            
+
             with col_b:
                 st.metric("Seguros Vida Familiar", resumo.get('seguros_vida_familiar', 0))
                 st.metric("Super Contas", resumo.get('super_contas', 0))
-        
+
         st.divider()
-        
+
         st.info("""
         💡 **Dica**: Use as páginas no menu lateral para análises mais detalhadas:
         - Análise por região, loja ou consultor
         - Tabelas de produtos com metas
         - Comparativos e rankings
         """)
-        
+
     except FileNotFoundError as e:
         st.error(f"❌ Erro ao carregar dados: {e}")
         st.info("Verifique se os arquivos de dados estão disponíveis para o período selecionado.")
-    
+
     except Exception as e:
         st.error(f"❌ Erro inesperado: {e}")
         st.exception(e)

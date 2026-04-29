@@ -19,7 +19,6 @@ from reportlab.platypus import (
     Table,
     TableStyle,
 )
-from reportlab.lib.enums import TA_CENTER
 
 from src.config.settings import MESES_PT
 from src.reports.formatters import (
@@ -28,10 +27,7 @@ from src.reports.formatters import (
     formatar_percentual,
 )
 from src.reports.pdf_styles import (
-    MARGENS_COMPACTAS,
     criar_rodape,
-    get_secao_style,
-    get_table_style_moderno,
     get_titulo_style,
 )
 from src.reports.resumo_geral import criar_resumo_geral
@@ -43,9 +39,9 @@ def criar_cabecalho_completo(mes, ano):
 
     logo_path = Path('assets/logotipo-mg-cred.png')
     if logo_path.exists():
-        logo = Image(str(logo_path), width=5*cm, height=2.5*cm)
+        logo = Image(str(logo_path), width=5 * cm, height=2.5 * cm)
         elementos.append(logo)
-        elementos.append(Spacer(1, 0.5*cm))
+        elementos.append(Spacer(1, 0.5 * cm))
 
     titulo_style = get_titulo_style(20)
 
@@ -54,7 +50,7 @@ def criar_cabecalho_completo(mes, ano):
         titulo_style
     )
     elementos.append(titulo)
-    elementos.append(Spacer(1, 0.5*cm))
+    elementos.append(Spacer(1, 0.5 * cm))
 
     return elementos
 
@@ -74,7 +70,7 @@ def criar_secao_totais_gerais(resumo):
     )
 
     elementos.append(Paragraph("RESUMO GERAL CONSOLIDADO", titulo_style))
-    elementos.append(Spacer(1, 0.3*cm))
+    elementos.append(Spacer(1, 0.3 * cm))
 
     totais = resumo.get('totais_gerais', pd.DataFrame())
     if not totais.empty:
@@ -93,7 +89,7 @@ def criar_secao_totais_gerais(resumo):
 
             dados_tabela.append([metrica, valor_fmt])
 
-        tabela = Table(dados_tabela, colWidths=[10*cm, 6*cm])
+        tabela = Table(dados_tabela, colWidths=[10 * cm, 6 * cm])
         tabela.setStyle(TableStyle([
             ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#1F4E78')),
             ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
@@ -109,7 +105,7 @@ def criar_secao_totais_gerais(resumo):
 
         elementos.append(tabela)
 
-    elementos.append(Spacer(1, 0.5*cm))
+    elementos.append(Spacer(1, 0.5 * cm))
     return elementos
 
 
@@ -128,11 +124,11 @@ def criar_secao_ranking(titulo, df, colunas_exibir, larguras=None):
     )
 
     elementos.append(Paragraph(titulo, titulo_style))
-    elementos.append(Spacer(1, 0.3*cm))
+    elementos.append(Spacer(1, 0.3 * cm))
 
     if df.empty:
         elementos.append(Paragraph("Sem dados disponíveis", styles['Normal']))
-        elementos.append(Spacer(1, 0.5*cm))
+        elementos.append(Spacer(1, 0.5 * cm))
         return elementos
 
     if larguras is None:
@@ -172,10 +168,10 @@ def criar_secao_ranking(titulo, df, colunas_exibir, larguras=None):
         dados_tabela.append(linha)
 
     tabela = Table(dados_tabela, colWidths=larguras)
-    
+
     fonte_cabecalho = 8 if 'Consultor' in titulo else 9
     fonte_corpo = 6 if 'Consultor' in titulo else 8
-    
+
     tabela.setStyle(TableStyle([
         ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#1F4E78')),
         ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
@@ -190,7 +186,7 @@ def criar_secao_ranking(titulo, df, colunas_exibir, larguras=None):
     ]))
 
     elementos.append(tabela)
-    elementos.append(Spacer(1, 0.5*cm))
+    elementos.append(Spacer(1, 0.5 * cm))
 
     return elementos
 
@@ -203,14 +199,14 @@ def criar_todas_secoes_rankings(resumo):
         "TOP 10 LOJAS - POR PONTOS",
         resumo.get('top_lojas', pd.DataFrame()),
         ['Posição', 'Loja', 'Qtd', 'Valor', 'Pontos', 'Ticket Médio'],
-        [2*cm, 5*cm, 2.5*cm, 3*cm, 3*cm, 3*cm]
+        [2 * cm, 5 * cm, 2.5 * cm, 3 * cm, 3 * cm, 3 * cm]
     ))
 
     elementos.extend(criar_secao_ranking(
         "TOP 10 LOJAS - POR TICKET MÉDIO",
         resumo.get('top_lojas_ticket_medio', pd.DataFrame()),
         ['Posição', 'Loja', 'Qtd', 'Valor', 'Pontos', 'Ticket Médio'],
-        [2*cm, 5*cm, 2.5*cm, 3*cm, 3*cm, 3*cm]
+        [2 * cm, 5 * cm, 2.5 * cm, 3 * cm, 3 * cm, 3 * cm]
     ))
 
     elementos.append(PageBreak())
@@ -219,14 +215,14 @@ def criar_todas_secoes_rankings(resumo):
         "TOP 10 LOJAS - POR MÉDIA DU",
         resumo.get('top_lojas_media_du', pd.DataFrame()),
         ['Posição', 'Loja', 'Qtd', 'Pontos', 'Média DU', 'Ticket Médio'],
-        [2*cm, 5*cm, 2.5*cm, 3*cm, 3*cm, 3*cm]
+        [2 * cm, 5 * cm, 2.5 * cm, 3 * cm, 3 * cm, 3 * cm]
     ))
 
     elementos.extend(criar_secao_ranking(
         "TOP 10 LOJAS - POR ATINGIMENTO META PRATA",
         resumo.get('top_lojas_atingimento', pd.DataFrame()),
         ['Posição', 'Loja', 'Pontos', 'Meta Prata', 'Atingimento %'],
-        [2*cm, 6*cm, 3*cm, 3*cm, 3*cm]
+        [2 * cm, 6 * cm, 3 * cm, 3 * cm, 3 * cm]
     ))
 
     elementos.append(PageBreak())
@@ -235,14 +231,14 @@ def criar_todas_secoes_rankings(resumo):
         "TOP 10 CONSULTORES - POR PONTOS",
         resumo.get('top_consultores', pd.DataFrame()),
         ['Posição', 'Consultor', 'Loja', 'Qtd', 'Pontos', 'Ticket Médio'],
-        [1.5*cm, 5*cm, 3*cm, 2*cm, 3*cm, 3*cm]
+        [1.5 * cm, 5 * cm, 3 * cm, 2 * cm, 3 * cm, 3 * cm]
     ))
 
     elementos.extend(criar_secao_ranking(
         "TOP 10 CONSULTORES - POR TICKET MÉDIO",
         resumo.get('top_consultores_ticket_medio', pd.DataFrame()),
         ['Posição', 'Consultor', 'Loja', 'Qtd', 'Pontos', 'Ticket Médio'],
-        [1.5*cm, 5*cm, 3*cm, 2*cm, 3*cm, 3*cm]
+        [1.5 * cm, 5 * cm, 3 * cm, 2 * cm, 3 * cm, 3 * cm]
     ))
 
     elementos.append(PageBreak())
@@ -251,14 +247,14 @@ def criar_todas_secoes_rankings(resumo):
         "TOP 10 CONSULTORES - POR MÉDIA DU",
         resumo.get('top_consultores_media_du', pd.DataFrame()),
         ['Posição', 'Consultor', 'Loja', 'Pontos', 'Média DU'],
-        [1.5*cm, 6*cm, 3*cm, 3*cm, 3*cm]
+        [1.5 * cm, 6 * cm, 3 * cm, 3 * cm, 3 * cm]
     ))
 
     elementos.extend(criar_secao_ranking(
         "TOP 10 CONSULTORES - POR ATINGIMENTO META PRATA",
         resumo.get('top_consultores_atingimento', pd.DataFrame()),
         ['Posição', 'Consultor', 'Loja', 'Pontos', 'Meta Prata', 'Atingimento %'],
-        [1.5*cm, 5*cm, 3*cm, 3*cm, 2.5*cm, 2.5*cm]
+        [1.5 * cm, 5 * cm, 3 * cm, 3 * cm, 2.5 * cm, 2.5 * cm]
     ))
 
     elementos.append(PageBreak())
@@ -267,14 +263,14 @@ def criar_todas_secoes_rankings(resumo):
         "RANKING DE REGIÃO - POR PONTOS",
         resumo.get('ranking_regiao_pontos', pd.DataFrame()),
         ['Posição', 'Região', 'Qtd', 'Valor', 'Pontos', 'Ticket Médio'],
-        [2*cm, 4*cm, 2.5*cm, 3*cm, 3*cm, 3*cm]
+        [2 * cm, 4 * cm, 2.5 * cm, 3 * cm, 3 * cm, 3 * cm]
     ))
 
     elementos.extend(criar_secao_ranking(
         "RANKING DE REGIÃO - POR TICKET MÉDIO",
         resumo.get('ranking_regiao_ticket_medio', pd.DataFrame()),
         ['Posição', 'Região', 'Qtd', 'Pontos', 'Ticket Médio'],
-        [2*cm, 5*cm, 3*cm, 3*cm, 3*cm]
+        [2 * cm, 5 * cm, 3 * cm, 3 * cm, 3 * cm]
     ))
 
     elementos.append(PageBreak())
@@ -283,14 +279,14 @@ def criar_todas_secoes_rankings(resumo):
         "RANKING DE REGIÃO - POR MÉDIA DU",
         resumo.get('ranking_regiao_media_du', pd.DataFrame()),
         ['Posição', 'Região', 'Pontos', 'Média DU', 'Ticket Médio'],
-        [2*cm, 5*cm, 3*cm, 3*cm, 3*cm]
+        [2 * cm, 5 * cm, 3 * cm, 3 * cm, 3 * cm]
     ))
 
     elementos.extend(criar_secao_ranking(
         "RANKING DE REGIÃO - POR ATINGIMENTO META PRATA",
         resumo.get('ranking_regiao_atingimento', pd.DataFrame()),
         ['Posição', 'Região', 'Pontos', 'Meta Prata', 'Atingimento %'],
-        [2*cm, 5*cm, 3*cm, 3*cm, 3*cm]
+        [2 * cm, 5 * cm, 3 * cm, 3 * cm, 3 * cm]
     ))
 
     elementos.append(PageBreak())
@@ -301,16 +297,16 @@ def criar_todas_secoes_rankings(resumo):
             "RESUMO POR PRODUTO (MIX)",
             resumo_produtos,
             ['Produto', 'Qtd', 'Valor', 'Pontos', 'Ticket Médio'],
-            [4*cm, 3*cm, 4*cm, 4*cm, 3*cm]
+            [4 * cm, 3 * cm, 4 * cm, 4 * cm, 3 * cm]
         ))
-        
+
         styles = getSampleStyleSheet()
         nota = Paragraph(
             "<i>* PACK = FGTS, ANT. BEN. e CNC 13º</i>",
             styles['Normal']
         )
         elementos.append(nota)
-        elementos.append(Spacer(1, 0.5*cm))
+        elementos.append(Spacer(1, 0.5 * cm))
 
     resumo_regiao = resumo.get('resumo_por_regiao', pd.DataFrame())
     if not resumo_regiao.empty:
@@ -318,7 +314,7 @@ def criar_todas_secoes_rankings(resumo):
             "RESUMO POR REGIÃO",
             resumo_regiao,
             ['Região', 'Qtd', 'Valor', 'Pontos', 'Atingimento %'],
-            [4*cm, 3*cm, 4*cm, 4*cm, 3*cm]
+            [4 * cm, 3 * cm, 4 * cm, 4 * cm, 3 * cm]
         ))
 
     return elementos
@@ -348,10 +344,10 @@ def gerar_relatorio_completo_pdf(df, mes, ano, df_metas, dia_atual=None, df_supe
     doc = SimpleDocTemplate(
         str(arquivo_pdf),
         pagesize=A4,
-        rightMargin=1.5*cm,
-        leftMargin=1.5*cm,
-        topMargin=2*cm,
-        bottomMargin=2*cm
+        rightMargin=1.5 * cm,
+        leftMargin=1.5 * cm,
+        topMargin=2 * cm,
+        bottomMargin=2 * cm
     )
 
     elementos = []

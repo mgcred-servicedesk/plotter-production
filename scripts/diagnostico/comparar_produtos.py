@@ -34,40 +34,40 @@ df_vendas = pd.read_excel(arquivo_vendas)
 if 'PRODUTO' in df_vendas.columns:
     produtos_vendas = df_vendas['PRODUTO'].dropna().unique()
     print(f"   ✓ {len(produtos_vendas)} produtos únicos nos dados de vendas")
-    
+
     print("\n3. Produtos nos dados de vendas (top 20):")
     contagem = df_vendas['PRODUTO'].value_counts().head(20)
     for produto, count in contagem.items():
         print(f"      - '{produto}' ({count} registros)")
-    
+
     # Verificar correspondência
     print("\n4. Verificando correspondência...")
     produtos_pontuacao_set = set(df_pontuacao['PRODUTO'].str.upper().str.strip())
     produtos_vendas_upper = df_vendas['PRODUTO'].str.upper().str.strip()
-    
+
     correspondentes = []
     nao_correspondentes = []
-    
+
     for produto in produtos_vendas[:100].unique():  # Primeiros 100 únicos
         produto_upper = str(produto).upper().strip()
         if produto_upper in produtos_pontuacao_set:
             correspondentes.append(produto)
         else:
             nao_correspondentes.append(produto)
-    
+
     print(f"\n   ✓ {len(correspondentes)} produtos com correspondência")
     print(f"   ⚠️  {len(nao_correspondentes)} produtos SEM correspondência")
-    
+
     if correspondentes:
         print("\n   Produtos COM correspondência (primeiros 10):")
         for p in correspondentes[:10]:
             print(f"      - '{p}'")
-    
+
     if nao_correspondentes:
         print("\n   Produtos SEM correspondência (primeiros 10):")
         for p in nao_correspondentes[:10]:
             print(f"      - '{p}'")
-    
+
     # Verificar se precisa de mapeamento
     print("\n5. Análise de mapeamento necessário...")
     print("   A tabela de pontuação usa nomes simplificados:")

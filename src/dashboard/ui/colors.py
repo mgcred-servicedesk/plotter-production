@@ -17,27 +17,27 @@ from typing import Tuple
 
 class StatusColors:
     """Cores hexadecimais por status semântico."""
-    
+
     # Verde: Sucesso/Meta Atingida
     SUCCESS = "#10b981"      # emerald-500
     SUCCESS_LIGHT = "#d1fae5"  # emerald-100
     SUCCESS_DARK = "#065f46"   # emerald-800
-    
+
     # Amarelo: Atenção/Proximidade
     WARNING = "#f59e0b"      # amber-500
     WARNING_LIGHT = "#fef3c7"  # amber-100
     WARNING_DARK = "#92400e"   # amber-800
-    
+
     # Vermelho: Crítico/Abaixo
     DANGER = "#ef4444"       # red-500
     DANGER_LIGHT = "#fee2e2"     # red-100
     DANGER_DARK = "#991b1b"      # red-800
-    
+
     # Azul: Neutro/Informativo
     INFO = "#3b82f6"         # blue-500
     INFO_LIGHT = "#dbeafe"       # blue-100
     INFO_DARK = "#1e40af"        # blue-800
-    
+
     # Cinza: Contexto/Secundário
     NEUTRAL = "#6b7280"      # gray-500
     NEUTRAL_LIGHT = "#f3f4f6"    # gray-100
@@ -51,10 +51,10 @@ class StatusColors:
 def get_status_color(perc_atingimento: float) -> str:
     """
     Retorna cor hexadecimal baseada no percentual de atingimento.
-    
+
     Args:
         perc_atingimento: Percentual de atingimento (0-100+)
-    
+
     Returns:
         Cor hexadecimal correspondente ao status
     """
@@ -111,10 +111,10 @@ def get_status_label(perc_atingimento: float) -> str:
 def get_status_full(perc_atingimento: float) -> Tuple[str, str, str, str]:
     """
     Retorna tupla completa: (cor, bg, emoji, label)
-    
+
     Args:
         perc_atingimento: Percentual de atingimento
-    
+
     Returns:
         Tuple: (cor_principal, cor_bg, emoji, label)
     """
@@ -133,10 +133,10 @@ def get_status_full(perc_atingimento: float) -> Tuple[str, str, str, str]:
 def get_churn_status(indice_perda: float) -> Tuple[str, str, str]:
     """
     Retorna status para índice de churn/perda.
-    
+
     Args:
         indice_perda: Percentual de perda (0-100)
-    
+
     Returns:
         Tuple: (cor, emoji, nivel_texto)
     """
@@ -155,10 +155,10 @@ def get_churn_status(indice_perda: float) -> Tuple[str, str, str]:
 def get_ritmo_status(desvio_percentual: float) -> Tuple[str, str, str]:
     """
     Retorna status para desvio de média.
-    
+
     Args:
         desvio_percentual: Desvio da média necessária (ex: -36 para 36% abaixo)
-    
+
     Returns:
         Tuple: (cor, emoji, status_texto)
     """
@@ -208,17 +208,17 @@ def get_semantic_css_variables() -> str:
         --mg-status-success: #10b981;
         --mg-status-success-light: #d1fae5;
         --mg-status-success-dark: #065f46;
-        
+
         /* Status: Atenção */
         --mg-status-warning: #f59e0b;
         --mg-status-warning-light: #fef3c7;
         --mg-status-warning-dark: #92400e;
-        
+
         /* Status: Crítico */
         --mg-status-danger: #ef4444;
         --mg-status-danger-light: #fee2e2;
         --mg-status-danger-dark: #991b1b;
-        
+
         /* Status: Info/Neutro */
         --mg-status-info: #3b82f6;
         --mg-status-info-light: #dbeafe;

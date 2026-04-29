@@ -19,7 +19,6 @@ from reportlab.platypus import (
     Table,
     TableStyle,
 )
-from reportlab.lib.enums import TA_CENTER
 
 from src.config.settings import MESES_PT
 from src.reports.formatters import (
@@ -33,19 +32,13 @@ from src.reports.pdf_charts import (
     criar_grafico_barras_top10,
     criar_grafico_evolucao_diaria,
     criar_grafico_pizza_produtos,
-    criar_kpi_card_image,
 )
 from src.reports.pdf_styles import (
-    CORES,
-    MARGENS_PADRAO,
     criar_rodape,
-    get_table_style_moderno,
     get_titulo_style,
     get_subtitulo_style,
-    get_secao_style,
 )
 from src.reports.resumo_geral import criar_resumo_geral
-from src.reports.tabela_produtos import calcular_dias_uteis
 
 
 def criar_capa_executiva(mes, ano, resumo):
@@ -55,13 +48,13 @@ def criar_capa_executiva(mes, ano, resumo):
     titulo_style = get_titulo_style(24)
     subtitulo_style = get_subtitulo_style(16)
 
-    elementos.append(Spacer(1, 2*cm))
-    
+    elementos.append(Spacer(1, 2 * cm))
+
     logo_path = Path('assets/logotipo-mg-cred.png')
     if logo_path.exists():
-        logo = Image(str(logo_path), width=6*cm, height=3*cm)
+        logo = Image(str(logo_path), width=6 * cm, height=3 * cm)
         elementos.append(logo)
-        elementos.append(Spacer(1, 1*cm))
+        elementos.append(Spacer(1, 1 * cm))
 
     titulo = Paragraph(
         "RELATÓRIO EXECUTIVO DE VENDAS",
@@ -75,7 +68,7 @@ def criar_capa_executiva(mes, ano, resumo):
     )
     elementos.append(subtitulo)
 
-    elementos.append(Spacer(1, 2*cm))
+    elementos.append(Spacer(1, 2 * cm))
 
     totais = resumo.get('totais_gerais', pd.DataFrame())
     if not totais.empty:
@@ -103,7 +96,7 @@ def criar_capa_executiva(mes, ano, resumo):
             ]
         ]
 
-        kpi_table = Table(kpi_data, colWidths=[6*cm, 6*cm, 6*cm])
+        kpi_table = Table(kpi_data, colWidths=[6 * cm, 6 * cm, 6 * cm])
         kpi_table.setStyle(TableStyle([
             ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#1F4E78')),
             ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
@@ -121,7 +114,7 @@ def criar_capa_executiva(mes, ano, resumo):
 
         elementos.append(kpi_table)
 
-    elementos.append(Spacer(1, 2*cm))
+    elementos.append(Spacer(1, 2 * cm))
 
     data_geracao = Paragraph(
         f"Gerado em: {datetime.now().strftime('%d/%m/%Y às %H:%M')}",
@@ -149,7 +142,7 @@ def criar_dashboard_performance(resumo, df):
     )
 
     elementos.append(Paragraph("Dashboard de Performance", titulo_style))
-    elementos.append(Spacer(1, 0.5*cm))
+    elementos.append(Spacer(1, 0.5 * cm))
 
     totais = resumo.get('totais_gerais', pd.DataFrame())
     if not totais.empty:
@@ -173,9 +166,9 @@ def criar_dashboard_performance(resumo, df):
             meta_val
         )
 
-        img = Image(grafico_atingimento, width=16*cm, height=6*cm)
+        img = Image(grafico_atingimento, width=16 * cm, height=6 * cm)
         elementos.append(img)
-        elementos.append(Spacer(1, 1*cm))
+        elementos.append(Spacer(1, 1 * cm))
 
     if 'DATA' in df.columns and 'pontos' in df.columns:
         grafico_evolucao = criar_grafico_evolucao_diaria(
@@ -185,7 +178,7 @@ def criar_dashboard_performance(resumo, df):
             'Evolução Diária de Pontos'
         )
 
-        img_evolucao = Image(grafico_evolucao, width=16*cm, height=7*cm)
+        img_evolucao = Image(grafico_evolucao, width=16 * cm, height=7 * cm)
         elementos.append(img_evolucao)
 
     elementos.append(PageBreak())
@@ -208,7 +201,7 @@ def criar_pagina_top_lojas(resumo):
     )
 
     elementos.append(Paragraph("TOP 10 Lojas", titulo_style))
-    elementos.append(Spacer(1, 0.5*cm))
+    elementos.append(Spacer(1, 0.5 * cm))
 
     top_lojas = resumo.get('top_lojas', pd.DataFrame())
     if not top_lojas.empty:
@@ -220,9 +213,9 @@ def criar_pagina_top_lojas(resumo):
             '#1F4E78'
         )
 
-        img = Image(grafico, width=16*cm, height=8*cm)
+        img = Image(grafico, width=16 * cm, height=8 * cm)
         elementos.append(img)
-        elementos.append(Spacer(1, 0.5*cm))
+        elementos.append(Spacer(1, 0.5 * cm))
 
         dados_tabela = [['Pos', 'Loja', 'Qtd', 'Pontos', 'Ticket Médio']]
 
@@ -235,7 +228,7 @@ def criar_pagina_top_lojas(resumo):
                 formatar_moeda(row['Ticket Médio'])
             ])
 
-        tabela = Table(dados_tabela, colWidths=[1.5*cm, 5*cm, 2.5*cm, 3.5*cm, 3.5*cm])
+        tabela = Table(dados_tabela, colWidths=[1.5 * cm, 5 * cm, 2.5 * cm, 3.5 * cm, 3.5 * cm])
         tabela.setStyle(TableStyle([
             ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#1F4E78')),
             ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
@@ -270,7 +263,7 @@ def criar_pagina_top_consultores(resumo):
     )
 
     elementos.append(Paragraph("TOP 10 Consultores", titulo_style))
-    elementos.append(Spacer(1, 0.5*cm))
+    elementos.append(Spacer(1, 0.5 * cm))
 
     top_consultores = resumo.get('top_consultores', pd.DataFrame())
     if not top_consultores.empty:
@@ -282,9 +275,9 @@ def criar_pagina_top_consultores(resumo):
             '#28A745'
         )
 
-        img = Image(grafico, width=16*cm, height=8*cm)
+        img = Image(grafico, width=16 * cm, height=8 * cm)
         elementos.append(img)
-        elementos.append(Spacer(1, 0.5*cm))
+        elementos.append(Spacer(1, 0.5 * cm))
 
         dados_tabela = [[
             'Pos', 'Consultor', 'Loja', 'Qtd', 'Pontos', 'Ticket Médio'
@@ -302,7 +295,7 @@ def criar_pagina_top_consultores(resumo):
 
         tabela = Table(
             dados_tabela,
-            colWidths=[1.2*cm, 4.5*cm, 2.8*cm, 2*cm, 2.8*cm, 2.8*cm]
+            colWidths=[1.2 * cm, 4.5 * cm, 2.8 * cm, 2 * cm, 2.8 * cm, 2.8 * cm]
         )
         tabela.setStyle(TableStyle([
             ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#28A745')),
@@ -339,7 +332,7 @@ def criar_pagina_produtos(resumo):
     )
 
     elementos.append(Paragraph("Análise por Produto (MIX)", titulo_style))
-    elementos.append(Spacer(1, 0.5*cm))
+    elementos.append(Spacer(1, 0.5 * cm))
 
     resumo_produtos = resumo.get('resumo_produtos_mix', pd.DataFrame())
     if not resumo_produtos.empty:
@@ -348,9 +341,9 @@ def criar_pagina_produtos(resumo):
             'Distribuição de Pontos por Produto'
         )
 
-        img = Image(grafico, width=14*cm, height=10*cm)
+        img = Image(grafico, width=14 * cm, height=10 * cm)
         elementos.append(img)
-        elementos.append(Spacer(1, 0.5*cm))
+        elementos.append(Spacer(1, 0.5 * cm))
 
         dados_tabela = [['Produto', 'Qtd', 'Valor', 'Pontos', '%']]
 
@@ -367,7 +360,7 @@ def criar_pagina_produtos(resumo):
                 formatar_percentual(percentual)
             ])
 
-        tabela = Table(dados_tabela, colWidths=[4*cm, 3*cm, 4*cm, 4*cm, 3*cm])
+        tabela = Table(dados_tabela, colWidths=[4 * cm, 3 * cm, 4 * cm, 4 * cm, 3 * cm])
         tabela.setStyle(TableStyle([
             ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#1F4E78')),
             ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
@@ -381,8 +374,8 @@ def criar_pagina_produtos(resumo):
         ]))
 
         elementos.append(tabela)
-        elementos.append(Spacer(1, 0.3*cm))
-        
+        elementos.append(Spacer(1, 0.3 * cm))
+
         nota = Paragraph(
             "<i>* PACK = FGTS, ANT. BEN. e CNC 13º</i>",
             styles['Normal']
@@ -409,7 +402,7 @@ def criar_pagina_regioes(resumo):
     )
 
     elementos.append(Paragraph("Ranking de Regiões", titulo_style))
-    elementos.append(Spacer(1, 0.5*cm))
+    elementos.append(Spacer(1, 0.5 * cm))
 
     resumo_regiao = resumo.get('resumo_por_regiao', pd.DataFrame())
     if not resumo_regiao.empty:
@@ -418,9 +411,9 @@ def criar_pagina_regioes(resumo):
             'Performance por Região'
         )
 
-        img = Image(grafico, width=16*cm, height=8*cm)
+        img = Image(grafico, width=16 * cm, height=8 * cm)
         elementos.append(img)
-        elementos.append(Spacer(1, 0.5*cm))
+        elementos.append(Spacer(1, 0.5 * cm))
 
         dados_tabela = [[
             'Região', 'Qtd', 'Pontos', 'Meta', 'Ating %', 'Ticket Médio'
@@ -438,7 +431,7 @@ def criar_pagina_regioes(resumo):
 
         tabela = Table(
             dados_tabela,
-            colWidths=[4*cm, 2.5*cm, 3*cm, 3*cm, 2.5*cm, 3*cm]
+            colWidths=[4 * cm, 2.5 * cm, 3 * cm, 3 * cm, 2.5 * cm, 3 * cm]
         )
         tabela.setStyle(TableStyle([
             ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#1F4E78')),
@@ -481,15 +474,14 @@ def gerar_relatorio_executivo_pdf(df, mes, ano, df_metas, dia_atual=None, df_sup
     doc = SimpleDocTemplate(
         str(arquivo_pdf),
         pagesize=A4,
-        rightMargin=2*cm,
-        leftMargin=2*cm,
-        topMargin=2*cm,
-        bottomMargin=2*cm
+        rightMargin=2 * cm,
+        leftMargin=2 * cm,
+        topMargin=2 * cm,
+        bottomMargin=2 * cm
     )
 
     elementos = []
 
-    dias_uteis_info = calcular_dias_uteis(ano, mes, dia_atual)
     resumo = criar_resumo_geral(df, df_metas, ano, mes, dia_atual, df_supervisores)
 
     elementos.extend(criar_capa_executiva(mes, ano, resumo))

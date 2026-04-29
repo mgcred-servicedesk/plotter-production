@@ -23,28 +23,28 @@ for arquivo in sorted(arquivos):
         caminho = os.path.join(pasta_pontuacao, arquivo)
         print(f"\n📁 Arquivo: {arquivo}")
         print("-" * 80)
-        
+
         # Listar abas
         excel_file = pd.ExcelFile(caminho)
         print(f"   Abas disponíveis: {excel_file.sheet_names}")
-        
+
         # Analisar cada aba
         for aba in excel_file.sheet_names:
             print(f"\n   📊 Aba: {aba}")
             df = pd.read_excel(caminho, sheet_name=aba)
             print(f"      Dimensões: {df.shape[0]} linhas x {df.shape[1]} colunas")
             print(f"      Colunas: {list(df.columns)}")
-            
+
             # Mostrar primeiras linhas
-            print(f"\n      Primeiras 3 linhas:")
+            print("\n      Primeiras 3 linhas:")
             print(df.head(3).to_string(index=False))
-            
+
             # Verificar se tem coluna PTS
             if 'PTS' in df.columns:
-                print(f"\n      ✓ Coluna PTS encontrada")
+                print("\n      ✓ Coluna PTS encontrada")
                 print(f"        - Valores únicos de PTS: {sorted(df['PTS'].dropna().unique())}")
             else:
-                print(f"\n      ⚠️  Coluna PTS NÃO encontrada")
+                print("\n      ⚠️  Coluna PTS NÃO encontrada")
 
 print("\n" + "=" * 80)
 print("ANÁLISE DO ARQUIVO DE TABELAS ATUAL")
@@ -55,22 +55,22 @@ tabelas_path = 'tabelas/Tabelas_marco_2026.xlsx'
 if os.path.exists(tabelas_path):
     print(f"\n📁 Arquivo: {tabelas_path}")
     print("-" * 80)
-    
+
     excel_file = pd.ExcelFile(tabelas_path)
     print(f"   Abas disponíveis: {excel_file.sheet_names}")
-    
+
     for aba in excel_file.sheet_names:
         print(f"\n   📊 Aba: {aba}")
         df = pd.read_excel(tabelas_path, sheet_name=aba)
         print(f"      Dimensões: {df.shape[0]} linhas x {df.shape[1]} colunas")
         print(f"      Colunas: {list(df.columns)}")
-        
+
         if 'PTS' in df.columns:
-            print(f"\n      ✓ Coluna PTS encontrada")
+            print("\n      ✓ Coluna PTS encontrada")
             print(f"        - Valores únicos de PTS: {sorted(df['PTS'].dropna().unique())}")
-            
+
             if 'PRODUTO' in df.columns:
-                print(f"\n      Produtos com pontuação:")
+                print("\n      Produtos com pontuação:")
                 pts_por_produto = df.groupby('PRODUTO')['PTS'].first()
                 for produto, pts in pts_por_produto.items():
                     print(f"        - {produto}: {pts} pontos")

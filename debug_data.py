@@ -41,26 +41,26 @@ print("=" * 80)
 
 print(f"\nTotal de registros: {len(df_consolidado)}")
 print(f"\nTipo da coluna DATA: {df_consolidado['DATA'].dtype}")
-print(f"\nPrimeiros 10 valores de DATA:")
+print("\nPrimeiros 10 valores de DATA:")
 print(df_consolidado['DATA'].head(10))
 
-print(f"\n\nDatas únicas:")
+print("\n\nDatas únicas:")
 datas_unicas = df_consolidado['DATA'].unique()
 print(f"Quantidade de datas únicas: {len(datas_unicas)}")
-print(f"\nDatas únicas ordenadas:")
+print("\nDatas únicas ordenadas:")
 for data in sorted(datas_unicas):
     count = len(df_consolidado[df_consolidado['DATA'] == data])
     print(f"  {data}: {count} transações")
 
-print(f"\n\nGroupBy por DATA:")
+print("\n\nGroupBy por DATA:")
 evolucao = df_consolidado.groupby('DATA').agg({
     'VALOR': 'sum',
     'pontos': 'sum'
 }).reset_index()
 
 print(f"Linhas após groupby: {len(evolucao)}")
-print(f"\nPrimeiras 10 linhas do groupby:")
+print("\nPrimeiras 10 linhas do groupby:")
 print(evolucao.head(10))
 
-print(f"\n\nVerificando se DATA contém timestamp:")
+print("\n\nVerificando se DATA contém timestamp:")
 print(df_consolidado['DATA'].head(5).apply(lambda x: type(x)))

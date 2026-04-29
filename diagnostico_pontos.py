@@ -4,10 +4,8 @@ no cálculo de valor e pontos do dashboard Supabase.
 
 Usa requests direto na REST API (sem SDK supabase).
 """
-import json
 import os
 import sys
-from urllib.parse import quote
 
 # python-dotenv está no venv
 from dotenv import load_dotenv
@@ -238,9 +236,9 @@ print(f"Valor com conta_valor=True/None:     R$ {total_valor_cv:>15,.2f}")
 print(f"Pontos TODOS:                        {total_pontos:>15,.2f}")
 print(f"Pontos com conta_pontuacao=True/None:{total_pontos_cp:>15,.2f}")
 print()
-print(f"Valor esperado pelo usuario:         R$  9.670.368,25")
-print(f"Valor mostrado no dashboard:         R$ 10.146.358,55")
-print(f"Diferenca:                           R$    475.990,30")
+print("Valor esperado pelo usuario:         R$  9.670.368,25")
+print("Valor mostrado no dashboard:         R$ 10.146.358,55")
+print("Diferenca:                           R$    475.990,30")
 print()
 
 # Detalhar categorias com conta_valor=False
