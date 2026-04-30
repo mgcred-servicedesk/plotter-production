@@ -1699,3 +1699,156 @@ div[data-testid="column"]:nth-child(4) [data-testid="stMetric"] {
         print-color-adjust: exact;
     }
 }
+
+/* ── Custom HTML Cards (mg-kpi-*) ───────────────────────
+ * Estilos base centralizados aqui para evitar reemissão
+ * a cada rerun do Streamlit (antes viviam em kpi_cards_reforma.py).
+ * Tipografia usa clamp() para escalar fluido entre breakpoints.
+ * ─────────────────────────────────────────────────────── */
+
+.mg-kpi-hero {
+    background: var(--mg-surface);
+    border-radius: var(--mg-radius-xl);
+    padding: clamp(20px, 2vw, 36px) clamp(24px, 2.5vw, 44px);
+    text-align: center;
+    box-shadow: var(--mg-shadow-md);
+    border: 1px solid var(--mg-border);
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+}
+
+.mg-kpi-hero:hover {
+    transform: translateY(-2px);
+    box-shadow: var(--mg-shadow-lg);
+}
+
+.mg-kpi-label {
+    font-size: clamp(11px, 0.85vw, 14px);
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: 0.8px;
+    color: var(--mg-text-muted);
+    margin-bottom: 12px;
+}
+
+.mg-kpi-valor {
+    font-size: clamp(26px, 3vw, 52px);
+    font-weight: 700;
+    color: var(--mg-text);
+    line-height: 1.1;
+    margin-bottom: 8px;
+}
+
+.mg-kpi-status {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 16px;
+    font-weight: 600;
+    padding: 6px 14px;
+    border-radius: 20px;
+    background: var(--mg-hover-bg);
+}
+
+.mg-kpi-gap {
+    font-size: clamp(20px, 2vw, 30px);
+    color: var(--mg-danger);
+}
+
+.mg-kpi-sub {
+    font-size: clamp(13px, 1vw, 15px);
+    color: var(--mg-text-muted);
+    margin-top: 8px;
+}
+
+.mg-kpi-context {
+    background: var(--mg-surface);
+    border-radius: var(--mg-radius-lg);
+    padding: 18px 20px;
+    border: 1px solid var(--mg-border);
+    box-shadow: var(--mg-shadow-sm);
+    transition: transform 0.15s ease, box-shadow 0.15s ease;
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-start;
+    box-sizing: border-box;
+}
+
+.mg-kpi-context:hover {
+    transform: translateY(-2px);
+    box-shadow: var(--mg-shadow-md);
+}
+
+.mg-kpi-ctx-label {
+    font-size: clamp(11px, 0.85vw, 13px);
+    font-weight: 500;
+    text-transform: uppercase;
+    color: var(--mg-text-muted);
+    margin-bottom: 8px;
+}
+
+.mg-kpi-ctx-valor {
+    font-size: clamp(18px, 1.8vw, 28px);
+    font-weight: 600;
+    color: var(--mg-text);
+}
+
+.mg-kpi-ctx-sub {
+    font-size: clamp(12px, 0.85vw, 14px);
+    color: var(--mg-text-muted);
+    margin-top: 6px;
+    line-height: 1.4;
+}
+
+/* Carrossel MIX: scrollbar oculta */
+#mg-mix-scroll {
+    scrollbar-width: none;
+}
+#mg-mix-scroll::-webkit-scrollbar {
+    display: none;
+}
+
+/* ── Large screens (>= 1400px) ──────────────────────── */
+@media (min-width: 1400px) {
+    .main .block-container {
+        padding-left: 2rem !important;
+        padding-right: 2rem !important;
+    }
+
+    .mg-kpi-context {
+        padding: 22px 26px;
+    }
+
+    .mg-kpi-ctx-sub {
+        line-height: 1.5;
+    }
+}
+
+/* ── Additions to Tablet (<=1024px) — custom cards ─── */
+@media (max-width: 1024px) {
+    .mg-kpi-context {
+        padding: 14px 16px;
+    }
+
+    .mg-kpi-ctx-sub {
+        font-size: 12px;
+    }
+}
+
+/* ── Additions to Mobile (<=768px) — custom cards ───── */
+@media (max-width: 768px) {
+    .mg-kpi-context {
+        padding: 12px 14px;
+    }
+
+    .mg-kpi-label {
+        margin-bottom: 8px;
+    }
+
+    .mg-kpi-sub {
+        margin-top: 6px;
+    }
+}

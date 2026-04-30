@@ -66,141 +66,70 @@ def render_kpis_principais(
 
     cor_status, bg_status, emoji_status, label_status = get_status_full(perc_ating)
 
-    # CSS para os cards reformulados
-    css_cards = """
-    <style>
-    .mg-kpi-hero {
-        background: var(--mg-surface);
-        border-radius: 16px;
-        padding: 28px 32px;
-        text-align: center;
-        box-shadow: var(--mg-shadow-md);
-        border: 1px solid var(--mg-border);
-        transition: transform 0.2s ease, box-shadow 0.2s ease;
-    }
-    .mg-kpi-hero:hover {
-        transform: translateY(-2px);
-        box-shadow: var(--mg-shadow-lg);
-    }
-    .mg-kpi-label {
-        font-size: 14px;
-        font-weight: 500;
-        text-transform: uppercase;
-        letter-spacing: 0.8px;
-        color: var(--mg-text-muted);
-        margin-bottom: 12px;
-    }
-    .mg-kpi-valor {
-        font-size: 42px;
-        font-weight: 700;
-        color: var(--mg-text);
-        line-height: 1.1;
-        margin-bottom: 8px;
-    }
-    .mg-kpi-status {
-        display: inline-flex;
-        align-items: center;
-        gap: 6px;
-        font-size: 16px;
-        font-weight: 600;
-        padding: 6px 14px;
-        border-radius: 20px;
-        background: var(--mg-hover-bg);
-    }
-    .mg-kpi-gap {
-        font-size: 24px;
-        color: var(--mg-danger);
-    }
-    .mg-kpi-sub {
-        font-size: 15px;
-        color: var(--mg-text-muted);
-        margin-top: 8px;
-    }
-    </style>
-    """
-    st.markdown(css_cards, unsafe_allow_html=True)
-
     # Linha dos 3 KPIs principais
-    # Obter dados adicionais necessários
     meta_mix = kpis.get("meta_mix", 0)
     perc_proj = kpis.get("perc_proj", 0)
     du_restantes = kpis.get("du_restantes", 1)
+    projecao = kpis.get("projecao", 0)
 
-    col1, col2, col3 = st.columns([1.2, 1, 1])
+    pagos_fmt = _formatar_valor_moeda(total_vendas)
+    pagos_total = _formatar_valor_moeda_total(total_vendas)
+    proj_fmt = _formatar_valor_moeda(projecao)
+    meta_mix_fmt = _formatar_valor_moeda_total(meta_mix)
 
-    with col1:
-        # Card: Pagos (antes Realizado)
-        pagos_fmt = _formatar_valor_moeda(total_vendas)
-        pagos_total = _formatar_valor_moeda_total(total_vendas)
-        projecao = kpis.get("projecao", 0)
-        proj_fmt = _formatar_valor_moeda(projecao)
-        st.markdown(
-            f"""
-            <div class="mg-kpi-hero">
-                <div class="mg-kpi-label">💰 Pagos</div>
-                <div class="mg-kpi-valor">{pagos_fmt}</div>
-                <div class="mg-kpi-sub" style="font-size: 16px; font-weight: 500;">
-                    {pagos_total} <span style="color: var(--mg-text-muted); font-size: 14px;">
-                    → Proj: {proj_fmt}</span>
-                </div>
+    card_pagos = f"""
+        <div class="mg-kpi-hero" style="flex: 1.2;">
+            <div class="mg-kpi-label">💰 Pagos</div>
+            <div class="mg-kpi-valor">{pagos_fmt}</div>
+            <div class="mg-kpi-sub" style="font-size: 16px; font-weight: 500;">
+                {pagos_total}
+                <span style="color: var(--mg-text-muted); font-size: 14px;">
+                    → Proj: {proj_fmt}
+                </span>
             </div>
-            """,
-            unsafe_allow_html=True,
-        )
+        </div>"""
 
-    with col2:
-        # Card: % Meta (com projeção e valor da meta)
-        meta_mix_fmt = _formatar_valor_moeda_total(meta_mix)
-        st.markdown(
-            f"""
-            <div class="mg-kpi-hero">
-                <div class="mg-kpi-label">📊 % Meta Atingida</div>
-                <div class="mg-kpi-valor" style="color: {cor_status};">
-                    {formatar_percentual(perc_ating)}
-                </div>
+    card_meta = f"""
+        <div class="mg-kpi-hero" style="flex: 1;">
+            <div class="mg-kpi-label">📊 % Meta Atingida</div>
+            <div class="mg-kpi-valor" style="color: {cor_status};">
+                {formatar_percentual(perc_ating)}
+            </div>
+            <div class="mg-kpi-sub" style="font-size: 14px;">
+                Projeção: {formatar_percentual(perc_proj)} |
+                MIX: {meta_mix_fmt}
+            </div>
+        </div>"""
+
+    if gap > 0:
+        gap_fmt = _formatar_valor_moeda(gap)
+        gap_por_dia = gap / du_restantes if du_restantes > 1 else gap
+        gap_por_dia_fmt = _formatar_valor_moeda(gap_por_dia)
+        card_gap = f"""
+            <div class="mg-kpi-hero" style="flex: 1;">
+                <div class="mg-kpi-label">🎯 Falta para Meta</div>
+                <div class="mg-kpi-valor mg-kpi-gap">-{gap_fmt}</div>
                 <div class="mg-kpi-sub" style="font-size: 14px;">
-                    Projeção: {formatar_percentual(perc_proj)} |
-                    MIX: {meta_mix_fmt}
+                    Falta: {_formatar_valor_moeda_total(gap)}<br>
+                    <strong>{gap_por_dia_fmt}/dia</strong>
                 </div>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
+            </div>"""
+    else:
+        card_gap = f"""
+            <div class="mg-kpi-hero" style="flex: 1;">
+                <div class="mg-kpi-label">🎯 Falta para Meta</div>
+                <div class="mg-kpi-valor" style="color: #10A37F;">✓ Meta Atingida</div>
+                <div class="mg-kpi-sub" style="font-size: 14px;">
+                    +{_formatar_valor_moeda_total(abs(gap))} acima
+                </div>
+            </div>"""
 
-    with col3:
-        # Card: Falta para Meta (gap em valor e por dia)
-        if gap > 0:
-            gap_fmt = _formatar_valor_moeda(gap)
-            gap_por_dia = gap / du_restantes if du_restantes > 1 else gap
-            gap_por_dia_fmt = _formatar_valor_moeda(gap_por_dia)
-            st.markdown(
-                f"""
-                <div class="mg-kpi-hero">
-                    <div class="mg-kpi-label">🎯 Falta para Meta</div>
-                    <div class="mg-kpi-valor mg-kpi-gap">-{gap_fmt}</div>
-                    <div class="mg-kpi-sub" style="font-size: 14px;">
-                        Falta: {_formatar_valor_moeda_total(gap)}<br>
-                        <strong>{gap_por_dia_fmt}/dia</strong>
-                    </div>
-                </div>
-                """,
-                unsafe_allow_html=True,
-            )
-        else:
-            st.markdown(
-                f"""
-                <div class="mg-kpi-hero">
-                    <div class="mg-kpi-label">🎯 Falta para Meta</div>
-                    <div class="mg-kpi-valor" style="color: #10A37F;">
-                    ✓ Meta Atingida
-                </div>
-                    <div class="mg-kpi-sub" style="font-size: 14px;">
-                        +{_formatar_valor_moeda_total(abs(gap))} acima
-                    </div>
-                </div>
-                """,
-                unsafe_allow_html=True,
-            )
+    st.markdown(
+        f'<div style="display:flex; gap:clamp(10px,1.2vw,20px); align-items:stretch;">'
+        f"{card_pagos}{card_meta}{card_gap}"
+        f"</div>",
+        unsafe_allow_html=True,
+    )
 
 
 def render_kpis_contexto(
@@ -251,113 +180,62 @@ def render_kpis_contexto(
     meta_mix_ctx = kpis.get("meta_mix", 1)
     impacto_cancel = (valor_cancel / meta_mix_ctx * 100) if meta_mix_ctx > 0 else 0
 
-    css_contexto = """
-    <style>
-    .mg-kpi-context {
-        background: var(--mg-surface);
-        border-radius: 12px;
-        padding: 18px 20px;
-        border: 1px solid var(--mg-border);
-        box-shadow: var(--mg-shadow-sm);
-        transition: transform 0.15s ease, box-shadow 0.15s ease;
-    }
-    .mg-kpi-context:hover {
-        transform: translateY(-2px);
-        box-shadow: var(--mg-shadow-md);
-    }
-    .mg-kpi-ctx-label {
-        font-size: 13px;
-        font-weight: 500;
-        text-transform: uppercase;
-        color: var(--mg-text-muted);
-        margin-bottom: 8px;
-    }
-    .mg-kpi-ctx-valor {
-        font-size: 26px;
-        font-weight: 600;
-        color: var(--mg-text);
-    }
-    .mg-kpi-ctx-sub {
-        font-size: 14px;
-        color: var(--mg-text-muted);
-        margin-top: 6px;
-        line-height: 1.4;
-    }
-    </style>
-    """
-    st.markdown(css_contexto, unsafe_allow_html=True)
+    # Linha de contexto — flex container único para altura uniforme
+    cor_churn, emoji_churn, nivel_churn = get_churn_status(indice_perda)
 
-    # Linha de contexto
-    col1, col2, col3, col4 = st.columns(4)
-
-    with col1:
-        st.markdown(
-            f"""
-            <div class="mg-kpi-context">
-                <div class="mg-kpi-ctx-label">⏳ Em Análise</div>
-                <div class="mg-kpi-ctx-valor">{formatar_moeda(valor_analise)}</div>
-                <div class="mg-kpi-ctx-sub">
-                    {qtd_analise:,} propostas<br>
-                    💡 Se converter 35%: <strong>+{formatar_moeda(potencial)}</strong>
-                </div>
+    card_analise = f"""
+        <div class="mg-kpi-context" style="flex: 1;">
+            <div class="mg-kpi-ctx-label">⏳ Em Análise</div>
+            <div class="mg-kpi-ctx-valor">{_formatar_valor_moeda(valor_analise)}</div>
+            <div class="mg-kpi-ctx-sub">
+                <span style="font-size:12px;">{formatar_moeda(valor_analise)}</span><br>
+                {qtd_analise:,} propostas<br>
+                💡 Se converter 35%: <strong>+{_formatar_valor_moeda(potencial)}</strong>
             </div>
-            """,
-            unsafe_allow_html=True,
-        )
+        </div>"""
 
-    with col2:
-        cor_churn, emoji_churn, nivel_churn = get_churn_status(indice_perda)
-        st.markdown(
-            f"""
-            <div class="mg-kpi-context">
-                <div class="mg-kpi-ctx-label">⚠️ Cancelados</div>
-                <div class="mg-kpi-ctx-valor">{formatar_moeda(valor_cancel)}</div>
-                <div class="mg-kpi-ctx-sub">
-                    % Cancelamento:
-                    <strong style="color: {cor_churn};">{formatar_percentual(indice_perda)}</strong>
-                    {emoji_churn}<br>
-                    📉 Nível: <strong>{nivel_churn}</strong>
-                    | Impacto: <strong>-{impacto_cancel:.1f}% da meta</strong>
-                </div>
+    card_cancel = f"""
+        <div class="mg-kpi-context" style="flex: 1;">
+            <div class="mg-kpi-ctx-label">⚠️ Cancelados</div>
+            <div class="mg-kpi-ctx-valor">{_formatar_valor_moeda(valor_cancel)}</div>
+            <div class="mg-kpi-ctx-sub">
+                <span style="font-size:12px;">{formatar_moeda(valor_cancel)}</span><br>
+                % Cancelamento:
+                <strong style="color: {cor_churn};">{formatar_percentual(indice_perda)}</strong>
+                {emoji_churn}<br>
+                📉 Nível: <strong>{nivel_churn}</strong>
+                | Impacto: <strong>-{impacto_cancel:.1f}% da meta</strong>
             </div>
-            """,
-            unsafe_allow_html=True,
-        )
+        </div>"""
 
-    with col3:
-        st.markdown(
-            f"""
-            <div class="mg-kpi-context">
-                <div class="mg-kpi-ctx-label">👤 Média por Consultor</div>
-                <div class="mg-kpi-ctx-valor">{formatar_moeda(media_consultor)}</div>
-                <div class="mg-kpi-ctx-sub">
-                    Acumulado entre {num_consultores:,} consultores<br>
-                    Média DU/consultor: <strong>{formatar_moeda(media_du_consultor)}</strong>
-                </div>
+    card_consultor = f"""
+        <div class="mg-kpi-context" style="flex: 1;">
+            <div class="mg-kpi-ctx-label">👤 Média por Consultor</div>
+            <div class="mg-kpi-ctx-valor">{_formatar_valor_moeda(media_consultor)}</div>
+            <div class="mg-kpi-ctx-sub">
+                <span style="font-size:12px;">{formatar_moeda(media_consultor)}</span><br>
+                Acumulado entre {num_consultores:,} consultores<br>
+                Média DU/consultor: <strong>{_formatar_valor_moeda(media_du_consultor)}</strong>
             </div>
-            """,
-            unsafe_allow_html=True,
-        )
+        </div>"""
 
-    with col4:
-        st.markdown(
-            f"""
-            <div class="mg-kpi-context">
-                <div class="mg-kpi-ctx-label">
-                    🏪 Média por Loja
-                </div>
-                <div class="mg-kpi-ctx-valor">
-                    {formatar_moeda(media_loja)}
-                </div>
-                <div class="mg-kpi-ctx-sub">
-                    Acumulado entre {num_lojas:,} lojas<br>
-                    Média DU/loja:
-                    <strong>{formatar_moeda(media_du_loja)}</strong>
-                </div>
+    card_loja = f"""
+        <div class="mg-kpi-context" style="flex: 1;">
+            <div class="mg-kpi-ctx-label">🏪 Média por Loja</div>
+            <div class="mg-kpi-ctx-valor">{_formatar_valor_moeda(media_loja)}</div>
+            <div class="mg-kpi-ctx-sub">
+                <span style="font-size:12px;">{formatar_moeda(media_loja)}</span><br>
+                Acumulado entre {num_lojas:,} lojas<br>
+                Média DU/loja: <strong>{_formatar_valor_moeda(media_du_loja)}</strong>
             </div>
-            """,
-            unsafe_allow_html=True,
-        )
+        </div>"""
+
+    st.markdown(
+        f'<div style="display:flex; gap:clamp(10px,1.2vw,20px); align-items:stretch;">'
+        f"{card_analise}{card_cancel}{card_consultor}{card_loja}"
+        f"</div>",
+        unsafe_allow_html=True,
+    )
 
 
 def render_bloco_media_projecao(kpis: Dict) -> None:
@@ -565,22 +443,22 @@ def render_cards_produto_mix(
     mostrar_comparativo = perfil in perfis_comparativo
 
     st.markdown("---")
-    st.markdown("### 🏷️ Produtos MIX")
 
-    # 5 colunas para os 5 produtos
-    cols = st.columns(len(produtos_mix))
-    for col, prod in zip(cols, produtos_mix):
+    # Cards MIX — carrossel horizontal estilo Netflix
+    cards_html = []
+    for prod in produtos_mix:
         nome = _display_name_produto(prod.get("produto", ""))
         valor = float(prod.get("valor_atual", 0) or 0)
         meta_total = float(prod.get("meta_total", 0) or 0)
         meta_dia = float(prod.get("meta_diaria", 0) or 0)
         media_du = float(prod.get("ritmo_diario", 0) or 0)
+        projecao = float(prod.get("projecao", 0) or 0)
+        perc_proj = float(prod.get("perc_projecao", 0) or 0)
 
         # Indicador de comparação com média da organização.
         # IMPORTANTE: comparamos a Média DU do perfil (`media_du`)
         # com a Média DU empresa (`media_org`) — ambas no mesmo
         # ritmo diário, calculadas em ``calcular_medias_organizacao``.
-        linha_comparativo = ""
         if mostrar_comparativo and medias_organizacao:
             media_org = float(
                 medias_organizacao.get(prod.get("produto", ""), 0) or 0
@@ -591,16 +469,13 @@ def render_cards_produto_mix(
             linha_comparativo = (
                 f'<div style="margin-top: 6px; padding-top: 6px; '
                 f'border-top: 1px solid var(--mg-border);">'
-                f'<span style="font-size: 13px; '
-                f'color: var(--mg-text-muted);">'
+                f'<span style="font-size: 13px; color: var(--mg-text-muted);">'
                 f'Média empresa: </span>'
-                f'<strong style="color: {cor_ind};">'
-                f'{formatar_moeda(media_org)}</strong> '
+                f'<strong style="color: {cor_ind};">{formatar_moeda(media_org)}</strong> '
                 f'<span style="color: {cor_ind}; font-size: 13px;">'
                 f'{emoji} {descricao} ({label_ind})</span></div>'
             )
         else:
-            # Admin/gestor: mostrar % atingimento (métrica de gestão)
             perc = float(prod.get("perc_atingido", 0) or 0)
             cor = (
                 "#10A37F" if perc >= 100
@@ -608,30 +483,72 @@ def render_cards_produto_mix(
                 else "#EF4444"
             )
             linha_comparativo = (
-                f"<span style='color: {cor}; font-weight: 600;'>"
+                f"Atingimento: <span style='color: {cor}; font-weight: 600;'>"
                 f"{perc:.1f}%</span>"
             )
 
-        with col:
-            st.markdown(
-                f"""
-                <div class="mg-kpi-context" style="padding: 14px 16px;">
-                    <div class="mg-kpi-ctx-label" style="font-size: 14px;">
-                        {nome}
-                    </div>
-                    <div class="mg-kpi-ctx-valor" style="font-size: 22px;">
-                        {formatar_moeda(valor)}
-                    </div>
-                    <div class="mg-kpi-ctx-sub" style="font-size: 14px; line-height: 1.5;">
-                        Meta: <strong>{formatar_moeda(meta_total)}</strong><br>
-                        Meta/dia: <strong>{formatar_moeda(meta_dia)}</strong><br>
-                        Média DU: <strong>{formatar_moeda(media_du)}</strong><br>
-                        {linha_comparativo}
-                    </div>
-                </div>
-                """,
-                unsafe_allow_html=True,
-            )
+        cor_proj = (
+            "#10A37F" if perc_proj >= 100
+            else "#F59E0B" if perc_proj >= 70
+            else "#EF4444"
+        )
+        cards_html.append(
+            f'<div class="mg-kpi-context" style="'
+            f'min-width:clamp(180px, 20%, 260px); flex-shrink:0; scroll-snap-align:start;">'
+            f'<div class="mg-kpi-ctx-label">{nome}</div>'
+            f'<div class="mg-kpi-ctx-valor">{formatar_moeda(valor)}</div>'
+            f'<div class="mg-kpi-ctx-sub">'
+            f'Meta: <strong>{formatar_moeda(meta_total)}</strong><br>'
+            f'Meta/dia: <strong>{formatar_moeda(meta_dia)}</strong><br>'
+            f'Média DU: <strong>{formatar_moeda(media_du)}</strong><br>'
+            f'Projeção: <strong>{formatar_moeda(projecao)}</strong>'
+            f'<span style="font-size:12px; color:{cor_proj};">({perc_proj:.1f}%)</span><br>'
+            f'{linha_comparativo}'
+            f'</div></div>'
+        )
+
+    btn_style = (
+        "background:var(--mg-surface); border:1px solid var(--mg-border); "
+        "border-radius:8px; width:32px; height:32px; cursor:pointer; "
+        "font-size:18px; line-height:1; display:flex; align-items:center; "
+        "justify-content:center; box-shadow:var(--mg-shadow-sm); "
+        "color:var(--mg-text); flex-shrink:0;"
+    )
+    # Botões sem onclick — JS anexado via st.iframe (same-origin)
+    # porque React descarta atributos onclick ao renderizar via dangerouslySetInnerHTML
+    st.markdown(
+        f'<div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:12px;">'
+        f'<span style="font-size:1.25rem; font-weight:700;">🏷️ Produtos MIX</span>'
+        f'<div style="display:flex; gap:8px;">'
+        f'<button id="mg-mix-prev" style="{btn_style}">&#8249;</button>'
+        f'<button id="mg-mix-next" style="{btn_style}">&#8250;</button>'
+        f'</div></div>'
+        f'<div id="mg-mix-scroll" style="display:flex; gap:clamp(10px,1.2vw,20px); align-items:stretch; '
+        f'overflow-x:auto; scroll-snap-type:x mandatory; -webkit-overflow-scrolling:touch; '
+        f'padding-bottom:4px;">'
+        + "".join(cards_html)
+        + "</div>",
+        unsafe_allow_html=True,
+    )
+    st.iframe(
+        """
+        <script>
+        (function () {
+            function attach() {
+                var p = window.parent.document;
+                var scroll = p.getElementById('mg-mix-scroll');
+                var prev   = p.getElementById('mg-mix-prev');
+                var next   = p.getElementById('mg-mix-next');
+                if (!scroll || !prev || !next) { setTimeout(attach, 100); return; }
+                prev.onclick = function () { scroll.scrollBy({ left: -216, behavior: 'smooth' }); };
+                next.onclick = function () { scroll.scrollBy({ left:  216, behavior: 'smooth' }); };
+            }
+            attach();
+        })();
+        </script>
+        """,
+        height="content",
+    )
 
 
 def render_cards_aceleradores(
@@ -644,34 +561,31 @@ def render_cards_aceleradores(
     st.markdown("---")
     st.markdown("### 🚀 Aceleradores")
 
-    # 4 colunas para os 4 aceleradores
-    cols = st.columns(len(kpis_qtd))
-    for col, prod in zip(cols, kpis_qtd):
+    # Cards Aceleradores — flex container único para altura uniforme
+    cards_html = []
+    for prod in kpis_qtd:
         nome = prod.get("nome", prod.get("produto", ""))
         qtd = int(prod.get("qtd_paga", 0) or 0)
         proj = int(prod.get("projecao", 0) or 0)
         media_du = float(prod.get("ritmo_diario", 0) or 0)
         qtd_analise = int(prod.get("qtd_analise", 0) or 0)
+        cards_html.append(
+            f'<div class="mg-kpi-context" style="flex: 1;">'
+            f'<div class="mg-kpi-ctx-label">{nome}</div>'
+            f'<div class="mg-kpi-ctx-valor">{qtd:,}</div>'
+            f'<div class="mg-kpi-ctx-sub">'
+            f'Projeção: <strong>{proj:,}</strong><br>'
+            f'Média DU: <strong>{int(round(media_du)):,}</strong><br>'
+            f'Análise: <strong>{qtd_analise:,}</strong>'
+            f'</div></div>'
+        )
 
-        with col:
-            st.markdown(
-                f"""
-                <div class="mg-kpi-context" style="padding: 16px 18px;">
-                    <div class="mg-kpi-ctx-label" style="font-size: 14px;">
-                        {nome}
-                    </div>
-                    <div class="mg-kpi-ctx-valor" style="font-size: 26px;">
-                        {qtd:,}
-                    </div>
-                    <div class="mg-kpi-ctx-sub" style="font-size: 15px; line-height: 1.6;">
-                        Projeção: <strong>{proj:,}</strong><br>
-                        Média DU: <strong>{media_du:.1f}</strong><br>
-                        Análise: <strong>{qtd_analise:,}</strong>
-                    </div>
-                </div>
-                """,
-                unsafe_allow_html=True,
-            )
+    st.markdown(
+        '<div style="display:flex; gap:clamp(10px,1.2vw,20px); align-items:stretch;">'
+        + "".join(cards_html)
+        + "</div>",
+        unsafe_allow_html=True,
+    )
 
 
 def render_kpis_reforma(

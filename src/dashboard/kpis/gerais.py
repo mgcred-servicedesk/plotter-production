@@ -446,6 +446,9 @@ def calcular_metas_produto_diarias(
             (valor_atual / meta_total * 100) if meta_total > 0 else 0
         )
 
+        projecao = ritmo_diario * du_total
+        perc_projecao = (projecao / meta_total * 100) if meta_total > 0 else 0
+
         resultados.append({
             "produto": produto_display,
             "valor_atual": valor_atual,
@@ -454,6 +457,8 @@ def calcular_metas_produto_diarias(
             "meta_diaria": meta_diaria,
             "meta_diaria_restante": meta_diaria_restante,
             "perc_atingido": perc_atingido,
+            "projecao": projecao,
+            "perc_projecao": perc_projecao,
             "du_total": du_total,
             "du_decorridos": du_decorridos,
         })
