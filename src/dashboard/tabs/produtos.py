@@ -20,6 +20,7 @@ from src.dashboard.ui.charts import (
 )
 from src.dashboard.ui.header import chart_card_close, chart_card_open
 from src.dashboard.rls import _obter_perfil_efetivo
+from src.shared.dias_uteis import carregar_feriados
 
 # Regiões excluídas do heatmap comparativo
 _REGIOES_EXCLUIR_HM: frozenset = frozenset({"ALEXANDRE"})
@@ -619,11 +620,21 @@ def render_tab_produtos(
 
             chart_card_close()
 
-    fig = criar_grafico_produtos(df_prod)
+    _fer_atual = carregar_feriados(mes, ano)
+    mes_ant = mes - 1 if mes > 1 else 12
+    ano_ant = ano if mes > 1 else ano - 1
+    _fer_ant = carregar_feriados(mes_ant, ano_ant)
+    fig = criar_grafico_produtos(
+        df_prod,
+        df_atual=df,
+        df_ant=df_ant,
+        feriados_atual=_fer_atual,
+        feriados_ant=_fer_ant,
+    )
     chart_card_open(
         "Analise Completa de Produtos",
         icon="📦",
-        subtitle="Realizado vs Meta, Atingimento, Projecao e Ticket Medio",
+        subtitle="Realizado vs Meta, Projecao vs Meta e Acumulado Mensal",
     )
     st.plotly_chart(fig, width="stretch")
     chart_card_close()

@@ -1057,6 +1057,13 @@ def main():
             try:
                 df_ant_full, _, _ = consolidar_dados(mes_ant, ano_ant)
                 df_ant_full = _aplicar_nomes_display(df_ant_full)
+                # Aplica o mesmo escopo de perfil e filtros de UI do mês
+                # atual, para que a curva do mês anterior no gráfico
+                # acumulado represente a mesma granularidade (região /
+                # loja / consultor) que está sendo visualizada.
+                df_ant_full = aplicar_rls(df_ant_full)
+                if st.session_state.get("ui_filtro_lojas") or st.session_state.get("ui_filtro_consultor"):
+                    df_ant_full = _aplicar_filtros_ui(df_ant_full)
             except Exception:
                 df_ant_full = pd.DataFrame()
             du_dec_ant = calcular_dias_uteis(ano_ant, mes_ant, 1)[0]

@@ -7,6 +7,10 @@ manter coerencia visual entre tema claro e escuro.
 funcoes publicas ``criar_grafico_*``/``criar_heatmap_*``.
 """
 
+from datetime import date, timedelta
+from typing import Optional
+
+import pandas as pd
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
@@ -77,7 +81,47 @@ def _aplicar(fig, t):
     return fig
 
 
-def criar_grafico_produtos(df_produtos):
+def _proximo_du(d: date, feriados: frozenset) -> date:
+    """Avança d para o próximo dia útil (seg-sex, não feriado)."""
+    while d.weekday() >= 5 or d in feriados:
+        d += timedelta(days=1)
+    return d
+
+
+def _serie_acumulado_por_du(
+    df: pd.DataFrame,
+    feriados: Optional[set] = None,
+) -> tuple[list[int], list[float]]:
+    """Agrega VALOR por dia útil e retorna (lista_du, lista_acumulado).
+
+    Datas em fins de semana ou feriados são atribuídas ao próximo DU,
+    preservando o volume total e garantindo que o eixo X tenha exatamente
+    os DU reais do mês (ex.: 19 em abril com 3 feriados).
+    """
+    if df is None or df.empty or "DATA" not in df.columns or "VALOR" not in df.columns:
+        return [], []
+    _fer = frozenset(feriados) if feriados else frozenset()
+    datas = pd.to_datetime(df["DATA"], errors="coerce").dt.date
+    datas_ajustadas = datas.apply(lambda d: _proximo_du(d, _fer) if pd.notna(d) else None)
+    diario = (
+        df.assign(DATA=datas_ajustadas)[df["VALOR"] > 0]
+        .dropna(subset=["DATA"])
+        .groupby("DATA")["VALOR"]
+        .sum()
+        .sort_index()
+        .cumsum()
+    )
+    dus = list(range(1, len(diario) + 1))
+    return dus, diario.tolist()
+
+
+def criar_grafico_produtos(
+    df_produtos,
+    df_atual: Optional[pd.DataFrame] = None,
+    df_ant: Optional[pd.DataFrame] = None,
+    feriados_atual: Optional[set] = None,
+    feriados_ant: Optional[set] = None,
+):
     """Grafico completo de produtos."""
     t = _template()
 
@@ -86,13 +130,13 @@ def criar_grafico_produtos(df_produtos):
         cols=2,
         subplot_titles=(
             "Realizado vs Meta",
-            "% Atingimento por Produto",
+            "Acumulado do Mes — Atual vs Anterior",
             "Projecao vs Meta",
-            "Ticket Medio por Produto",
+            "",
         ),
         specs=[
-            [{"type": "bar"}, {"type": "bar"}],
-            [{"type": "scatter"}, {"type": "bar"}],
+            [{"type": "bar"}, {"type": "scatter", "rowspan": 2}],
+            [{"type": "scatter"}, None],
         ],
         vertical_spacing=0.14,
         horizontal_spacing=0.10,
@@ -126,35 +170,6 @@ def criar_grafico_produtos(df_produtos):
         ),
         row=1,
         col=1,
-    )
-
-    cores = df_produtos["% Atingimento"].apply(
-        lambda x: CHART_COLORS["success"] if x >= 100 else CHART_COLORS["danger"]
-    )
-    fig.add_trace(
-        go.Bar(
-            name="% Atingimento",
-            x=df_produtos["Produto"],
-            y=df_produtos["% Atingimento"],
-            marker_color=cores,
-            marker_line=dict(width=0),
-            text=df_produtos["% Atingimento"].apply(lambda x: f"{x:.1f}%"),
-            textposition="outside",
-            textfont=dict(size=10),
-            showlegend=False,
-        ),
-        row=1,
-        col=2,
-    )
-
-    fig.add_hline(
-        y=100,
-        line_dash="dash",
-        line_color=CHART_COLORS["neutral"],
-        line_width=1,
-        opacity=0.5,
-        row=1,
-        col=2,
     )
 
     fig.add_trace(
@@ -192,20 +207,59 @@ def criar_grafico_produtos(df_produtos):
         col=1,
     )
 
-    fig.add_trace(
-        go.Bar(
-            name="Ticket Medio",
-            x=df_produtos["Produto"],
-            y=df_produtos["Ticket Médio"],
-            marker_color=CHART_COLORS["secondary"],
-            marker_line=dict(width=0),
-            text=df_produtos["Ticket Médio"].apply(formatar_moeda),
-            textposition="outside",
-            textfont=dict(size=10),
-            showlegend=False,
-        ),
-        row=2,
+    # Acumulado mês atual
+    dus_atual, acum_atual = _serie_acumulado_por_du(df_atual, feriados_atual)
+    if dus_atual:
+        fig.add_trace(
+            go.Scatter(
+                name="Mês Atual",
+                x=dus_atual,
+                y=acum_atual,
+                mode="lines+markers",
+                marker=dict(
+                    size=5,
+                    color=CHART_COLORS["primary"],
+                    line=dict(width=1, color=chart_theme()["bg"]),
+                ),
+                line=dict(width=3, color=CHART_COLORS["primary"]),
+                hovertemplate="DU %{x}<br>%{y:,.0f}<extra>Mês Atual</extra>",
+            ),
+            row=1,
+            col=2,
+        )
+
+    # Acumulado mês anterior
+    dus_ant, acum_ant = _serie_acumulado_por_du(df_ant, feriados_ant)
+    if dus_ant:
+        fig.add_trace(
+            go.Scatter(
+                name="Mês Anterior",
+                x=dus_ant,
+                y=acum_ant,
+                mode="lines+markers",
+                marker=dict(size=5, color=CHART_COLORS["neutral"]),
+                line=dict(
+                    width=2,
+                    color=CHART_COLORS["neutral"],
+                    dash="dash",
+                ),
+                hovertemplate="DU %{x}<br>%{y:,.0f}<extra>Mês Anterior</extra>",
+            ),
+            row=1,
+            col=2,
+        )
+
+    fig.update_xaxes(
+        title_text="Dia Útil",
+        row=1,
         col=2,
+        dtick=1,
+    )
+    fig.update_yaxes(
+        title_text="Volume Acumulado (R$)",
+        row=1,
+        col=2,
+        tickformat=",.0f",
     )
 
     fig.update_layout(

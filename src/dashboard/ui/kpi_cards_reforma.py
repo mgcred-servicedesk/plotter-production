@@ -547,7 +547,7 @@ def render_cards_produto_mix(
         })();
         </script>
         """,
-        height="content",
+        height=1,
     )
 
 
