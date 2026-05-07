@@ -924,12 +924,37 @@ def main():
             )
             kpis["gap_valor"] = max(0, meta_global_valor - total_vendas_valor)
 
+            # Média DU de referência: média da região por loja (supervisor)
+            # ou por consultor (consultor). Para outros perfis, sem referência.
+            _df_org_ritmo = None
+            _org_norm = 1
+            if role in ("supervisor", "consultor") and not df_f.empty and "REGIAO" in df_f.columns:
+                _regioes = df_f["REGIAO"].dropna().unique()
+                _df_reg = df_full[df_full["REGIAO"].isin(_regioes)]
+                if not _df_reg.empty:
+                    _df_org_ritmo = _df_reg
+                    if role == "supervisor" and "LOJA" in _df_reg.columns:
+                        _org_norm = max(int(_df_reg["LOJA"].nunique()), 1)
+                    elif role == "consultor" and "CONSULTOR" in _df_reg.columns:
+                        _sups = set(
+                            df_sup_full["SUPERVISOR"].dropna()
+                            if "SUPERVISOR" in df_sup_full.columns
+                            else []
+                        )
+                        _n_cons = int(
+                            _df_reg[~_df_reg["CONSULTOR"].isin(_sups)][
+                                "CONSULTOR"
+                            ].nunique()
+                        )
+                        _org_norm = max(_n_cons, 1)
             kpis_qtd = calcular_kpis_qtd_produtos(
                 df_f,
                 df_analise_f,
                 df_metas_prod_f,
                 kpis.get("du_total", 0),
                 du_decorridos,
+                df_org=_df_org_ritmo,
+                org_norm=_org_norm,
             )
 
             # ── Médias da organização (pre-RLS, granularidade por perfil) ──
@@ -1018,6 +1043,8 @@ def main():
                 perfil=role,
                 df_sup=df_sup_f,
                 du_decorridos=du_decorridos,
+                categorias=categorias,
+                df_analise=df_analise_f,
             )
 
         # ── Navegacao principal ───────────────────

@@ -553,6 +553,7 @@ def render_cards_produto_mix(
 
 def render_cards_aceleradores(
     kpis_qtd: List[Dict],
+    perfil: str = "",
 ) -> None:
     """Renderiza cards para Aceleradores (contados por quantidade)."""
     if not kpis_qtd:
@@ -561,21 +562,31 @@ def render_cards_aceleradores(
     st.markdown("---")
     st.markdown("### 🚀 Aceleradores")
 
+    _usa_ref = perfil in ("supervisor", "consultor")
+    _label_ref = (
+        "Média p/ Loja" if perfil == "supervisor"
+        else "Média p/ Consultor" if perfil == "consultor"
+        else "Média DU"
+    )
+
     # Cards Aceleradores — flex container único para altura uniforme
     cards_html = []
     for prod in kpis_qtd:
         nome = prod.get("nome", prod.get("produto", ""))
         qtd = int(prod.get("qtd_paga", 0) or 0)
         proj = int(prod.get("projecao", 0) or 0)
-        media_du = float(prod.get("ritmo_diario", 0) or 0)
         qtd_analise = int(prod.get("qtd_analise", 0) or 0)
+        if _usa_ref and prod.get("media_ref") is not None:
+            val_comp = int(round(float(prod["media_ref"])))
+        else:
+            val_comp = int(round(float(prod.get("ritmo_diario", 0) or 0)))
         cards_html.append(
             f'<div class="mg-kpi-context" style="flex: 1;">'
             f'<div class="mg-kpi-ctx-label">{nome}</div>'
             f'<div class="mg-kpi-ctx-valor">{qtd:,}</div>'
             f'<div class="mg-kpi-ctx-sub">'
             f'Projeção: <strong>{proj:,}</strong><br>'
-            f'Média DU: <strong>{int(round(media_du)):,}</strong><br>'
+            f'{_label_ref}: <strong>{val_comp:,}</strong><br>'
             f'Análise: <strong>{qtd_analise:,}</strong>'
             f'</div></div>'
         )
@@ -626,7 +637,7 @@ def render_kpis_reforma(
     )
 
     # 4. Cards Aceleradores (por quantidade)
-    render_cards_aceleradores(kpis_qtd)
+    render_cards_aceleradores(kpis_qtd, perfil=perfil or "")
 
     # 5. Média e Projeção
     render_bloco_media_projecao(kpis)

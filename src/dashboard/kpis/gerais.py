@@ -508,6 +508,8 @@ def calcular_kpis_qtd_produtos(
     df_metas_produto: pd.DataFrame,
     du_total: int,
     du_decorridos: int,
+    df_org: Optional[pd.DataFrame] = None,
+    org_norm: int = 1,
 ) -> List[Dict]:
     """
     Calcula KPIs de quantidade para produtos contados apenas
@@ -564,9 +566,15 @@ def calcular_kpis_qtd_produtos(
                 ].sum()
             )
 
-        # Ritmo, projeção e meta diária restante
-        ritmo = qtd_paga / du_decorridos if du_decorridos > 0 else 0
-        projecao = ritmo * du_total
+        # Ritmo local (base de projeção e Média DU para perfis superiores)
+        ritmo_local = qtd_paga / du_decorridos if du_decorridos > 0 else 0
+        ritmo = ritmo_local
+        projecao = ritmo_local * du_total
+        # Referência regional por entidade (loja ou consultor) — sem divisão por DU
+        media_ref: Optional[float] = None
+        if df_org is not None and col in df_org.columns:
+            qtd_org = int(df_org[col].sum())
+            media_ref = qtd_org / max(org_norm, 1)
         gap = max(0, meta - qtd_paga)
         meta_dr = gap / du_rest if du_rest > 0 else 0
         perc = (qtd_paga / meta * 100) if meta > 0 else 0
@@ -579,6 +587,7 @@ def calcular_kpis_qtd_produtos(
             "meta": meta,
             "perc_atingido": perc,
             "ritmo_diario": ritmo,
+            "media_ref": media_ref,
             "projecao": projecao,
             "meta_diaria_restante": meta_dr,
             "du_restantes": du_rest,

@@ -8,12 +8,13 @@ Identifica automaticamente onde a equipe deve focar:
 - Consultores abaixo do esperado
 """
 
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 import pandas as pd
 import streamlit as st
 
 from src.dashboard.formatters import formatar_moeda, formatar_percentual
+from src.dashboard.kpis.gerais import PRODUTOS_DASHBOARD
 from src.dashboard.ui.colors import (
     get_status_color,
     get_status_bg_color,
@@ -69,6 +70,7 @@ _ACELERADORES = [
 def calcular_prioridades_produto(
     metas_produto: List[Dict],
     top_n: int = 3,
+    analise_map: Optional[Dict[str, Dict]] = None,
 ) -> List[Dict]:
     """
     Identifica os produtos com maior prioridade de ação.
@@ -77,8 +79,15 @@ def calcular_prioridades_produto(
     1. Menor % de atingimento
     2. Maior gap financeiro absoluto
 
+    Quando ``analise_map`` é fornecido, enriquece cada entrada com
+    a projeção de atingimento caso os contratos em análise sejam pagos:
+    - qtd_analise: quantidade de contratos em análise
+    - valor_analise: valor total dos contratos em análise
+    - perc_se_pagos: % atingimento projetado se todos forem pagos
+
     Returns:
-        Lista de dicts com: produto, perc_ating, gap_valor, prioridade
+        Lista de dicts com: produto, perc_ating, gap_valor, prioridade,
+        qtd_analise, valor_analise, perc_se_pagos
     """
     prioridades = []
 
@@ -97,12 +106,27 @@ def calcular_prioridades_produto(
 
         # Só inclui produtos com meta cadastrada e abaixo dela
         if meta_total > 0 and perc < 100:
+            nome_prod = prod.get("produto", "")
+            qtd_analise = 0
+            valor_analise = 0.0
+            perc_se_pagos: Optional[float] = None
+
+            if analise_map and nome_prod in analise_map:
+                dados_anal = analise_map[nome_prod]
+                qtd_analise = int(dados_anal.get("qtd", 0))
+                valor_analise = float(dados_anal.get("valor", 0.0))
+                if qtd_analise > 0 and meta_total > 0:
+                    perc_se_pagos = (valor_atual + valor_analise) / meta_total * 100
+
             prioridades.append(
                 {
-                    "produto": prod.get("produto", ""),
+                    "produto": nome_prod,
                     "perc_ating": perc,
                     "gap_valor": gap_valor,
                     "score": score,
+                    "qtd_analise": qtd_analise,
+                    "valor_analise": valor_analise,
+                    "perc_se_pagos": perc_se_pagos,
                 }
             )
 
@@ -115,6 +139,8 @@ def calcular_prioridades_loja(
     df: pd.DataFrame,
     df_metas_produto: pd.DataFrame,
     top_n: int = 4,
+    df_sup: Optional[pd.DataFrame] = None,
+    categorias: Optional[pd.DataFrame] = None,
 ) -> List[Dict]:
     """
     Identifica as lojas com maior prioridade de ação.
@@ -122,11 +148,22 @@ def calcular_prioridades_loja(
     Mesmo raciocínio de calcular_prioridades_regiao, mas agregado
     ao nível de loja individual.
 
+    Quando ``df_sup`` e/ou ``categorias`` são fornecidos, enriquece
+    cada entrada com:
+    - consultores_baixa_perf: até 2 consultores abaixo da média da loja
+    - produtos_baixa_perf: até 2 produtos MIX de pior % atingimento
+
     Returns:
-        Lista de dicts com: loja, regiao, perc_ating, valor, meta, score
+        Lista de dicts com: loja, regiao, perc_ating, valor, meta, score,
+        consultores_baixa_perf, produtos_baixa_perf
     """
     if df.empty or "LOJA" not in df.columns:
         return []
+
+    # Supervisores para exclusão no cálculo de consultores
+    supervisores: set = set()
+    if df_sup is not None and not df_sup.empty and "SUPERVISOR" in df_sup.columns:
+        supervisores = set(df_sup["SUPERVISOR"].dropna().str.strip())
 
     # Meta por loja em valor: usa apenas a coluna MIX (meta em R$).
     meta_por_loja: Dict[str, float] = {}
@@ -140,6 +177,19 @@ def calcular_prioridades_loja(
                     .astype(float),
                 )
             )
+
+    # Mapeamento grupo_dashboard → coluna de meta (via categorias)
+    grupo_meta_map: Dict[str, str] = {}
+    grupos_mix: List[str] = []
+    if (
+        categorias is not None
+        and not categorias.empty
+        and "grupo_dashboard" in categorias.columns
+        and "grupo_meta" in categorias.columns
+    ):
+        _cat = categorias[categorias["grupo_dashboard"].notna()]
+        grupo_meta_map = _cat.groupby("grupo_dashboard")["grupo_meta"].first().to_dict()
+        grupos_mix = sorted(_cat["grupo_dashboard"].unique().tolist())
 
     # Mapeamento LOJA → REGIAO para exibição
     loja_regiao = {}
@@ -161,17 +211,73 @@ def calcular_prioridades_loja(
         meta_loja = float(meta_por_loja.get(loja, 0.0))
         perc = (valor_realizado / meta_loja * 100) if meta_loja > 0 else 0
 
-        if meta_loja > 0 and perc < 100:
-            prioridades.append(
-                {
-                    "loja": loja,
-                    "regiao": loja_regiao.get(loja, ""),
-                    "perc_ating": perc,
-                    "valor": valor_realizado,
-                    "meta": meta_loja,
-                    "score": 100 - perc,
-                }
-            )
+        if meta_loja <= 0 or perc >= 100:
+            continue
+
+        # ── Consultores de menor performance na loja ──────────────
+        consultores_baixa_perf: List[Dict] = []
+        if "CONSULTOR" in df_loja.columns and "VALOR" in df_loja.columns:
+            df_cons = df_loja[~df_loja["CONSULTOR"].isin(supervisores)]
+            if df_cons["CONSULTOR"].nunique() > 1:
+                val_cons = df_cons.groupby("CONSULTOR")["VALOR"].sum()
+                media_loja_val = float(val_cons.mean())
+                abaixo = val_cons[val_cons < media_loja_val].sort_values().head(2)
+                consultores_baixa_perf = [
+                    {
+                        "consultor": cons,
+                        "perc_media": round(float(val) / media_loja_val * 100, 1)
+                        if media_loja_val > 0 else 0.0,
+                    }
+                    for cons, val in abaixo.items()
+                ]
+
+        # ── Produtos MIX de pior % atingimento na loja ────────────
+        produtos_baixa_perf: List[Dict] = []
+        if grupos_mix and "grupo_dashboard" in df_loja.columns:
+            perf_produtos = []
+            for grupo in grupos_mix:
+                val_grupo = float(
+                    df_loja[df_loja["grupo_dashboard"] == grupo]["VALOR"].sum()
+                )
+                meta_key = grupo_meta_map.get(grupo, grupo)
+                meta_grupo = 0.0
+                if (
+                    not df_metas_produto.empty
+                    and meta_key in df_metas_produto.columns
+                    and "LOJA" in df_metas_produto.columns
+                ):
+                    meta_grupo = float(
+                        pd.to_numeric(
+                            df_metas_produto[
+                                df_metas_produto["LOJA"] == loja
+                            ][meta_key],
+                            errors="coerce",
+                        )
+                        .fillna(0)
+                        .sum()
+                    )
+                if meta_grupo > 0:
+                    perf_produtos.append(
+                        {"produto": grupo, "perc": val_grupo / meta_grupo * 100}
+                    )
+            perf_produtos.sort(key=lambda x: x["perc"])
+            produtos_baixa_perf = [
+                {"produto": p["produto"], "perc": round(p["perc"], 1)}
+                for p in perf_produtos[:2]
+            ]
+
+        prioridades.append(
+            {
+                "loja": loja,
+                "regiao": loja_regiao.get(loja, ""),
+                "perc_ating": perc,
+                "valor": valor_realizado,
+                "meta": meta_loja,
+                "score": 100 - perc,
+                "consultores_baixa_perf": consultores_baixa_perf,
+                "produtos_baixa_perf": produtos_baixa_perf,
+            }
+        )
 
     prioridades.sort(key=lambda x: x["score"], reverse=True)
     return prioridades[:top_n]
@@ -182,6 +288,7 @@ def calcular_prioridades_consultor(
     df_sup: pd.DataFrame,
     du_decorridos: int,
     top_n: int = 4,
+    categorias: Optional[pd.DataFrame] = None,
 ) -> List[Dict]:
     """
     Identifica consultores abaixo da média da própria loja.
@@ -189,6 +296,12 @@ def calcular_prioridades_consultor(
     Exclui supervisores e consultores com poucos dias de atividade
     (considerados novos no período — menos de metade dos DU decorridos,
     mínimo 3 dias).
+
+    Quando ``categorias`` é fornecido, enriquece cada entrada com:
+    - produtos_baixa_perf: até 2 grupos MIX onde o consultor está
+      abaixo da média da loja
+    - indicadores_baixa_perf: até 2 aceleradores com menor contagem
+      relativa à média da loja
 
     Returns:
         Lista de dicts: consultor, loja, regiao, valor, perc_media, score
@@ -266,8 +379,82 @@ def calcular_prioridades_consultor(
                 "media_loja_du": float(row["media_loja_du"]),
                 "perc_media": float(row["perc_media"]),
                 "score": 100 - float(row["perc_media"]),
+                "produtos_baixa_perf": [],
+                "indicadores_baixa_perf": [],
             }
         )
+
+    if not result or categorias is None:
+        return result
+
+    # ── Enriquecimento opcional (visão supervisor) ────────────────
+    grupos_mix: List[str] = []
+    if (
+        not categorias.empty
+        and "grupo_dashboard" in categorias.columns
+        and "grupo_meta" in categorias.columns
+    ):
+        _cat = categorias[categorias["grupo_dashboard"].notna()]
+        grupos_mix = sorted(_cat["grupo_dashboard"].unique().tolist())
+
+    df_nao_sup = df[~df["CONSULTOR"].isin(supervisores)]
+
+    for entry in result:
+        cons = entry["consultor"]
+        loja = entry["loja"]
+        df_loja = df_nao_sup[df_nao_sup["LOJA"] == loja]
+        n_cons_loja = df_loja["CONSULTOR"].nunique()
+
+        # Produtos de menor performance (vs média dos consultores da loja)
+        if grupos_mix and "grupo_dashboard" in df.columns:
+            prods = []
+            for grupo in grupos_mix:
+                val_cons = float(
+                    df[
+                        (df["CONSULTOR"] == cons)
+                        & (df["grupo_dashboard"] == grupo)
+                    ]["VALOR"].sum()
+                )
+                val_loja = float(
+                    df_loja[df_loja["grupo_dashboard"] == grupo]["VALOR"].sum()
+                )
+                media_l = val_loja / n_cons_loja if n_cons_loja > 0 else 0
+                if media_l > 0:
+                    prods.append(
+                        {"produto": grupo, "perc": val_cons / media_l * 100}
+                    )
+            prods.sort(key=lambda x: x["perc"])
+            entry["produtos_baixa_perf"] = [
+                {"produto": p["produto"], "perc": round(p["perc"], 1)}
+                for p in prods[:2]
+            ]
+
+        # Indicadores de menor performance (aceleradores vs média da loja)
+        inds = []
+        for acel in _ACELERADORES:
+            col_bool = acel["col_bool"]
+            if col_bool not in df.columns:
+                continue
+            val_cons_ind = int(df[df["CONSULTOR"] == cons][col_bool].sum())
+            val_loja_ind = int(df_loja[col_bool].sum())
+            media_l_ind = val_loja_ind / n_cons_loja if n_cons_loja > 0 else 0
+            if media_l_ind > 0:
+                inds.append(
+                    {
+                        "indicador": acel["nome"],
+                        "icon": acel["icon"],
+                        "perc": val_cons_ind / media_l_ind * 100,
+                    }
+                )
+        inds.sort(key=lambda x: x["perc"])
+        entry["indicadores_baixa_perf"] = [
+            {
+                "indicador": p["indicador"],
+                "icon": p["icon"],
+                "perc": round(p["perc"], 1),
+            }
+            for p in inds[:2]
+        ]
 
     return result
 
@@ -276,6 +463,7 @@ def calcular_prioridades_regiao(
     df: pd.DataFrame,
     df_metas_produto: pd.DataFrame,
     top_n: int = 3,
+    categorias: Optional[pd.DataFrame] = None,
 ) -> List[Dict]:
     """
     Identifica as regiões com maior prioridade de ação.
@@ -284,8 +472,13 @@ def calcular_prioridades_regiao(
     (coluna MIX = meta em valor de todos os produtos da loja), agregada por
     região via mapping LOJA → REGIAO presente em ``df``.
 
+    Quando ``categorias`` é fornecido, enriquece cada entrada com:
+    - lojas_baixa_perf: até 2 lojas abaixo da média da região
+    - produtos_baixa_perf: até 2 produtos MIX de pior % atingimento
+
     Returns:
-        Lista de dicts com: regiao, perc_ating, valor, meta, score
+        Lista de dicts com: regiao, perc_ating, valor, meta, score,
+        lojas_baixa_perf, produtos_baixa_perf
     """
     if df.empty or "REGIAO" not in df.columns or "LOJA" not in df.columns:
         return []
@@ -305,6 +498,19 @@ def calcular_prioridades_regiao(
                 )
             )
 
+    # Mapeamento grupo_dashboard → coluna de meta (via categorias)
+    grupo_meta_map: Dict[str, str] = {}
+    grupos_mix: List[str] = []
+    if (
+        categorias is not None
+        and not categorias.empty
+        and "grupo_dashboard" in categorias.columns
+        and "grupo_meta" in categorias.columns
+    ):
+        _cat = categorias[categorias["grupo_dashboard"].notna()]
+        grupo_meta_map = _cat.groupby("grupo_dashboard")["grupo_meta"].first().to_dict()
+        grupos_mix = sorted(_cat["grupo_dashboard"].unique().tolist())
+
     # Mapping LOJA → REGIAO (a partir de df, fonte canônica)
     loja_regiao = df[["LOJA", "REGIAO"]].drop_duplicates().set_index("LOJA")["REGIAO"]
 
@@ -320,16 +526,74 @@ def calcular_prioridades_regiao(
 
         perc = (valor_realizado / meta_regiao * 100) if meta_regiao > 0 else 0
 
-        if meta_regiao > 0 and perc < 100:
-            prioridades.append(
-                {
-                    "regiao": regiao,
-                    "perc_ating": perc,
-                    "valor": valor_realizado,
-                    "meta": meta_regiao,
-                    "score": 100 - perc,
-                }
+        if meta_regiao <= 0 or perc >= 100:
+            continue
+
+        # ── Lojas de menor performance na região ──────────────────
+        lojas_baixa_perf: List[Dict] = []
+        if "VALOR" in df_reg.columns and df_reg["LOJA"].nunique() > 1:
+            val_loja = df_reg.groupby("LOJA")["VALOR"].sum()
+            media_reg = float(val_loja.mean())
+            abaixo = (
+                val_loja[val_loja < media_reg]
+                .sort_values()
+                .head(2)
             )
+            lojas_baixa_perf = [
+                {
+                    "loja": loja,
+                    "perc_media": round(float(val) / media_reg * 100, 1)
+                    if media_reg > 0 else 0,
+                }
+                for loja, val in abaixo.items()
+            ]
+
+        # ── Produtos MIX de pior % atingimento na região ──────────
+        produtos_baixa_perf: List[Dict] = []
+        if grupos_mix and "grupo_dashboard" in df_reg.columns:
+            perf_produtos = []
+            for grupo in grupos_mix:
+                val_grupo = float(
+                    df_reg[df_reg["grupo_dashboard"] == grupo]["VALOR"].sum()
+                )
+                meta_key = grupo_meta_map.get(grupo, grupo)
+                meta_grupo = 0.0
+                if (
+                    not df_metas_produto.empty
+                    and meta_key in df_metas_produto.columns
+                    and "LOJA" in df_metas_produto.columns
+                ):
+                    meta_grupo = float(
+                        pd.to_numeric(
+                            df_metas_produto[
+                                df_metas_produto["LOJA"].isin(lojas_regiao)
+                            ][meta_key],
+                            errors="coerce",
+                        )
+                        .fillna(0)
+                        .sum()
+                    )
+                if meta_grupo > 0:
+                    perf_produtos.append(
+                        {"produto": grupo, "perc": val_grupo / meta_grupo * 100}
+                    )
+            perf_produtos.sort(key=lambda x: x["perc"])
+            produtos_baixa_perf = [
+                {"produto": p["produto"], "perc": round(p["perc"], 1)}
+                for p in perf_produtos[:2]
+            ]
+
+        prioridades.append(
+            {
+                "regiao": regiao,
+                "perc_ating": perc,
+                "valor": valor_realizado,
+                "meta": meta_regiao,
+                "score": 100 - perc,
+                "lojas_baixa_perf": lojas_baixa_perf,
+                "produtos_baixa_perf": produtos_baixa_perf,
+            }
+        )
 
     prioridades.sort(key=lambda x: x["score"], reverse=True)
     return prioridades[:top_n]
@@ -571,6 +835,59 @@ def _render_expander_zeros_consultor(restantes: List[Dict], total: int) -> None:
         st.markdown("".join(itens_html), unsafe_allow_html=True)
 
 
+def _render_aceleradores_supervisor_coluna(
+    acel_cons: List[Dict],
+    pode_expandir: bool = False,
+) -> None:
+    """Renderiza aceleradores em coluna única para layout supervisor.
+
+    Cada acelerador aparece como bloco empilhado com o título e os
+    consultores zerados (ou de pior desempenho) abaixo, seguindo a
+    mesma lógica zero-first da seção principal de aceleradores.
+    """
+    if not acel_cons:
+        st.info("Nenhum acelerador com dados disponíveis.")
+        return
+
+    for dados in acel_cons:
+        tem_z = dados["tem_zeros"]
+        label_tipo = "🔴 Zerados" if tem_z else "📉 Abaixo da média"
+
+        st.markdown(
+            f'<div style="font-size:14px; font-weight:700; margin-top:10px; '
+            f'margin-bottom:4px; color:var(--mg-text);">'
+            f'{dados["icon"]} {dados["nome"]} '
+            f'<span style="font-size:11px; font-weight:400; '
+            f'color:var(--mg-text-muted);">— {label_tipo}</span></div>',
+            unsafe_allow_html=True,
+        )
+
+        itens_html = []
+        for item in dados["consultores"]:
+            loja_txt = item.get("loja", "")
+            detalhe = (
+                f"{loja_txt} · Média org: {item['media_org']:.1f}"
+                if item["media_org"] > 0
+                else loja_txt
+            )
+            itens_html.append(
+                _render_item_acelerador(
+                    item["consultor"],
+                    item["qtd"],
+                    detalhe,
+                    item["qtd"] == 0,
+                )
+            )
+        st.markdown("".join(itens_html), unsafe_allow_html=True)
+
+        if pode_expandir and dados.get("todos_zeros"):
+            todos_z = dados["todos_zeros"]
+            exibidos_zeros = [c for c in dados["consultores"] if c["qtd"] == 0]
+            restantes = todos_z[len(exibidos_zeros):]
+            if restantes:
+                _render_expander_zeros_consultor(restantes, total=len(todos_z))
+
+
 def render_prioridades_aceleradores(
     df: pd.DataFrame,
     df_metas_produto: pd.DataFrame,
@@ -700,6 +1017,31 @@ def _html_card_produto(i: int, prio: Dict) -> str:
     cor = get_status_color(perc)
     bg_cor = get_status_bg_color(perc)
     label = get_status_label(perc)
+
+    linha_analise = ""
+    qtd_anal = prio.get("qtd_analise", 0)
+    valor_anal = prio.get("valor_analise", 0.0)
+    perc_sp = prio.get("perc_se_pagos")
+
+    if qtd_anal and qtd_anal > 0 and perc_sp is not None:
+        perc_sp_fmt = f"{perc_sp:.1f}%"
+        cor_sp = get_status_color(perc_sp)
+        gap_restante = max(0.0, prio["gap_valor"] - valor_anal)
+        if perc_sp >= 100:
+            linha_analise = (
+                f'<div class="mg-prioridade-detalhe" style="margin-top:4px;">'
+                f"📋 <strong>{qtd_anal} em análise</strong> · {formatar_moeda(valor_anal)} "
+                f"→ <span style='color:{cor_sp};font-weight:600;'>{perc_sp_fmt}</span> se pagos "
+                f"<em>(alcançaria a meta! ✅)</em></div>"
+            )
+        else:
+            linha_analise = (
+                f'<div class="mg-prioridade-detalhe" style="margin-top:4px;">'
+                f"📋 <strong>{qtd_anal} em análise</strong> · {formatar_moeda(valor_anal)} "
+                f"→ <span style='color:{cor_sp};font-weight:600;'>{perc_sp_fmt}</span> se pagos "
+                f"<em>(ainda faltam {formatar_moeda(gap_restante)} para a meta)</em></div>"
+            )
+
     return (
         f'<div class="mg-prioridade-card" style="border-left-color: {cor};">'
         f'<div style="display: flex; align-items: center;">'
@@ -708,6 +1050,7 @@ def _html_card_produto(i: int, prio: Dict) -> str:
         f'<span class="mg-prioridade-badge" style="background: {bg_cor}; color: {cor};">'
         f"{formatar_percentual(perc)} · {label}</span></span></div>"
         f'<div class="mg-prioridade-detalhe">Falta: {formatar_moeda(prio["gap_valor"])}</div>'
+        f"{linha_analise}"
         f"</div>"
     )
 
@@ -718,6 +1061,35 @@ def _html_card_loja(i: int, prio: Dict) -> str:
     bg_cor = get_status_bg_color(perc)
     label = get_status_label(perc)
     regiao_label = f" ({prio['regiao']})" if prio.get("regiao") else ""
+
+    linhas_extra = ""
+
+    cons_bp = prio.get("consultores_baixa_perf") or []
+    if cons_bp:
+        partes = []
+        for p in cons_bp:
+            cor_c = get_status_color(p["perc_media"])
+            partes.append(
+                f"{p['consultor']} <span style='color:{cor_c};'>({p['perc_media']:.0f}% da média)</span>"
+            )
+        linhas_extra += (
+            f'<div class="mg-prioridade-detalhe" style="margin-top:4px;">'
+            f"👤 <strong>Consultores:</strong> {' · '.join(partes)}</div>"
+        )
+
+    prods_bp = prio.get("produtos_baixa_perf") or []
+    if prods_bp:
+        partes_p = []
+        for p in prods_bp:
+            cor_p = get_status_color(p["perc"])
+            partes_p.append(
+                f"{p['produto']} <span style='color:{cor_p};'>({p['perc']:.0f}%)</span>"
+            )
+        linhas_extra += (
+            f'<div class="mg-prioridade-detalhe" style="margin-top:4px;">'
+            f"📦 <strong>Produtos:</strong> {' · '.join(partes_p)}</div>"
+        )
+
     return (
         f'<div class="mg-prioridade-card" style="border-left-color: {cor};">'
         f'<div style="display: flex; align-items: center;">'
@@ -727,7 +1099,9 @@ def _html_card_loja(i: int, prio: Dict) -> str:
         f"{formatar_percentual(perc)} · {label}</span></span></div>"
         f'<div class="mg-prioridade-detalhe">'
         f"Realizado: {formatar_moeda(prio['valor'])} / Meta: {formatar_moeda(prio['meta'])}"
-        f"</div></div>"
+        f"</div>"
+        f"{linhas_extra}"
+        f"</div>"
     )
 
 
@@ -736,6 +1110,35 @@ def _html_card_regiao(i: int, prio: Dict) -> str:
     cor = get_status_color(perc)
     bg_cor = get_status_bg_color(perc)
     label = get_status_label(perc)
+
+    linhas_extra = ""
+
+    lojas_bp = prio.get("lojas_baixa_perf") or []
+    if lojas_bp:
+        partes = []
+        for p in lojas_bp:
+            cor_l = get_status_color(p["perc_media"])
+            partes.append(
+                f"{p['loja']} <span style='color:{cor_l};'>({p['perc_media']:.0f}% da média)</span>"
+            )
+        linhas_extra += (
+            f'<div class="mg-prioridade-detalhe" style="margin-top:4px;">'
+            f"🏪 <strong>Lojas:</strong> {' · '.join(partes)}</div>"
+        )
+
+    prods_bp = prio.get("produtos_baixa_perf") or []
+    if prods_bp:
+        partes_p = []
+        for p in prods_bp:
+            cor_p = get_status_color(p["perc"])
+            partes_p.append(
+                f"{p['produto']} <span style='color:{cor_p};'>({p['perc']:.0f}%)</span>"
+            )
+        linhas_extra += (
+            f'<div class="mg-prioridade-detalhe" style="margin-top:4px;">'
+            f"📦 <strong>Produtos:</strong> {' · '.join(partes_p)}</div>"
+        )
+
     return (
         f'<div class="mg-prioridade-card" style="border-left-color: {cor};">'
         f'<div style="display: flex; align-items: center;">'
@@ -745,7 +1148,9 @@ def _html_card_regiao(i: int, prio: Dict) -> str:
         f"{formatar_percentual(perc)} · {label}</span></span></div>"
         f'<div class="mg-prioridade-detalhe">'
         f"Realizado: {formatar_moeda(prio['valor'])} / Meta: {formatar_moeda(prio['meta'])}"
-        f"</div></div>"
+        f"</div>"
+        f"{linhas_extra}"
+        f"</div>"
     )
 
 
@@ -754,6 +1159,36 @@ def _html_card_consultor(i: int, prio: Dict) -> str:
     cor = get_status_color(perc)
     bg_cor = get_status_bg_color(perc)
     loja_label = f" · {prio['loja']}" if prio.get("loja") else ""
+
+    linhas_extra = ""
+
+    prods_bp = prio.get("produtos_baixa_perf") or []
+    if prods_bp:
+        partes_p = []
+        for p in prods_bp:
+            cor_p = get_status_color(p["perc"])
+            partes_p.append(
+                f"{p['produto']} <span style='color:{cor_p};'>({p['perc']:.0f}%)</span>"
+            )
+        linhas_extra += (
+            f'<div class="mg-prioridade-detalhe" style="margin-top:4px;">'
+            f"📦 <strong>Produtos:</strong> {' · '.join(partes_p)}</div>"
+        )
+
+    ind_bp = prio.get("indicadores_baixa_perf") or []
+    if ind_bp:
+        partes_i = []
+        for p in ind_bp:
+            cor_i = get_status_color(p["perc"])
+            partes_i.append(
+                f"{p['icon']} {p['indicador']} "
+                f"<span style='color:{cor_i};'>({p['perc']:.0f}%)</span>"
+            )
+        linhas_extra += (
+            f'<div class="mg-prioridade-detalhe" style="margin-top:4px;">'
+            f"📊 <strong>Indicadores:</strong> {' · '.join(partes_i)}</div>"
+        )
+
     return (
         f'<div class="mg-prioridade-card" style="border-left-color: {cor};">'
         f'<div style="display: flex; align-items: center;">'
@@ -762,9 +1197,12 @@ def _html_card_consultor(i: int, prio: Dict) -> str:
         f'<span class="mg-prioridade-badge" style="background: {bg_cor}; color: {cor};">'
         f"{formatar_percentual(perc)} da média</span></span></div>"
         f'<div class="mg-prioridade-detalhe">'
-        f"{loja_label} · Média/DU: {formatar_moeda(prio['valor_du'])}"
-        f" vs média loja: {formatar_moeda(prio['media_loja_du'])}"
-        f"</div></div>"
+        f"{loja_label} · Realizado: {formatar_moeda(prio['valor'])}"
+        f" · Média/DU: {formatar_moeda(prio['valor_du'])}"
+        f" vs {formatar_moeda(prio['media_loja_du'])}"
+        f"</div>"
+        f"{linhas_extra}"
+        f"</div>"
     )
 
 
@@ -801,6 +1239,8 @@ def render_prioridades_acao(
     perfil: str = "",
     df_sup: pd.DataFrame = None,
     du_decorridos: int = 0,
+    categorias: Optional[pd.DataFrame] = None,
+    df_analise: Optional[pd.DataFrame] = None,
 ) -> None:
     """
     Renderiza o bloco de Prioridades de Ação.
@@ -824,17 +1264,46 @@ def render_prioridades_acao(
     st.markdown("---")
     st.markdown("### 🎯 Onde Agir Agora (Prioridades)")
 
+    # Mapeamento produto → dados de análise para o insight "se pagos"
+    analise_map: Dict[str, Dict] = {}
+    if (
+        df_analise is not None
+        and not df_analise.empty
+        and "categoria_codigo" in df_analise.columns
+        and "VALOR" in df_analise.columns
+    ):
+        for nome_prod, codigos in PRODUTOS_DASHBOARD.items():
+            mask = df_analise["categoria_codigo"].isin(codigos)
+            df_prod_anal = df_analise[mask]
+            if not df_prod_anal.empty:
+                analise_map[nome_prod] = {
+                    "qtd": int(len(df_prod_anal)),
+                    "valor": float(df_prod_anal["VALOR"].sum()),
+                }
+
     # Busca todos os elegíveis (sem cap) — fatiamento acontece no render
-    prioridades_prod = calcular_prioridades_produto(metas_produto, top_n=50)
-    prioridades_reg = calcular_prioridades_regiao(df, df_metas_produto, top_n=50)
-    prioridades_loja = calcular_prioridades_loja(df, df_metas_produto, top_n=50)
+    prioridades_prod = calcular_prioridades_produto(
+        metas_produto, top_n=50, analise_map=analise_map or None
+    )
+    prioridades_reg = calcular_prioridades_regiao(
+        df, df_metas_produto, top_n=50, categorias=categorias
+    )
+    prioridades_loja = calcular_prioridades_loja(
+        df, df_metas_produto, top_n=50, df_sup=df_sup, categorias=categorias
+    )
 
     _eh_gerente = perfil == "gerente_comercial"
+    _eh_supervisor = perfil == "supervisor"
 
     if _eh_gerente:
         prioridades_consultor = calcular_prioridades_consultor(
             df, df_sup, du_decorridos, top_n=50
         )
+    elif _eh_supervisor:
+        prioridades_consultor = calcular_prioridades_consultor(
+            df, df_sup, du_decorridos, top_n=50, categorias=categorias
+        )
+        acel_cons_supervisor = calcular_aceleradores_consultor(df, df_sup, top_n=4)
     else:
         prioridades_consultor = []
 
@@ -905,6 +1374,12 @@ def render_prioridades_acao(
                 prioridades_loja, 4, _html_card_loja,
                 "lojas", "Todas as lojas estão acima da meta! 🎉",
             )
+        elif _eh_supervisor:
+            st.markdown("**👤 Consultores que Precisam de Atenção**")
+            _render_lista_com_expander(
+                prioridades_consultor, 4, _html_card_consultor,
+                "consultores", "Todos os consultores estão acima de 80% da média da loja! 🎉",
+            )
         else:
             st.markdown("**📍 Regiões que Precisam de Atenção**")
             _render_lista_com_expander(
@@ -919,6 +1394,12 @@ def render_prioridades_acao(
                 prioridades_consultor, 4, _html_card_consultor,
                 "consultores", "Todos os consultores estão acima de 80% da média da loja! 🎉",
             )
+        elif _eh_supervisor:
+            pode_expandir_sup = perfil in ("admin", "gestor", "gerente_comercial", "supervisor")
+            st.markdown("**🚀 Aceleradores que Precisam de Atenção**")
+            _render_aceleradores_supervisor_coluna(
+                acel_cons_supervisor, pode_expandir=pode_expandir_sup
+            )
         else:
             st.markdown("**🏪 Lojas que Precisam de Atenção**")
             _render_lista_com_expander(
@@ -926,8 +1407,9 @@ def render_prioridades_acao(
                 "lojas", "Todas as lojas estão acima da meta! 🎉",
             )
 
-    # Seção dedicada dos Aceleradores
-    render_prioridades_aceleradores(df, df_metas_produto, df_sup, perfil)
+    # Seção dedicada dos Aceleradores (supervisor usa col3 em vez desta seção)
+    if not _eh_supervisor:
+        render_prioridades_aceleradores(df, df_metas_produto, df_sup, perfil)
 
     # Resumo de ação
     st.markdown("---")
@@ -945,6 +1427,12 @@ def render_prioridades_acao(
             acoes.append(
                 f"Atuar na loja **{top_loja['loja']}** ({formatar_percentual(top_loja['perc_ating'])} da meta)"
             )
+        if prioridades_consultor:
+            top_cons = prioridades_consultor[0]
+            acoes.append(
+                f"Apoiar **{top_cons['consultor']}** ({formatar_percentual(top_cons['perc_media'])} da média da loja)"
+            )
+    elif _eh_supervisor:
         if prioridades_consultor:
             top_cons = prioridades_consultor[0]
             acoes.append(
