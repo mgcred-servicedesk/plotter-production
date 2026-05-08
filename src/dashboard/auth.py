@@ -508,6 +508,53 @@ def alterar_senha(
     return True, "Senha alterada com sucesso."
 
 
+def editar_usuario(
+    usuario: str,
+    novo_perfil: str,
+    novo_escopo: list[str],
+) -> tuple[bool, str]:
+    """
+    Atualiza perfil e escopo de um usuário existente.
+
+    Returns:
+        Tupla (sucesso, mensagem).
+    """
+    if novo_perfil not in PERFIS:
+        return False, f"Perfil '{novo_perfil}' invalido."
+
+    if novo_perfil not in ("admin", "gestor") and not novo_escopo:
+        return (
+            False,
+            "Informe o escopo (regioes, lojas ou consultor) para este perfil.",
+        )
+
+    resp = (
+        _supabase()
+        .table("usuarios")
+        .select("id")
+        .eq("usuario", usuario)
+        .limit(1)
+        .execute()
+    )
+
+    if not resp.data:
+        return False, "Usuario nao encontrado."
+
+    usuario_id = resp.data[0]["id"]
+
+    (
+        _supabase()
+        .table("usuarios")
+        .update({"perfil": novo_perfil})
+        .eq("id", usuario_id)
+        .execute()
+    )
+
+    _salvar_escopos(usuario_id, novo_perfil, novo_escopo)
+
+    return True, f"Usuario '{usuario}' atualizado com sucesso."
+
+
 def listar_usuarios() -> list[dict]:
     """Retorna lista de usuários (sem hash de senha)."""
     resp = (

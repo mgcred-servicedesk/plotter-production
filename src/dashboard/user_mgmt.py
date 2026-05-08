@@ -12,6 +12,7 @@ from src.dashboard.auth import (
     alterar_senha,
     alternar_ativo,
     criar_usuario,
+    editar_usuario,
     listar_usuarios,
     resetar_senha,
     usuario_logado,
@@ -202,6 +203,91 @@ def _render_criar_usuario(
             st.error(msg)
 
 
+def _render_editar_usuario(
+    regioes: list[str],
+    lojas: list[str],
+    consultores: list[str],
+):
+    """Formulário para editar perfil e escopo de um usuário existente."""
+    st.subheader("Editar Usuario")
+
+    usuarios = listar_usuarios()
+    if not usuarios:
+        st.info("Nenhum usuario cadastrado.")
+        return
+
+    nomes_usuario = [u["usuario"] for u in usuarios]
+    usuario_sel = st.selectbox(
+        "Selecionar usuario",
+        nomes_usuario,
+        key="sel_editar",
+    )
+
+    dados_sel = next(
+        (u for u in usuarios if u["usuario"] == usuario_sel), None
+    )
+    if not dados_sel:
+        return
+
+    st.caption(
+        f"Perfil atual: **{PERFIS.get(dados_sel['perfil'], dados_sel['perfil'])}**"
+        f"  |  Escopo atual: **{', '.join(dados_sel['escopo']) or '—'}**"
+    )
+
+    with st.form("form_editar_usuario"):
+        novo_perfil = st.selectbox(
+            "Novo perfil",
+            list(PERFIS.keys()),
+            index=list(PERFIS.keys()).index(dados_sel["perfil"]),
+            format_func=lambda x: PERFIS[x],
+        )
+
+        novo_escopo: list[str] = []
+        if novo_perfil == "gerente_comercial":
+            novo_escopo = st.multiselect(
+                "Regioes de acesso",
+                regioes,
+                default=[
+                    e for e in dados_sel["escopo"] if e in regioes
+                ],
+            )
+        elif novo_perfil == "supervisor":
+            novo_escopo = st.multiselect(
+                "Lojas de acesso",
+                lojas,
+                default=[
+                    e for e in dados_sel["escopo"] if e in lojas
+                ],
+            )
+        elif novo_perfil == "consultor":
+            sel = st.selectbox(
+                "Consultor vinculado",
+                options=[""] + consultores,
+                index=(
+                    consultores.index(dados_sel["escopo"][0]) + 1
+                    if dados_sel["escopo"]
+                    and dados_sel["escopo"][0] in consultores
+                    else 0
+                ),
+            )
+            if sel:
+                novo_escopo = [sel]
+
+        submit = st.form_submit_button(
+            "Salvar Alteracoes", width="stretch",
+        )
+
+    if submit:
+        ok, msg = editar_usuario(
+            usuario_sel, novo_perfil, novo_escopo,
+        )
+        if ok:
+            st.success(msg)
+            st.rerun()
+        else:
+            st.error(msg)
+
+
 def render_pagina_usuarios(
     regioes: list[str] = None,
     lojas: list[str] = None,
@@ -217,8 +303,8 @@ def render_pagina_usuarios(
         return
 
     if user["perfil"] == "admin":
-        tab1, tab2, tab3 = st.tabs([
-            "Usuarios", "Criar Usuario", "Minha Senha",
+        tab1, tab2, tab3, tab4 = st.tabs([
+            "Usuarios", "Criar Usuario", "Editar Usuario", "Minha Senha",
         ])
 
         with tab1:
@@ -230,6 +316,11 @@ def render_pagina_usuarios(
             )
 
         with tab3:
+            _render_editar_usuario(
+                regioes or [], lojas or [], consultores or [],
+            )
+
+        with tab4:
             _render_alterar_minha_senha()
     else:
         _render_alterar_minha_senha()
