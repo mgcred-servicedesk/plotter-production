@@ -255,22 +255,14 @@ def chart_theme() -> dict:
 
 
 def aplicar_tema() -> None:
-    """Sincroniza tema nativo Streamlit + CSS custom properties."""
-    from streamlit.config import set_option
+    """Sincroniza tema nativo Streamlit + CSS custom properties.
 
+    Tema base (light/dark) vem de ``config.toml`` (``[theme.light]`` /
+    ``[theme.dark]``). Esta funcao injeta apenas as CSS custom
+    properties (``--mg-*``) e o JS de tematizacao dos iframes antd.
+    """
     theme = get_theme()
     vars_css = _CSS_VARS[theme]
-    native = _NATIVE_THEME[theme]
-
-    # Sincronizar tema nativo (widgets, st.dataframe, st.metric)
-    set_option("theme.base", native["base"])
-    set_option("theme.primaryColor", native["primaryColor"])
-    set_option("theme.backgroundColor", native["backgroundColor"])
-    set_option(
-        "theme.secondaryBackgroundColor",
-        native["secondaryBackgroundColor"],
-    )
-    set_option("theme.textColor", native["textColor"])
 
     # CSS custom properties — o CSS file usa var(--mg-*)
     # Esconde o seletor nativo de tema para evitar conflito
@@ -310,7 +302,6 @@ def aplicar_tema() -> None:
     )
 
     # JS para sincronizar tema no html[data-theme] para CSS
-    is_dark = theme == "dark"
     st.markdown(
         f"""<script>
         (function() {{
@@ -322,36 +313,20 @@ def aplicar_tema() -> None:
         unsafe_allow_html=True,
     )
 
-    # JS: detectar preferencia do sistema na primeira
-    # visita + persistir tema + tematizar iframes.
-    # Usa st.iframe (novo em Streamlit 1.56, substitui st.components.v1.html).
+    # JS: detectar preferencia do sistema na primeira visita +
+    # persistir tema + tematizar iframes antd. Idempotente: o
+    # MutationObserver e a deteccao de tema sao instalados apenas
+    # uma vez por sessao do navegador (guard via window.__mgcred_*).
+    # Reruns subsequentes apenas reaplicam o CSS nos iframes existentes.
     is_dark = "true" if theme == "dark" else "false"
     st.iframe(
         f"""<script>
         (function() {{
             const p = window.parent;
             const isDark = {is_dark};
-
-            // Detectar preferencia do sistema na 1a visita
-            const stored = localStorage.getItem('mgcred_theme');
-            if (!stored) {{
-                const prefersDark = window.matchMedia
-                    && window.matchMedia('(prefers-color-scheme: dark)').matches;
-                const detected = prefersDark ? 'dark' : 'light';
-                localStorage.setItem('mgcred_theme', detected);
-                if (detected !== (isDark ? 'dark' : 'light')) {{
-                    const url = new URL(p.location);
-                    url.searchParams.set('_theme', detected);
-                    p.location.replace(url.toString());
-                    return;
-                }}
-            }}
             const tc = isDark ? '#F5F4F2' : '#1F2937';
             const pc = isDark ? '#5C8FF7' : '#3366E6';
             const sb = isDark ? '#141416' : '#FFFFFF';
-            const bg = isDark ? '#0A0A0B' : '#FAFAF9';
-
-            localStorage.setItem('mgcred_theme', isDark ? 'dark' : 'light');
 
             function inject(iframe) {{
                 try {{
@@ -389,34 +364,65 @@ def aplicar_tema() -> None:
                 }});
             }}
 
+            // Deteccao do tema do SO — apenas na 1a visita da sessao.
+            // Evita p.location.replace em reruns (causava reloads).
+            if (!p.__mgcred_theme_detected) {{
+                p.__mgcred_theme_detected = true;
+                const stored = localStorage.getItem('mgcred_theme');
+                if (!stored) {{
+                    const prefersDark = window.matchMedia
+                        && window.matchMedia('(prefers-color-scheme: dark)').matches;
+                    const detected = prefersDark ? 'dark' : 'light';
+                    localStorage.setItem('mgcred_theme', detected);
+                    if (detected !== (isDark ? 'dark' : 'light')) {{
+                        const url = new URL(p.location);
+                        url.searchParams.set('_theme', detected);
+                        p.location.replace(url.toString());
+                        return;
+                    }}
+                }} else {{
+                    localStorage.setItem('mgcred_theme', isDark ? 'dark' : 'light');
+                }}
+            }} else {{
+                localStorage.setItem('mgcred_theme', isDark ? 'dark' : 'light');
+            }}
+
+            // MutationObserver — instalado apenas uma vez por sessao.
+            // Reruns subsequentes so reaplicam estilos nos iframes ja existentes.
             run();
-            const obs = new MutationObserver(muts => {{
-                for (const m of muts)
-                    for (const n of m.addedNodes)
-                        if (n.tagName === 'IFRAME' || (n.querySelectorAll && n.querySelectorAll('iframe').length))
-                            {{ setTimeout(run, 100); return; }}
-            }});
-            obs.observe(p.document.body, {{ childList:true, subtree:true }});
-            setTimeout(run, 500);
-            setTimeout(run, 1500);
+            if (!p.__mgcred_theme_obs) {{
+                const obs = new MutationObserver(muts => {{
+                    for (const m of muts)
+                        for (const n of m.addedNodes)
+                            if (n.tagName === 'IFRAME' || (n.querySelectorAll && n.querySelectorAll('iframe').length))
+                                {{ setTimeout(run, 100); return; }}
+                }});
+                obs.observe(p.document.body, {{ childList:true, subtree:true }});
+                p.__mgcred_theme_obs = obs;
+                setTimeout(run, 500);
+                setTimeout(run, 1500);
+            }}
         }})();
         </script>""",
         height=1,
     )
 
 
+@st.cache_data(show_spinner=False)
+def _ler_css(css_path: str, mtime: float) -> str:
+    """Le o conteudo do CSS. Cache invalida quando ``mtime`` muda."""
+    with open(css_path) as f:
+        return f.read()
+
+
 def carregar_estilos_customizados() -> None:
-    """Carrega CSS customizado do dashboard."""
+    """Carrega CSS customizado do dashboard (com cache por mtime)."""
     import os
 
     css_path = "assets/dashboard_style.css"
     try:
-        # Cache busting: usa timestamp de modificação do arquivo
         mtime = os.path.getmtime(css_path)
-        with open(css_path) as f:
-            css_content = f.read()
-
-        # Adiciona comment com timestamp para invalidar cache
+        css_content = _ler_css(css_path, mtime)
         st.markdown(
             f"<style>/* CSS v{mtime} */\n{css_content}</style>",
             unsafe_allow_html=True,

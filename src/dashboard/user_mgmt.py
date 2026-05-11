@@ -56,11 +56,17 @@ def _render_alterar_minha_senha():
             st.error(msg)
 
 
-def _render_lista_usuarios():
-    """Exibe lista de usuários com ações."""
+def _render_lista_usuarios(usuarios: list[dict] | None = None):
+    """Exibe lista de usuários com ações.
+
+    Aceita ``usuarios`` pre-carregado para evitar resolver o cache de
+    :func:`listar_usuarios` mais de uma vez por render (a pagina possui
+    duas tabs que precisam da mesma lista).
+    """
     st.subheader("Usuarios Cadastrados")
 
-    usuarios = listar_usuarios()
+    if usuarios is None:
+        usuarios = listar_usuarios()
 
     if not usuarios:
         st.info("Nenhum usuario cadastrado.")
@@ -207,11 +213,16 @@ def _render_editar_usuario(
     regioes: list[str],
     lojas: list[str],
     consultores: list[str],
+    usuarios: list[dict] | None = None,
 ):
-    """Formulário para editar perfil e escopo de um usuário existente."""
+    """Formulário para editar perfil e escopo de um usuário existente.
+
+    Aceita ``usuarios`` pre-carregado (ver :func:`_render_lista_usuarios`).
+    """
     st.subheader("Editar Usuario")
 
-    usuarios = listar_usuarios()
+    if usuarios is None:
+        usuarios = listar_usuarios()
     if not usuarios:
         st.info("Nenhum usuario cadastrado.")
         return
@@ -303,12 +314,18 @@ def render_pagina_usuarios(
         return
 
     if user["perfil"] == "admin":
+        # Carrega a lista uma unica vez e compartilha entre as duas
+        # tabs que dependem dela (Usuarios e Editar Usuario). Como
+        # st.tabs renderiza todas as tabs no mesmo rerun, isso evita
+        # uma segunda resolucao desnecessaria do cache.
+        usuarios = listar_usuarios()
+
         tab1, tab2, tab3, tab4 = st.tabs([
             "Usuarios", "Criar Usuario", "Editar Usuario", "Minha Senha",
         ])
 
         with tab1:
-            _render_lista_usuarios()
+            _render_lista_usuarios(usuarios=usuarios)
 
         with tab2:
             _render_criar_usuario(
@@ -318,6 +335,7 @@ def render_pagina_usuarios(
         with tab3:
             _render_editar_usuario(
                 regioes or [], lojas or [], consultores or [],
+                usuarios=usuarios,
             )
 
         with tab4:

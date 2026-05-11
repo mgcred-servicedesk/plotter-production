@@ -465,6 +465,7 @@ def criar_usuario(
 
     novo_id = resp.data[0]["id"]
     _salvar_escopos(novo_id, perfil, escopo)
+    _invalidar_cache_usuarios()
 
     return True, f"Usuario '{usuario}' criado com sucesso."
 
@@ -551,12 +552,20 @@ def editar_usuario(
     )
 
     _salvar_escopos(usuario_id, novo_perfil, novo_escopo)
+    _invalidar_cache_usuarios()
 
     return True, f"Usuario '{usuario}' atualizado com sucesso."
 
 
+@st.cache_data(ttl=300, show_spinner=False)
 def listar_usuarios() -> list[dict]:
-    """Retorna lista de usuários (sem hash de senha)."""
+    """Retorna lista de usuários (sem hash de senha).
+
+    Faz 2 queries em batch (em vez de N+1): uma para ``usuarios`` e
+    outra para ``usuario_escopos`` com expansion das tabelas relacionadas.
+    Resultado cacheado por 5 min; mutacoes (criar/editar/ativar/resetar)
+    invalidam via :func:`_invalidar_cache_usuarios`.
+    """
     resp = (
         _supabase()
         .table("usuarios")
@@ -564,20 +573,55 @@ def listar_usuarios() -> list[dict]:
         .order("nome")
         .execute()
     )
+    usuarios_raw = resp.data or []
 
-    resultado = []
-    for u in resp.data or []:
-        escopo = _carregar_escopo(u["id"])
-        resultado.append(
-            {
-                "usuario": u["usuario"],
-                "nome": u["nome"],
-                "perfil": u["perfil"],
-                "escopo": escopo,
-                "ativo": u["ativo"],
-            }
+    # Batch fetch de todos os escopos em uma unica query.
+    # Antes: N queries (uma por usuario) -> agora: 1 query.
+    resp_escopos = (
+        _supabase()
+        .table("usuario_escopos")
+        .select(
+            "usuario_id, regiao_id, loja_id, consultor_id, "
+            "regioes(nome), lojas(nome), consultores(nome)"
         )
-    return resultado
+        .execute()
+    )
+
+    # Agrupa escopos por usuario_id em Python.
+    escopos_por_usuario: dict[str, list[str]] = {}
+    for row in resp_escopos.data or []:
+        nome = None
+        if row.get("regioes") and row["regioes"].get("nome"):
+            nome = row["regioes"]["nome"]
+        elif row.get("lojas") and row["lojas"].get("nome"):
+            nome = row["lojas"]["nome"]
+        elif row.get("consultores") and row["consultores"].get("nome"):
+            nome = row["consultores"]["nome"]
+        if nome:
+            escopos_por_usuario.setdefault(row["usuario_id"], []).append(nome)
+
+    return [
+        {
+            "usuario": u["usuario"],
+            "nome": u["nome"],
+            "perfil": u["perfil"],
+            "escopo": escopos_por_usuario.get(u["id"], []),
+            "ativo": u["ativo"],
+        }
+        for u in usuarios_raw
+    ]
+
+
+def _invalidar_cache_usuarios() -> None:
+    """Invalida o cache de :func:`listar_usuarios`.
+
+    Deve ser chamada apos qualquer mutacao em ``usuarios`` ou
+    ``usuario_escopos`` (criar, editar, ativar/desativar, resetar senha).
+    """
+    try:
+        listar_usuarios.clear()
+    except Exception:
+        pass
 
 
 def alternar_ativo(usuario: str) -> tuple[bool, str]:
@@ -605,6 +649,7 @@ def alternar_ativo(usuario: str) -> tuple[bool, str]:
         .execute()
     )
 
+    _invalidar_cache_usuarios()
     status = "ativado" if novo_status else "desativado"
     return True, f"Usuario '{usuario}' {status}."
 
@@ -634,4 +679,8 @@ def resetar_senha(
         .execute()
     )
 
+    # Cache de listar_usuarios nao depende do hash de senha, mas
+    # mantemos invalidacao por consistencia (caso o cache passe a
+    # incluir mais campos no futuro).
+    _invalidar_cache_usuarios()
     return True, f"Senha de '{usuario}' resetada."

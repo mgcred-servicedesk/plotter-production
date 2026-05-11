@@ -303,8 +303,6 @@ def _render_sidebar_visualizar_como(df_full):
         _limpar_filtros_ui()
         st.session_state["_vc_sel_ant"] = sel
 
-    _anterior = st.session_state.get("visualizar_como")
-
     if sel == "Admin (padrao)":
         st.session_state.pop("visualizar_como", None)
 
@@ -366,10 +364,10 @@ def _render_sidebar_visualizar_como(df_full):
         else:
             st.session_state.pop("visualizar_como", None)
 
-    # Forca rerun imediato quando o perfil simulado muda,
-    # garantindo que o RLS use o novo escopo no mesmo ciclo.
-    if st.session_state.get("visualizar_como") != _anterior:
-        st.rerun()
+    # st.rerun() nao e mais necessario aqui: a sidebar agora e
+    # renderizada em main() ANTES de aplicar_rls(), entao o novo
+    # valor de `visualizar_como` ja e respeitado no mesmo rerun
+    # disparado automaticamente pelos widgets (selectbox/multiselect).
 
 
 def _render_sidebar_filtros_perfil(
@@ -522,6 +520,9 @@ def main():
                 st.cache_data.clear()
                 st.session_state.pop("_kpis_cache", None)
                 st.session_state.pop("_kpis_chave", None)
+                st.session_state.pop("_df_ant_cache", None)
+                st.session_state.pop("_df_ant_chave", None)
+                st.session_state.pop("_periodo_carregado", None)
                 st.rerun()
 
     render_header(mes=mes, ano=ano)
@@ -568,75 +569,93 @@ def main():
 
     # ── Dashboard: carrega contratos apenas aqui ──────
     try:
-        skeleton_ph = st.empty()
-        skeleton_ph.container()
-        with skeleton_ph:
-            render_skeleton()
+        # Skeleton + status sao exibidos apenas na primeira carga
+        # do periodo (cache miss). Em interacoes subsequentes (mudar
+        # filtro, trocar de aba) os loaders cacheados respondem em
+        # ms e o skeleton/status causariam apenas flicker visual.
+        _chave_carga = (mes, ano)
+        _eh_primeira = (
+            st.session_state.get("_periodo_carregado") != _chave_carga
+        )
 
         _is_admin = (usuario_logado() or {}).get("perfil") == "admin"
 
-        with st.status("Carregando dados...", expanded=False) as _status:
-            _status.update(label="Carregando contratos pagos...")
-            df, df_metas, df_sup = consolidar_dados(mes, ano)
+        if _eh_primeira:
+            skeleton_ph = st.empty()
+            with skeleton_ph:
+                render_skeleton()
+            _status_obj = st.status("Carregando dados...", expanded=False)
+            _status_obj.__enter__()
+        else:
+            skeleton_ph = None
+            _status_obj = None
 
-            _status.update(label="Carregando categorias e metas...")
-            categorias = carregar_categorias()
-            df_metas_produto = carregar_metas_produto(mes, ano)
+        def _upd_status(label: str) -> None:
+            if _status_obj is not None:
+                _status_obj.update(label=label)
 
-            _status.update(label="Carregando pipeline em analise...")
-            df_analise = carregar_contratos_em_analise(mes, ano)
+        _upd_status("Carregando contratos pagos...")
+        df, df_metas, df_sup = consolidar_dados(mes, ano)
 
-            # Zerar VALOR de produtos que nao contam
-            # valor (emissoes de cartao, seguros)
-            if not df_analise.empty and "conta_valor" in df_analise.columns:
-                df_analise.loc[
-                    df_analise["conta_valor"] == False,  # noqa
-                    "VALOR",
-                ] = 0
-            # Zerar emissoes por TIPO OPER. (Venda Pre-Adesao
-            # com produto CONSIG nao tem conta_valor=false)
-            if not df_analise.empty and "TIPO OPER." in df_analise.columns:
-                df_analise.loc[
-                    df_analise["TIPO OPER."].isin(
-                        ["CARTÃO BENEFICIO", "Venda Pré-Adesão"]
-                    ),
-                    "VALOR",
-                ] = 0
+        _upd_status("Carregando categorias e metas...")
+        categorias = carregar_categorias()
+        df_metas_produto = carregar_metas_produto(mes, ano)
 
-            _status.update(label="Carregando cancelados...")
-            df_cancelados = carregar_contratos_cancelados(mes, ano)
-            if not df_cancelados.empty and "conta_valor" in df_cancelados.columns:
-                df_cancelados.loc[
-                    df_cancelados["conta_valor"] == False,  # noqa
-                    "VALOR",
-                ] = 0
-            if not df_cancelados.empty and "TIPO OPER." in df_cancelados.columns:
-                df_cancelados.loc[
-                    df_cancelados["TIPO OPER."].isin(
-                        ["CARTÃO BENEFICIO", "Venda Pré-Adesão"]
-                    ),
-                    "VALOR",
-                ] = 0
-            # Aplicar filtro de 30 dias para analise e cancelados
-            from datetime import datetime, timedelta
+        _upd_status("Carregando pipeline em analise...")
+        df_analise = carregar_contratos_em_analise(mes, ano)
 
-            data_corte = datetime.now() - timedelta(days=30)
+        # Zerar VALOR de produtos que nao contam
+        # valor (emissoes de cartao, seguros)
+        if not df_analise.empty and "conta_valor" in df_analise.columns:
+            df_analise.loc[
+                df_analise["conta_valor"] == False,  # noqa
+                "VALOR",
+            ] = 0
+        # Zerar emissoes por TIPO OPER. (Venda Pre-Adesao
+        # com produto CONSIG nao tem conta_valor=false)
+        if not df_analise.empty and "TIPO OPER." in df_analise.columns:
+            df_analise.loc[
+                df_analise["TIPO OPER."].isin(
+                    ["CARTÃO BENEFICIO", "Venda Pré-Adesão"]
+                ),
+                "VALOR",
+            ] = 0
 
-            if not df_analise.empty and "DATA_CADASTRO" in df_analise.columns:
-                df_analise = df_analise[
-                    df_analise["DATA_CADASTRO"] >= data_corte
-                ].copy()
+        _upd_status("Carregando cancelados...")
+        df_cancelados = carregar_contratos_cancelados(mes, ano)
+        if not df_cancelados.empty and "conta_valor" in df_cancelados.columns:
+            df_cancelados.loc[
+                df_cancelados["conta_valor"] == False,  # noqa
+                "VALOR",
+            ] = 0
+        if not df_cancelados.empty and "TIPO OPER." in df_cancelados.columns:
+            df_cancelados.loc[
+                df_cancelados["TIPO OPER."].isin(
+                    ["CARTÃO BENEFICIO", "Venda Pré-Adesão"]
+                ),
+                "VALOR",
+            ] = 0
+        # Aplicar filtro de 30 dias para analise e cancelados
+        from datetime import datetime, timedelta
 
-            if not df_cancelados.empty and "DATA_CADASTRO" in df_cancelados.columns:
-                df_cancelados = df_cancelados[
-                    df_cancelados["DATA_CADASTRO"] >= data_corte
-                ].copy()
+        data_corte = datetime.now() - timedelta(days=30)
 
-            _status.update(label="Dados carregados", state="complete")
+        if not df_analise.empty and "DATA_CADASTRO" in df_analise.columns:
+            df_analise = df_analise[
+                df_analise["DATA_CADASTRO"] >= data_corte
+            ].copy()
 
-        # Limpar spinner e skeleton apos carregamento
-        _status.empty()
-        skeleton_ph.empty()
+        if not df_cancelados.empty and "DATA_CADASTRO" in df_cancelados.columns:
+            df_cancelados = df_cancelados[
+                df_cancelados["DATA_CADASTRO"] >= data_corte
+            ].copy()
+
+        if _status_obj is not None:
+            _status_obj.update(label="Dados carregados", state="complete")
+            _status_obj.__exit__(None, None, None)
+            _status_obj.empty()
+            skeleton_ph.empty()
+            st.session_state["_periodo_carregado"] = _chave_carga
 
         _n_cancel_admin = len(df_cancelados) if _is_admin else 0
 
@@ -751,10 +770,14 @@ def main():
             render_tab_em_analise(df_analise, df_sup)
             return
 
-        # ── Copias pre-RLS para heatmap comparativo ──
-        df_full = df.copy()
-        df_metas_produto_full = df_metas_produto.copy()
-        df_sup_full = df_sup.copy()
+        # ── Snapshots pre-RLS para heatmap comparativo ──
+        # Aliases simples: aplicar_rls retorna novos DataFrames
+        # filtrados, entao os originais nao sao mutados pela
+        # cadeia abaixo. Evita .copy() de DataFrames grandes
+        # em todo rerun.
+        df_full = df
+        df_metas_produto_full = df_metas_produto
+        df_sup_full = df_sup
 
         # Médias da organização são calculadas após resolver o perfil
         # efetivo (ver bloco de KPIs abaixo), pois dependem do nível
@@ -764,6 +787,20 @@ def main():
         # Carregamento adiado para dentro de `if tab == "Produtos":`.
         df_ant_full = pd.DataFrame()
         du_dec_ant = 0
+
+        # ── Sidebar fase 1: Visualizar Como (admin/gestor) ──
+        # Renderizado ANTES do aplicar_rls para que a mudanca de
+        # perfil simulado entre em vigor no mesmo rerun (sem precisar
+        # de st.rerun() explicito). Usa df_full (pre-RLS) para listar
+        # todas as regioes/lojas/consultores disponiveis.
+        with st.sidebar:
+            _render_sidebar_visualizar_como(df_full)
+
+        # ── Perfil efetivo (resolvido APOS Visualizar Como) ──
+        from src.dashboard.rls import _obter_perfil_efetivo
+
+        perfil_efetivo = _obter_perfil_efetivo()
+        role = perfil_efetivo["perfil"] if perfil_efetivo else None
 
         # ── RLS: filtrar dados por perfil ─────────
         df = aplicar_rls(df)
@@ -784,23 +821,20 @@ def main():
         _, du_decorridos, _ = calcular_dias_uteis(ano, mes, dia_atual)
 
         # ── Dados filtrados (RLS ja aplicado) ─────────
-        df_f = df.copy()
-        df_metas_f = df_metas.copy()
-        df_metas_prod_f = df_metas_produto.copy()
-        df_sup_f = df_sup.copy()
-        df_analise_f = df_analise.copy()
-        df_cancelados_f = df_cancelados.copy()
+        # Aliases: _aplicar_filtros_ui (abaixo) ja retorna novos
+        # DataFrames com .copy() interno, entao manter referencias
+        # aqui e suficiente.
+        df_f = df
+        df_metas_f = df_metas
+        df_metas_prod_f = df_metas_produto
+        df_sup_f = df_sup
+        df_analise_f = df_analise
+        df_cancelados_f = df_cancelados
 
-        # ── Perfil efetivo (para gating de UI e filtros) ──
-        from src.dashboard.rls import _obter_perfil_efetivo
-
-        perfil_efetivo = _obter_perfil_efetivo()
-        role = perfil_efetivo["perfil"] if perfil_efetivo else None
-
-        # ── Sidebar: Visualizar Como (admin/gestor) +
-        #             Filtros nativos (gerente/supervisor) ─
+        # ── Sidebar fase 2: Filtros granulares (gerente/supervisor) ──
+        # Renderizado APOS o RLS porque os filtros granulares de Loja
+        # e Consultor devem listar apenas o escopo permitido.
         with st.sidebar:
-            _render_sidebar_visualizar_como(df_full)
             _render_sidebar_filtros_perfil(df_f, df_sup_f, role or "")
 
         # ── Aplicar filtros granulares de UI (pos-RLS) ─
@@ -1081,18 +1115,38 @@ def main():
             # em outras abas.
             mes_ant = mes - 1 if mes > 1 else 12
             ano_ant = ano if mes > 1 else ano - 1
-            try:
-                df_ant_full, _, _ = consolidar_dados(mes_ant, ano_ant)
-                df_ant_full = _aplicar_nomes_display(df_ant_full)
-                # Aplica o mesmo escopo de perfil e filtros de UI do mês
-                # atual, para que a curva do mês anterior no gráfico
-                # acumulado represente a mesma granularidade (região /
-                # loja / consultor) que está sendo visualizada.
-                df_ant_full = aplicar_rls(df_ant_full)
-                if st.session_state.get("ui_filtro_lojas") or st.session_state.get("ui_filtro_consultor"):
-                    df_ant_full = _aplicar_filtros_ui(df_ant_full)
-            except Exception:
-                df_ant_full = pd.DataFrame()
+
+            # Cache local do df_ant_full pos-RLS+filtros: evita repetir
+            # _aplicar_nomes_display + aplicar_rls + _aplicar_filtros_ui
+            # a cada rerun da aba (ex: hover/clique em outros widgets).
+            # Invalidado por mudanca de periodo, perfil ou filtros UI.
+            chave_ant = (
+                mes_ant,
+                ano_ant,
+                role,
+                tuple(perfil_efetivo.get("escopo", []) if perfil_efetivo else []),
+                tuple(sorted(st.session_state.get("ui_filtro_lojas") or [])),
+                st.session_state.get("ui_filtro_consultor") or "",
+            )
+            if st.session_state.get("_df_ant_chave") != chave_ant:
+                try:
+                    _df_ant, _, _ = consolidar_dados(mes_ant, ano_ant)
+                    _df_ant = _aplicar_nomes_display(_df_ant)
+                    # Aplica o mesmo escopo de perfil e filtros de UI do mês
+                    # atual, para que a curva do mês anterior no gráfico
+                    # acumulado represente a mesma granularidade (região /
+                    # loja / consultor) que está sendo visualizada.
+                    _df_ant = aplicar_rls(_df_ant)
+                    if (
+                        st.session_state.get("ui_filtro_lojas")
+                        or st.session_state.get("ui_filtro_consultor")
+                    ):
+                        _df_ant = _aplicar_filtros_ui(_df_ant)
+                except Exception:
+                    _df_ant = pd.DataFrame()
+                st.session_state["_df_ant_cache"] = _df_ant
+                st.session_state["_df_ant_chave"] = chave_ant
+            df_ant_full = st.session_state["_df_ant_cache"]
             du_dec_ant = calcular_dias_uteis(ano_ant, mes_ant, 1)[0]
 
             render_tab_produtos(
