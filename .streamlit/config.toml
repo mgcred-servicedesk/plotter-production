@@ -1,5 +1,10 @@
 # Configuracao do Streamlit para deploy no Streamlit Cloud
-# Sem [theme] fixo — permite light/dark via toggle customizado
+# base = "light" fixado para impedir que o Streamlit detecte o tema
+# do sistema operacional e aplique dark mode nativo — o controle
+# visual de light/dark e feito inteiramente pelo CSS customizado (--mg-*).
+
+[theme]
+base = "light"
 
 [server]
 headless = true
