@@ -279,6 +279,7 @@ def aplicar_tema() -> None:
         .main, .main .block-container {{
             background-color: var(--mg-bg) !important;
             color: var(--mg-text) !important;
+            color-scheme: {theme} !important;
         }}
         [data-testid="stHeader"], header {{
             background-color: var(--mg-bg) !important;
