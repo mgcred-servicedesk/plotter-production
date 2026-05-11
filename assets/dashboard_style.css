@@ -217,41 +217,6 @@ div[data-testid="column"] {
     border-color: var(--mg-border) !important;
 }
 
-/* Texto digitado dentro do <input> (color nao e herdado
-   por elementos de formulario; precisa ser explicito). */
-[data-testid="stTextInput"] input,
-[data-testid="stNumberInput"] input,
-[data-baseweb="input"] input {
-    color: var(--mg-text) !important;
-    background-color: transparent !important;
-    -webkit-text-fill-color: var(--mg-text) !important;
-    caret-color: var(--mg-text) !important;
-}
-
-[data-testid="stTextInput"] input::placeholder,
-[data-testid="stNumberInput"] input::placeholder,
-[data-baseweb="input"] input::placeholder {
-    color: var(--mg-text-secondary) !important;
-    -webkit-text-fill-color: var(--mg-text-secondary) !important;
-    opacity: 0.7;
-}
-
-/* Neutralizar autofill do Chrome/Edge que sobrescreve
-   cor de texto e fundo via -webkit-autofill. */
-[data-testid="stTextInput"] input:-webkit-autofill,
-[data-testid="stNumberInput"] input:-webkit-autofill,
-[data-baseweb="input"] input:-webkit-autofill,
-[data-testid="stTextInput"] input:-webkit-autofill:hover,
-[data-testid="stTextInput"] input:-webkit-autofill:focus,
-[data-baseweb="input"] input:-webkit-autofill:hover,
-[data-baseweb="input"] input:-webkit-autofill:focus {
-    -webkit-text-fill-color: var(--mg-text) !important;
-    -webkit-box-shadow: 0 0 0px 1000px var(--mg-secondary-bg)
-        inset !important;
-    caret-color: var(--mg-text) !important;
-    transition: background-color 9999s ease-in-out 0s;
-}
-
 [data-testid="stSelectbox"] svg,
 [data-baseweb="select"] svg {
     fill: var(--mg-text) !important;
