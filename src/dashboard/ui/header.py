@@ -20,6 +20,8 @@ _MESES_PT = {
 def render_header(
     mes: int | None = None,
     ano: int | None = None,
+    titulo: str = "Dashboard de Vendas",
+    subtitulo: str = "Analise completa de performance e KPIs - MGCred",
 ) -> None:
     """Renderiza cabecalho estilizado com micro-breadcrumb opcional.
 
@@ -27,6 +29,9 @@ def render_header(
         mes: Mês ativo (1–12). Quando fornecido junto com ``ano``,
             exibe o período como terceiro item do breadcrumb.
         ano: Ano ativo (ex: 2026).
+        titulo: Titulo principal exibido no header (h1). Default
+            mantem o comportamento original.
+        subtitulo: Texto secundario abaixo do titulo.
     """
     if mes and ano:
         periodo = f"{_MESES_PT.get(mes, mes)} {ano}"
@@ -34,25 +39,25 @@ def render_header(
             f'<nav class="mg-breadcrumb" aria-label="breadcrumb">'
             f"<span>MGCred</span>"
             f'<span class="mg-breadcrumb-sep">›</span>'
-            f"<span>Dashboard de Vendas</span>"
+            f"<span>{titulo}</span>"
             f'<span class="mg-breadcrumb-sep">›</span>'
             f'<span class="mg-breadcrumb-active">{periodo}</span>'
             f"</nav>"
         )
     else:
         breadcrumb = (
-            '<nav class="mg-breadcrumb" aria-label="breadcrumb">'
-            "<span>MGCred</span>"
-            '<span class="mg-breadcrumb-sep">›</span>'
-            '<span class="mg-breadcrumb-active">Dashboard de Vendas</span>'
-            "</nav>"
+            f'<nav class="mg-breadcrumb" aria-label="breadcrumb">'
+            f"<span>MGCred</span>"
+            f'<span class="mg-breadcrumb-sep">›</span>'
+            f'<span class="mg-breadcrumb-active">{titulo}</span>'
+            f"</nav>"
         )
 
     st.markdown(
         f'<div class="dashboard-header">'
         f"{breadcrumb}"
-        f"<h1>Dashboard de Vendas</h1>"
-        f"<p>Analise completa de performance e KPIs - MGCred</p>"
+        f"<h1>{titulo}</h1>"
+        f"<p>{subtitulo}</p>"
         f"</div>",
         unsafe_allow_html=True,
     )

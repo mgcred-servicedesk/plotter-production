@@ -68,9 +68,11 @@ def render_kpis_principais(
 
     # Linha dos 3 KPIs principais
     meta_mix = kpis.get("meta_mix", 0)
-    perc_proj = kpis.get("perc_proj", 0)
     du_restantes = kpis.get("du_restantes", 1)
     projecao = kpis.get("projecao", 0)
+    # perc_proj em VALOR (projecao R$ / meta_mix), coerente com perc_ating_valor.
+    # kpis["perc_proj"] global é projecao_pts/meta_prata — base diferente.
+    perc_proj = (projecao / meta_mix * 100) if meta_mix > 0 else 0
 
     pagos_fmt = _formatar_valor_moeda(total_vendas)
     pagos_total = _formatar_valor_moeda_total(total_vendas)
@@ -245,7 +247,6 @@ def render_bloco_media_projecao(kpis: Dict) -> None:
     """
     from src.dashboard.ui.colors import get_status_color
 
-    perc_proj = kpis.get("perc_proj", 0)
     projecao = kpis.get("projecao", 0)
     meta_mix = kpis.get("meta_mix", 1)
     media_du = kpis.get("media_du", 0)
@@ -253,6 +254,11 @@ def render_bloco_media_projecao(kpis: Dict) -> None:
     du_restantes = kpis.get("du_restantes", 1)
     du_total = kpis.get("du_total", 1)
     du_decorridos = kpis.get("du_decorridos", 1)
+
+    # perc_proj precisa estar na mesma base do resto do card (valor vs meta MIX).
+    # O kpis["perc_proj"] global é projecao_pts/meta_prata (pontos vs Prata),
+    # o que geraria incoerência com média/necessário/projeção em R$ vs MIX.
+    perc_proj = (projecao / meta_mix * 100) if meta_mix > 0 else 0
 
     # Calcular média necessária e projeção
     gap = max(0, meta_mix - total_vendas)

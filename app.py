@@ -38,6 +38,9 @@ from src.dashboard.kpis.gerais import (
     calcular_medias_organizacao,
     calcular_metas_produto_diarias,
 )
+from src.dashboard.pages.dashboard_pontuacao import (
+    render_dashboard_pontuacao,
+)
 from src.dashboard.loaders import (
     carregar_categorias,
     carregar_consultores_cadastro,
@@ -525,7 +528,43 @@ def main():
                 st.session_state.pop("_periodo_carregado", None)
                 st.rerun()
 
-    render_header(mes=mes, ano=ano)
+    # ── Toggle Vendas ⇄ Pontuacao (state-driven) ──────
+    # Decide a view ANTES do header para que o titulo acompanhe
+    # a selecao do usuario.
+    _view = st.session_state.get("dashboard_view", "vendas")
+    if _view == "pontuacao":
+        render_header(
+            mes=mes,
+            ano=ano,
+            titulo="Dashboard de Pontuação",
+            subtitulo="Apuração de pontuação e atingimento - MGCred",
+        )
+    else:
+        render_header(mes=mes, ano=ano)
+
+    # Segmented control logo abaixo do header — centralizado.
+    _toggle_cols = st.columns([3, 4, 3])
+    with _toggle_cols[1]:
+        _sel = sac.segmented(
+            items=[
+                sac.SegmentedItem(
+                    label="Dashboard de Vendas",
+                    icon="bar-chart-fill",
+                ),
+                sac.SegmentedItem(
+                    label="Dashboard de Pontuação",
+                    icon="award-fill",
+                ),
+            ],
+            index=1 if _view == "pontuacao" else 0,
+            align="center",
+            color="blue",
+            key="sel_dashboard_view",
+        )
+    _nova_view = "pontuacao" if _sel == "Dashboard de Pontuação" else "vendas"
+    if _nova_view != _view:
+        st.session_state["dashboard_view"] = _nova_view
+        st.rerun()
 
     # ── Config: renderiza sem carregar contratos ──────
     if st.session_state.get("mostrar_config"):
@@ -858,6 +897,18 @@ def main():
 
         # ── Aviso de pontuacao com fallback ───────
         df_pontos = carregar_pontuacao_efetiva(mes, ano)
+        # Mapa categoria_codigo -> PTS, reusado pela pagina de Pontuacao
+        # para calcular pontos em df_analise/df_cancelados.
+        mapa_pontos: dict = (
+            dict(
+                zip(
+                    df_pontos["categoria_codigo"],
+                    df_pontos["pontos"].astype(float),
+                )
+            )
+            if not df_pontos.empty
+            else {}
+        )
         if not df_pontos.empty:
             fallbacks = df_pontos[
                 df_pontos["is_fallback"] == True  # noqa
@@ -1042,6 +1093,24 @@ def main():
             medias_organizacao = _cached["medias_organizacao"]
             kpis_qtd = _cached["kpis_qtd"]
             daily_pago = _cached["daily_pago"]
+
+        # ── Dispatch: Dashboard de Pontuacao ──────────
+        # Quando o toggle esta em 'pontuacao', renderizamos apenas a
+        # pagina de pontuacao (cards + prioridades em pontos) e
+        # encerramos. Nao mostramos os cards de vendas nem as tabs.
+        if st.session_state.get("dashboard_view") == "pontuacao":
+            render_dashboard_pontuacao(
+                kpis=kpis,
+                df=df_f,
+                df_analise=df_analise_f,
+                df_cancelados=df_cancelados_f,
+                df_metas_produto=df_metas_prod_f,
+                df_sup=df_sup_f,
+                mapa_pontos=mapa_pontos,
+                du_decorridos=du_decorridos,
+                perfil=role,
+            )
+            return
 
         # Consultor nao ve cards gerenciais; sua aba
         # renderiza os cards pessoais

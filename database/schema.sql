@@ -204,20 +204,24 @@ COMMENT ON TABLE periodos IS
 -- ===========================================
 
 CREATE TABLE categorias_produto (
-    id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    codigo           TEXT NOT NULL,
-    nome             TEXT NOT NULL,
-    grupo_dashboard  TEXT,
-    grupo_meta       TEXT,
-    conta_valor      BOOLEAN NOT NULL DEFAULT true,
-    conta_pontuacao  BOOLEAN NOT NULL DEFAULT true,
-    ordem            INTEGER NOT NULL DEFAULT 0,
-    ativo            BOOLEAN NOT NULL DEFAULT true,
-    created_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
+    id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    codigo            TEXT NOT NULL,
+    nome              TEXT NOT NULL,
+    grupo_dashboard   TEXT,
+    grupo_meta        TEXT,
+    conta_valor       BOOLEAN NOT NULL DEFAULT true,
+    conta_pontuacao   BOOLEAN NOT NULL DEFAULT true,
+    categoria_pts_id  UUID NULL REFERENCES categorias_produto (id),
+    ordem             INTEGER NOT NULL DEFAULT 0,
+    ativo             BOOLEAN NOT NULL DEFAULT true,
+    created_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
 
     CONSTRAINT uq_categorias_produto_codigo UNIQUE (codigo)
 );
+
+CREATE INDEX idx_categorias_produto_pts_id
+    ON categorias_produto (categoria_pts_id);
 
 COMMENT ON TABLE categorias_produto IS
     'Categorias canonicas de produto. Cada categoria agrupa '
@@ -246,6 +250,16 @@ COMMENT ON COLUMN categorias_produto.conta_valor IS
 COMMENT ON COLUMN categorias_produto.conta_pontuacao IS
     'Se true, esta categoria gera pontos nos KPIs. '
     'Emissao de cartao e seguros = false.';
+COMMENT ON COLUMN categorias_produto.categoria_pts_id IS
+    'Alias para lookup de pontuacao. Quando preenchido, '
+    'a RPC obter_pontuacao_periodo retorna a pontuacao da '
+    'categoria referenciada em vez de procurar uma entrada '
+    'direta para esta categoria no periodo. Permite '
+    'compartilhar PTS entre categorias relacionadas '
+    '(ex: SAQUE -> CARTAO, SUPER_CONTA -> CNC, conforme '
+    'Tabelas.xlsx coluna PRODUTO PTS). NULL = lookup direto. '
+    'O flag conta_pontuacao do contrato continua sendo o '
+    'da propria categoria (nao herda do alias).';
 COMMENT ON COLUMN categorias_produto.ordem IS
     'Ordem de exibicao no dashboard e relatorios.';
 
@@ -483,9 +497,16 @@ CREATE TRIGGER trg_pontuacao_updated_at
 -- ===========================================
 -- 10a. FUNCAO obter_pontuacao_periodo
 -- Retorna pontuacao efetiva para um dado mes/ano.
--- Se nao houver dados para o periodo solicitado,
--- busca o periodo anterior mais recente que tenha
--- dados (fallback automatico).
+-- Aplica dois mecanismos de fallback:
+--   (a) temporal — se o periodo solicitado nao tem
+--       nenhuma linha em pontuacao, retrocede ate 24
+--       meses buscando o ultimo periodo com dados;
+--   (b) alias — categorias com categoria_pts_id
+--       preenchido herdam a pontuacao da categoria
+--       referenciada (ex: SAQUE usa pts de CARTAO).
+-- Linha direta tem prioridade sobre alias (permite
+-- override pontual). is_fallback sinaliza apenas o
+-- fallback temporal.
 -- ===========================================
 
 CREATE OR REPLACE FUNCTION obter_pontuacao_periodo(
@@ -493,13 +514,13 @@ CREATE OR REPLACE FUNCTION obter_pontuacao_periodo(
     p_ano INTEGER
 )
 RETURNS TABLE (
-    categoria_id    UUID,
+    categoria_id     UUID,
     categoria_codigo TEXT,
-    categoria_nome  TEXT,
-    pontos          NUMERIC(10,4),
-    producao        INTEGER,
-    periodo_origem  TEXT,
-    is_fallback     BOOLEAN
+    categoria_nome   TEXT,
+    pontos           NUMERIC(10,4),
+    producao         INTEGER,
+    periodo_origem   TEXT,
+    is_fallback      BOOLEAN
 )
 LANGUAGE plpgsql
 STABLE
@@ -512,13 +533,13 @@ DECLARE
     v_ano_busca  INTEGER := p_ano;
     v_tentativas INTEGER := 0;
 BEGIN
-    -- Buscar periodo solicitado ou anterior com dados
+    -- Fallback temporal: retroceder ate achar periodo
+    -- com pelo menos uma linha em pontuacao.
     LOOP
         SELECT p.id INTO v_periodo_id
         FROM public.periodos p
         WHERE p.mes = v_mes_busca AND p.ano = v_ano_busca;
 
-        -- Se periodo existe, verificar se tem pontuacao
         IF v_periodo_id IS NOT NULL THEN
             SELECT EXISTS(
                 SELECT 1
@@ -529,10 +550,8 @@ BEGIN
             EXIT WHEN v_tem_dados;
         END IF;
 
-        -- Retroceder um mes
         v_tentativas := v_tentativas + 1;
         IF v_tentativas > 24 THEN
-            -- Evitar loop infinito (max 2 anos para tras)
             RETURN;
         END IF;
 
@@ -545,20 +564,27 @@ BEGIN
 
     RETURN QUERY
     SELECT
-        cp.id           AS categoria_id,
-        cp.codigo       AS categoria_codigo,
-        cp.nome         AS categoria_nome,
-        pt.pontos       AS pontos,
-        pt.producao     AS producao,
-        per.referencia  AS periodo_origem,
-        (v_mes_busca != p_mes
-         OR v_ano_busca != p_ano) AS is_fallback
-    FROM public.pontuacao pt
-    JOIN public.categorias_produto cp
-        ON cp.id = pt.categoria_id
+        cp.id                                  AS categoria_id,
+        cp.codigo                              AS categoria_codigo,
+        cp.nome                                AS categoria_nome,
+        COALESCE(pt_direta.pontos,
+                 pt_alias.pontos)              AS pontos,
+        COALESCE(pt_direta.producao,
+                 pt_alias.producao)            AS producao,
+        per.referencia                         AS periodo_origem,
+        (v_mes_busca <> p_mes
+         OR v_ano_busca <> p_ano)              AS is_fallback
+    FROM public.categorias_produto cp
+    LEFT JOIN public.pontuacao pt_direta
+        ON pt_direta.categoria_id = cp.id
+       AND pt_direta.periodo_id  = v_periodo_id
+    LEFT JOIN public.pontuacao pt_alias
+        ON pt_alias.categoria_id = cp.categoria_pts_id
+       AND pt_alias.periodo_id   = v_periodo_id
     JOIN public.periodos per
-        ON per.id = pt.periodo_id
-    WHERE pt.periodo_id = v_periodo_id;
+        ON per.id = v_periodo_id
+    WHERE cp.ativo = TRUE
+      AND COALESCE(pt_direta.pontos, pt_alias.pontos) IS NOT NULL;
 END;
 $$;
 
