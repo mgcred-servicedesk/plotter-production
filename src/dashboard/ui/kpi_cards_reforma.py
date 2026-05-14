@@ -482,16 +482,22 @@ def render_cards_produto_mix(
                 f'{emoji} {descricao} ({label_ind})</span></div>'
             )
         else:
-            perc = float(prod.get("perc_atingido", 0) or 0)
-            cor = (
-                "#10A37F" if perc >= 100
-                else "#F59E0B" if perc >= 70
-                else "#EF4444"
-            )
-            linha_comparativo = (
-                f"Atingimento: <span style='color: {cor}; font-weight: 600;'>"
-                f"{perc:.1f}%</span>"
-            )
+            if meta_total <= 0:
+                linha_comparativo = (
+                    "<span style='color: var(--mg-text-muted);'>"
+                    "Sem meta neste período</span>"
+                )
+            else:
+                perc = float(prod.get("perc_atingido", 0) or 0)
+                cor = (
+                    "#10A37F" if perc >= 100
+                    else "#F59E0B" if perc >= 70
+                    else "#EF4444"
+                )
+                linha_comparativo = (
+                    f"Atingimento: <span style='color: {cor}; font-weight: 600;'>"
+                    f"{perc:.1f}%</span>"
+                )
 
         cor_proj = (
             "#10A37F" if perc_proj >= 100

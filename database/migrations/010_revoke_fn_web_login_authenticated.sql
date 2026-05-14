@@ -43,16 +43,23 @@ REVOKE EXECUTE ON FUNCTION public.fn_web_login(
 
 
 -- ===========================================
--- 2. Confirmar EXECUTE para anon (idempotente)
+-- 2. Confirmar EXECUTE para anon e service_role (idempotente)
 -- ===========================================
--- Garante que login continua funcionando para usuarios
--- nao autenticados (caso default tenha sido revogado
--- em algum momento). Sem efeito se ja estiver concedido.
+-- anon: necessario para o endpoint de login nao autenticado.
+-- service_role: necessario para a Edge Function auth-login,
+--   que usa SUPABASE_SERVICE_ROLE_KEY para chamar fn_web_login.
+--   REVOKE FROM PUBLIC removeu o grant herdado — precisa ser
+--   concedido explicitamente.
 
 GRANT EXECUTE ON FUNCTION public.fn_web_login(
     p_usuario  text,
     p_senha    text
 ) TO anon;
+
+GRANT EXECUTE ON FUNCTION public.fn_web_login(
+    p_usuario  text,
+    p_senha    text
+) TO service_role;
 
 
 -- ===========================================
@@ -67,7 +74,7 @@ GRANT EXECUTE ON FUNCTION public.fn_web_login(
 -- WHERE routine_schema = 'public'
 --   AND routine_name   = 'fn_web_login';
 --
--- Esperado: apenas 'anon' (e o owner) com EXECUTE.
+-- Esperado: 'anon' e 'service_role' (e o owner) com EXECUTE.
 -- 'authenticated' e 'PUBLIC' nao devem aparecer.
 --
 -- Recomendacoes adicionais (fora desta migration,

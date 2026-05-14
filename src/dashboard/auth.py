@@ -327,6 +327,49 @@ def tela_login() -> bool:
                 max-width: 150px;
             }
         }
+
+        /* Overlay de transicao pos-login */
+        .login-transition-overlay {
+            position: fixed;
+            inset: 0;
+            background: var(--mg-secondary-bg, #f8faff);
+            z-index: 9999;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            gap: 0.75rem;
+            animation: lt-fadein 0.25s ease;
+        }
+        @keyframes lt-fadein {
+            from { opacity: 0; }
+            to   { opacity: 1; }
+        }
+        .login-transition-check {
+            width: 56px;
+            height: 56px;
+            background: #22c55e;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: #fff;
+            font-size: 1.5rem;
+            font-weight: 700;
+            box-shadow: 0 4px 16px rgba(34,197,94,0.3);
+        }
+        .login-transition-name {
+            font-size: 1.1rem;
+            font-weight: 600;
+            color: var(--mg-text, #1a1a2e);
+            margin: 0;
+        }
+        .login-transition-loading {
+            font-size: 0.82rem;
+            color: var(--mg-text-secondary,
+                rgba(26,26,46,0.55));
+            margin: 0;
+        }
         </style>
         """,
         unsafe_allow_html=True,
@@ -395,18 +438,23 @@ def tela_login() -> bool:
             unsafe_allow_html=True,
         )
 
-    if submit:
-        if not usuario or not senha:
-            st.error("Preencha usuário e senha.")
-            return False
+        if submit:
+            usuario = usuario.strip()
+            senha = senha.strip()
+            if not usuario or not senha:
+                st.error("Preencha usuário e senha.")
+                return False
 
-        dados = autenticar(usuario, senha)
-        if dados:
-            st.session_state["usuario_logado"] = dados
-            st.rerun()
-        else:
-            st.error("Usuário ou senha inválidos.")
-            return False
+            with st.spinner("Verificando credenciais..."):
+                dados = autenticar(usuario, senha)
+
+            if dados:
+                st.session_state["usuario_logado"] = dados
+                st.session_state["_fresh_login"] = True
+                st.rerun()
+            else:
+                st.error("Usuário ou senha inválidos.")
+                return False
 
     return False
 

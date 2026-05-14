@@ -470,6 +470,10 @@ def _card_meta_produto(
         card_mod = "mg-prod-card--mix"
         badge_mod = "mg-prod-badge--mix"
         bar_mod = "mg-primary"
+    elif meta == 0:
+        card_mod = "mg-prod-card--accent-teal"
+        badge_mod = ""
+        bar_mod = "mg-primary"
     elif perc >= 100:
         card_mod = "mg-prod-card--success"
         badge_mod = "mg-prod-badge--success"

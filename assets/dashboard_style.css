@@ -1172,6 +1172,7 @@ iframe[title*="streamlit_antd_components"] {
     display: flex;
     flex-direction: column;
     gap: var(--mg-space-lg);
+    animation: fadeSlideUp 0.3s ease-out both;
 }
 
 .mg-skeleton-row {
@@ -1216,6 +1217,54 @@ iframe[title*="streamlit_antd_components"] {
     height: 8px;
     width: 45%;
     margin-top: var(--mg-space-sm);
+}
+
+.mg-skeleton-line.xl {
+    height: 32px;
+    width: 70%;
+    margin-bottom: var(--mg-space-sm);
+}
+
+/* Hero cards (3 KPIs principais) */
+.mg-skeleton-card.hero {
+    padding: 1.75rem 1.25rem;
+}
+
+/* Cards compactos (linha de produtos) */
+.mg-skeleton-card.compact {
+    padding: 0.875rem 0.75rem;
+}
+
+/* Status bar placeholder */
+.mg-skeleton-status {
+    height: 36px;
+    border-radius: var(--mg-radius-sm, 6px);
+    background: linear-gradient(
+        90deg,
+        var(--mg-border) 25%,
+        var(--mg-hover-bg) 50%,
+        var(--mg-border) 75%
+    );
+    background-size: 800px 100%;
+    animation: shimmer 1.8s ease-in-out infinite;
+    opacity: 0.55;
+}
+
+/* Barra de tabs placeholder */
+.mg-skeleton-tabs {
+    height: 40px;
+    border-radius: var(--mg-radius-sm, 6px);
+    background: linear-gradient(
+        90deg,
+        var(--mg-border) 25%,
+        var(--mg-hover-bg) 50%,
+        var(--mg-border) 75%
+    );
+    background-size: 800px 100%;
+    animation: shimmer 1.8s ease-in-out infinite;
+    opacity: 0.45;
+    width: 55%;
+    margin: 0 auto;
 }
 
 .mg-skeleton-chart {
