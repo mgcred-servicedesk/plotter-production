@@ -6,6 +6,7 @@ from typing import Optional
 
 import pandas as pd
 
+from src.config.settings import PRODUTOS_EMISSAO
 from src.dashboard.kpis.gerais import (
     contar_consultores,
     excluir_supervisores,
@@ -95,47 +96,115 @@ def calcular_kpis_por_produto(
 def calcular_distribuicao_produtos(
     df: pd.DataFrame,
     df_supervisores: Optional[pd.DataFrame] = None,
-) -> pd.DataFrame:
-    """Distribuicao de produtos por consultor."""
+) -> tuple[pd.DataFrame, list[str], list[str]]:
+    """Distribuicao de valor e quantidade por consultor.
+
+    Produtos de valor (CNC, SAQUE, etc.): agrega por VALOR (R$).
+    Aceleradores (BMG Med, Vida Familiar, Emissao, Super Conta):
+    agrega por quantidade de contratos.
+
+    Returns (df, colunas_moeda, colunas_numero).
+    """
     if "CONSULTOR" not in df.columns:
-        return pd.DataFrame()
+        return pd.DataFrame(), [], []
 
-    # Incluir seguros (VALOR=0) que contam apenas quantidade
-    mask_producao = df["VALOR"] > 0
-    if "is_bmg_med" in df.columns:
-        mask_producao = mask_producao | df["is_bmg_med"]
-    if "is_seguro_vida" in df.columns:
-        mask_producao = mask_producao | df["is_seguro_vida"]
+    def _flag(col: str) -> pd.Series:
+        return df.get(col, pd.Series(False, index=df.index)).fillna(False).astype(bool)
 
-    df_v = excluir_supervisores(df[mask_producao], df_supervisores)
-
-    df_v["PRODUTO_MIX"] = df_v["grupo_dashboard"].fillna("OUTROS")
-    if "is_bmg_med" in df_v.columns:
-        df_v.loc[df_v["is_bmg_med"], "PRODUTO_MIX"] = "BMG Med"
-    if "is_seguro_vida" in df_v.columns:
-        df_v.loc[df_v["is_seguro_vida"], "PRODUTO_MIX"] = "Vida Familiar"
-
-    grupos = sorted(
-        df_v[df_v["PRODUTO_MIX"] != "OUTROS"]["PRODUTO_MIX"].unique().tolist()
+    mask_bmg = _flag("is_bmg_med")
+    mask_seg = _flag("is_seguro_vida")
+    mask_em = (
+        df["TIPO_PRODUTO"].str.upper().isin({p.upper() for p in PRODUTOS_EMISSAO})
+        if "TIPO_PRODUTO" in df.columns
+        else pd.Series(False, index=df.index)
+    )
+    mask_sc = (
+        df["SUBTIPO"].str.strip().str.upper() == "SUPER CONTA"
+        if "SUBTIPO" in df.columns
+        else pd.Series(False, index=df.index)
     )
 
-    distrib = df_v.pivot_table(
-        index="CONSULTOR",
-        columns="PRODUTO_MIX",
-        values="pontos",
-        aggfunc="sum",
-        fill_value=0,
-    ).reset_index()
+    mask_all = (df["VALOR"] > 0) | mask_bmg | mask_seg | mask_em | mask_sc
+    df_v = excluir_supervisores(df[mask_all].copy().reset_index(drop=True), df_supervisores)
 
-    cols_existentes = [g for g in grupos if g in distrib.columns]
-    distrib["TOTAL"] = distrib[cols_existentes].sum(axis=1)
+    # Recompute flags on filtered df
+    def _flag_v(col: str) -> pd.Series:
+        return df_v.get(col, pd.Series(False, index=df_v.index)).fillna(False).astype(bool)
+
+    bmg_v = _flag_v("is_bmg_med")
+    seg_v = _flag_v("is_seguro_vida")
+    em_v = (
+        df_v["TIPO_PRODUTO"].str.upper().isin({p.upper() for p in PRODUTOS_EMISSAO})
+        if "TIPO_PRODUTO" in df_v.columns
+        else pd.Series(False, index=df_v.index)
+    )
+    sc_v = (
+        df_v["SUBTIPO"].str.strip().str.upper() == "SUPER CONTA"
+        if "SUBTIPO" in df_v.columns
+        else pd.Series(False, index=df_v.index)
+    )
+
+    # ── Pivot de VALOR (produtos de crédito) ────────────────────────────────
+    mask_cred = (df_v["VALOR"] > 0) & ~bmg_v & ~seg_v & ~em_v
+    df_cred = df_v[mask_cred].copy()
+    df_cred["PRODUTO_MIX"] = df_cred["grupo_dashboard"].fillna("OUTROS")
+
+    if not df_cred.empty:
+        pv_val = df_cred.pivot_table(
+            index="CONSULTOR",
+            columns="PRODUTO_MIX",
+            values="VALOR",
+            aggfunc="sum",
+            fill_value=0,
+        ).reset_index()
+        cols_valor = [c for c in pv_val.columns if c != "CONSULTOR"]
+    else:
+        pv_val = pd.DataFrame(columns=["CONSULTOR"])
+        cols_valor = []
+
+    # ── Pivot de Qtd (aceleradores) ─────────────────────────────────────────
+    _ACEL = [
+        ("BMG Med", bmg_v),
+        ("Vida Familiar", seg_v),
+        ("Emissao", em_v),
+        ("Super Conta", sc_v),
+    ]
+    pv_qtd = pd.DataFrame({"CONSULTOR": df_v["CONSULTOR"].unique()})
+    cols_qtd: list[str] = []
+    for nome, mask in _ACEL:
+        if mask.any():
+            qtd = df_v[mask].groupby("CONSULTOR").size().rename(nome)
+            pv_qtd = pv_qtd.merge(qtd.reset_index(), on="CONSULTOR", how="left")
+            pv_qtd[nome] = pv_qtd[nome].fillna(0).astype(int)
+            cols_qtd.append(nome)
+
+    # ── Merge e TOTAL ────────────────────────────────────────────────────────
+    distrib = pv_val.merge(pv_qtd, on="CONSULTOR", how="outer").fillna(0)
+    cv_exist = [c for c in cols_valor if c in distrib.columns]
+    distrib["TOTAL"] = distrib[cv_exist].sum(axis=1)
 
     if "LOJA" in df.columns:
-        df_info = df[["CONSULTOR", "LOJA"]].drop_duplicates()
-        distrib = distrib.merge(df_info, on="CONSULTOR", how="left")
-
+        distrib = distrib.merge(
+            df[["CONSULTOR", "LOJA"]].drop_duplicates("CONSULTOR"),
+            on="CONSULTOR", how="left",
+        )
     if "REGIAO" in df.columns:
-        df_reg = df[["LOJA", "REGIAO"]].drop_duplicates()
-        distrib = distrib.merge(df_reg, on="LOJA", how="left")
+        distrib = distrib.merge(
+            df[["LOJA", "REGIAO"]].drop_duplicates(),
+            on="LOJA", how="left",
+        )
 
-    return distrib.sort_values("TOTAL", ascending=False)
+    # Ordem: info | produtos valor | TOTAL | aceleradores
+    col_order = ["CONSULTOR"]
+    if "LOJA" in distrib.columns:
+        col_order.append("LOJA")
+    if "REGIAO" in distrib.columns:
+        col_order.append("REGIAO")
+    col_order += sorted(cv_exist) + ["TOTAL"] + [c for c in cols_qtd if c in distrib.columns]
+
+    distrib = distrib[[c for c in col_order if c in distrib.columns]]
+    distrib = distrib.sort_values("TOTAL", ascending=False).reset_index(drop=True)
+
+    colunas_moeda = [c for c in sorted(cv_exist) + ["TOTAL"] if c in distrib.columns]
+    colunas_numero = [c for c in cols_qtd if c in distrib.columns]
+    return distrib, colunas_moeda, colunas_numero

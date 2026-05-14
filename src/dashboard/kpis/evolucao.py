@@ -37,7 +37,6 @@ def calcular_analitico_consultores(
         .agg(
             Qtd=("VALOR", "count"),
             Valor=("VALOR", "sum"),
-            Pontos=("pontos", "sum"),
         )
         .reset_index()
     )
@@ -49,14 +48,13 @@ def calcular_analitico_consultores(
         "Produto",
         "Qtd",
         "Valor",
-        "Pontos",
     ]
     analitico["Ticket Médio"] = analitico.apply(
         lambda r: r["Valor"] / r["Qtd"] if r["Qtd"] > 0 else 0,
         axis=1,
     )
     return analitico.sort_values(
-        ["Consultor", "Pontos"],
+        ["Consultor", "Valor"],
         ascending=[True, False],
     )
 

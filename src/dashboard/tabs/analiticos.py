@@ -12,9 +12,6 @@ from src.dashboard.components.tables import exibir_tabela
 from src.dashboard.formatters import formatar_moeda, formatar_numero
 from src.dashboard.kpis.evolucao import calcular_analitico_consultores
 from src.dashboard.kpis.produtos import calcular_distribuicao_produtos
-from src.dashboard.kpis.regioes import calcular_media_producao_regiao
-from src.dashboard.ui.charts import criar_grafico_media_regiao
-from src.dashboard.ui.header import chart_card_close, chart_card_open
 
 
 def _exportar_csv(df: pd.DataFrame, nome: str, key: str):
@@ -73,51 +70,49 @@ def _render_detalhamento_pagos(df, df_sup):
 
     # KPIs
     total_valor = df_d["VALOR"].sum()
-    total_pts = df_d["pontos"].sum() if "pontos" in df_d.columns else 0
     total_trans = len(df_d[df_d["VALOR"] > 0])
     tk = total_valor / total_trans if total_trans > 0 else 0
 
-    col1, col2, col3, col4 = st.columns(4)
+    col1, col2, col3 = st.columns(3)
     with col1:
         st.metric("Total de Valor", formatar_moeda(total_valor))
     with col2:
-        st.metric("Total de Pontos", formatar_numero(total_pts))
-    with col3:
         st.metric("Ticket Medio", formatar_moeda(tk))
-    with col4:
+    with col3:
         st.metric("Quantidade", formatar_numero(len(df_d)))
 
     # Tabela detalhada
-    cols = ["CONTRATO_ID", "DATA", "LOJA", "CONSULTOR"]
+    # NUM_PROPOSTA preferido; fallback para CONTRATO_ID em registros
+    # importados antes da correção do campo Nº PROP/ADE.
+    df_d = df_d.copy()
+    df_d["NR_ADE"] = (
+        df_d.get("NUM_PROPOSTA", pd.Series("", index=df_d.index))
+        .replace("", pd.NA)
+        .fillna(df_d["CONTRATO_ID"].astype(str))
+    )
+
+    cols = ["NR_ADE", "DATA", "LOJA", "CONSULTOR"]
     if "REGIAO" in df_d.columns:
         cols.append("REGIAO")
-    cols += ["TIPO_PRODUTO", "TIPO OPER.", "VALOR"]
-    if "pontos" in df_d.columns:
-        cols.append("pontos")
-    cols.append("BANCO")
+    cols += ["TIPO_PRODUTO", "TIPO OPER.", "VALOR", "BANCO"]
 
     cols_disp = [c for c in cols if c in df_d.columns]
     df_tabela = (
         df_d[cols_disp]
         .sort_values("DATA", ascending=False)
         .rename(columns={
-            "CONTRATO_ID": "Nº Proposta",
+            "NR_ADE": "Nº ADE",
             "DATA": "Data Pagamento",
             "TIPO_PRODUTO": "Produto",
             "TIPO OPER.": "Tipo Operacao",
             "VALOR": "Valor",
-            "pontos": "Pontos",
             "BANCO": "Banco",
             "LOJA": "Loja",
             "CONSULTOR": "Consultor",
             "REGIAO": "Regiao",
         })
     )
-    exibir_tabela(
-        df_tabela,
-        colunas_moeda=["Valor"],
-        colunas_numero=["Pontos"],
-    )
+    exibir_tabela(df_tabela, colunas_moeda=["Valor"])
     _exportar_csv(df_tabela, "contratos_pagos", "exp_pagos")
 
 
@@ -184,7 +179,14 @@ def _render_detalhamento_em_analise(df_analise):
         st.metric("Quantidade", formatar_numero(total_trans))
 
     # Tabela detalhada
-    cols = ["CONTRATO_ID", "DATA_CADASTRO", "LOJA", "CONSULTOR"]
+    df_d = df_d.copy()
+    df_d["NR_ADE"] = (
+        df_d.get("NUM_PROPOSTA", pd.Series("", index=df_d.index))
+        .replace("", pd.NA)
+        .fillna(df_d["CONTRATO_ID"].astype(str))
+    )
+
+    cols = ["NR_ADE", "DATA_CADASTRO", "LOJA", "CONSULTOR"]
     if "REGIAO" in df_d.columns:
         cols.append("REGIAO")
     cols += [
@@ -197,7 +199,7 @@ def _render_detalhamento_em_analise(df_analise):
         df_d[cols_disp]
         .sort_values("DATA_CADASTRO", ascending=False)
         .rename(columns={
-            "CONTRATO_ID": "Nº Proposta",
+            "NR_ADE": "Nº ADE",
             "DATA_CADASTRO": "Data Cadastro",
             "TIPO_PRODUTO": "Produto",
             "TIPO OPER.": "Tipo Operacao",
@@ -278,7 +280,14 @@ def _render_detalhamento_cancelados(df_cancel):
         st.metric("Quantidade", formatar_numero(total_trans))
 
     # Tabela detalhada
-    cols = ["CONTRATO_ID", "DATA_CADASTRO", "LOJA", "CONSULTOR"]
+    df_d = df_d.copy()
+    df_d["NR_ADE"] = (
+        df_d.get("NUM_PROPOSTA", pd.Series("", index=df_d.index))
+        .replace("", pd.NA)
+        .fillna(df_d["CONTRATO_ID"].astype(str))
+    )
+
+    cols = ["NR_ADE", "DATA_CADASTRO", "LOJA", "CONSULTOR"]
     if "REGIAO" in df_d.columns:
         cols.append("REGIAO")
     cols += [
@@ -291,7 +300,7 @@ def _render_detalhamento_cancelados(df_cancel):
         df_d[cols_disp]
         .sort_values("DATA_CADASTRO", ascending=False)
         .rename(columns={
-            "CONTRATO_ID": "Nº Proposta",
+            "NR_ADE": "Nº ADE",
             "DATA_CADASTRO": "Data Cadastro",
             "TIPO_PRODUTO": "Produto",
             "TIPO OPER.": "Tipo Operacao",
@@ -310,6 +319,81 @@ def _render_detalhamento_cancelados(df_cancel):
     )
 
 
+def _nr_ade(frame: pd.DataFrame) -> pd.Series:
+    """Deriva coluna NR_ADE: NUM_PROPOSTA com fallback para CONTRATO_ID."""
+    return (
+        frame.get("NUM_PROPOSTA", pd.Series("", index=frame.index))
+        .replace("", pd.NA)
+        .fillna(frame["CONTRATO_ID"].astype(str))
+    )
+
+
+def _render_busca_ade(df, df_analise, df_cancelados):
+    """Busca unificada por Nº ADE em todos os status."""
+    fontes = [
+        (df, "Pago", "DATA"),
+        (df_analise, "Em Analise", "DATA_CADASTRO"),
+        (df_cancelados, "Cancelado", "DATA_CADASTRO"),
+    ]
+    resultados = []
+    for src, status, col_data in fontes:
+        if src.empty:
+            continue
+        src2 = src.copy()
+        src2["NR_ADE"] = _nr_ade(src2)
+        src2["Status"] = status
+        src2["_DATA"] = src2.get(col_data, pd.Series(dtype="object"))
+        resultados.append(src2)
+
+    if not resultados:
+        return
+
+    df_all = pd.concat(resultados, ignore_index=True)
+
+    busca = st.text_input(
+        "Buscar por Nº ADE",
+        placeholder="Digite o número ADE e pressione Enter...",
+        key="ade_search_input",
+    )
+
+    if not busca.strip():
+        return
+
+    mask = df_all["NR_ADE"].astype(str).str.contains(
+        busca.strip(), case=False, na=False
+    )
+    encontrados = df_all[mask]
+
+    if encontrados.empty:
+        st.warning(f"Nenhum resultado para '{busca.strip()}'.")
+        return
+
+    st.success(f"{len(encontrados)} resultado(s) encontrado(s).")
+
+    cols_base = ["NR_ADE", "Status", "_DATA", "LOJA", "CONSULTOR"]
+    if "REGIAO" in encontrados.columns:
+        cols_base.append("REGIAO")
+    cols_base += ["TIPO_PRODUTO", "TIPO OPER.", "VALOR", "BANCO"]
+
+    df_res = (
+        encontrados[[c for c in cols_base if c in encontrados.columns]]
+        .sort_values("_DATA", ascending=False)
+        .rename(columns={
+            "NR_ADE": "Nº ADE",
+            "_DATA": "Data",
+            "TIPO_PRODUTO": "Produto",
+            "TIPO OPER.": "Tipo Operacao",
+            "VALOR": "Valor",
+            "BANCO": "Banco",
+            "LOJA": "Loja",
+            "CONSULTOR": "Consultor",
+            "REGIAO": "Regiao",
+        })
+    )
+    exibir_tabela(df_res, colunas_moeda=["Valor"])
+    _exportar_csv(df_res, "busca_ade", "exp_busca_ade")
+
+
 def render_tab_analiticos(
     df, df_sup, df_analise, df_cancelados,
 ):
@@ -320,6 +404,8 @@ def render_tab_analiticos(
         align="left",
         color="blue",
     )
+
+    _render_busca_ade(df, df_analise, df_cancelados)
 
     menu = sac.tabs(
         items=[
@@ -338,10 +424,6 @@ def render_tab_analiticos(
             sac.TabsItem(
                 label="Consultores por Produto",
                 icon="people",
-            ),
-            sac.TabsItem(
-                label="Producao por Regiao",
-                icon="geo-alt",
             ),
             sac.TabsItem(
                 label="Distribuicao de Produtos",
@@ -412,24 +494,18 @@ def render_tab_analiticos(
                 df_cards = df_cards[df_cards["PRODUTO_MIX"] == filt_p]
 
             total_valor = df_cards["VALOR"].sum()
-            total_pts = df_cards["pontos"].sum()
             total_trans = len(df_cards[df_cards["VALOR"] > 0])
             tk_medio = (
                 total_valor / total_trans if total_trans > 0 else 0
             )
 
-            col1, col2, col3 = st.columns(3)
+            col1, col2 = st.columns(2)
             with col1:
-                st.metric(
-                    "Total de Pontos",
-                    formatar_numero(total_pts),
-                )
-            with col2:
                 st.metric(
                     "Total de Valor",
                     formatar_moeda(total_valor),
                 )
-            with col3:
+            with col2:
                 st.metric(
                     "Ticket Medio Geral",
                     formatar_moeda(tk_medio),
@@ -437,38 +513,10 @@ def render_tab_analiticos(
         else:
             st.warning("Dados nao disponiveis")
 
-    elif menu == "Producao por Regiao":
-        df_mr = calcular_media_producao_regiao(df, df_sup)
-        if not df_mr.empty:
-            chart_card_open(
-                "Produtividade Media por Regiao",
-                icon="📊",
-                subtitle="Comparativo de produtividade media entre regioes",
-            )
-            fig = criar_grafico_media_regiao(df_mr)
-            st.plotly_chart(fig, width="stretch")
-            chart_card_close()
-            sac.divider(
-                label="Estatisticas Detalhadas",
-                icon="table",
-                align="left",
-                color="gray",
-            )
-            df_d = df_mr.drop(
-                ["Valor Desvio", "Pontos Desvio"],
-                axis=1,
-            )
-            exibir_tabela(df_d)
-            _exportar_csv(
-                df_d, "producao_por_regiao", "exp_prod_reg"
-            )
-        else:
-            st.warning("Dados nao disponiveis")
-
     elif menu == "Distribuicao de Produtos":
-        df_dist = calcular_distribuicao_produtos(df, df_sup)
+        df_dist, cols_moeda, cols_num = calcular_distribuicao_produtos(df, df_sup)
         if not df_dist.empty:
-            st.info("Visualizacao da distribuicao de produtos por consultor")
+            st.info("Distribuicao de valor (R$) e aceleradores (Qtd) por consultor")
             top_n = st.slider(
                 "Exibir top N consultores",
                 min_value=5,
@@ -476,7 +524,11 @@ def render_tab_analiticos(
                 value=20,
                 step=5,
             )
-            exibir_tabela(df_dist.head(top_n))
+            exibir_tabela(
+                df_dist.head(top_n),
+                colunas_moeda=cols_moeda,
+                colunas_numero=cols_num,
+            )
             _exportar_csv(
                 df_dist, "distribuicao_produtos",
                 "exp_dist_prod",

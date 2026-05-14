@@ -875,6 +875,7 @@ def main():
         # cadeia abaixo. Evita .copy() de DataFrames grandes
         # em todo rerun.
         df_full = df
+        df_metas_full = df_metas
         df_metas_produto_full = df_metas_produto
         df_sup_full = df_sup
 
@@ -1309,10 +1310,11 @@ def main():
             )
         elif tab == "Rankings":
             render_tab_rankings(
-                df_f,
-                df_metas_f,
-                df_sup_f,
-                du_decorridos,
+                df_full,
+                df_metas_full,
+                df_sup_full,
+                df_scope=df_f,
+                perfil=role,
             )
         elif tab == "Analiticos":
             render_tab_analiticos(

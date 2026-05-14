@@ -103,12 +103,14 @@ def calcular_heatmap_regiao_produto(
 
     regioes = sorted(df["REGIAO"].unique())
 
-    # Calcular % atingimento por regiao x produto
+    # Calcular % atingimento e volume bruto por regiao x produto
     dados_ating = []
+    dados_valor = []
     for regiao in regioes:
         df_r = df[df["REGIAO"] == regiao]
         lojas_r = df_r["LOJA"].unique()
-        row = {"Região": regiao}
+        row_ating = {"Região": regiao}
+        row_valor = {"Região": regiao}
 
         for grupo in grupos:
             valor = df_r[df_r["grupo_dashboard"] == grupo][
@@ -133,18 +135,128 @@ def calcular_heatmap_regiao_produto(
                 )
 
             perc = (valor / meta * 100) if meta > 0 else 0
-            row[grupo] = perc
+            row_ating[grupo] = perc
+            row_valor[grupo] = valor
 
-        dados_ating.append(row)
+        dados_ating.append(row_ating)
+        dados_valor.append(row_valor)
 
     df_ating = pd.DataFrame(dados_ating).set_index("Região")
+    df_valor = pd.DataFrame(dados_valor).set_index("Região")
 
-    # Gerar ranking (1 = melhor % atingimento)
-    df_ranking = df_ating.rank(ascending=False, method="min").astype(
-        int
-    )
+    # Ranking por % atingimento; produtos com meta zerada para todas
+    # as regioes usam volume de producao como criterio de desempate
+    # (maior volume = melhor posicao).
+    df_ranking = df_ating.rank(ascending=False, method="min").astype(int)
+    for col in df_ating.columns:
+        if df_ating[col].sum() == 0:
+            df_ranking[col] = (
+                df_valor[col]
+                .rank(ascending=False, method="min")
+                .astype(int)
+            )
 
     return df_ranking, df_ating
+
+
+def calcular_kpis_por_produto_regiao(
+    df: pd.DataFrame,
+    df_metas_produto: pd.DataFrame,
+    categorias: pd.DataFrame,
+    ano: int,
+    mes: int,
+    dia_atual: Optional[int] = None,
+) -> Dict[str, pd.DataFrame]:
+    """KPIs por produto para cada regiao.
+
+    Retorna dict {grupo_dashboard → DataFrame} com colunas:
+    Pos., Região, Qtd, Valor, Meta, % Atingimento, Ticket Médio,
+    Projeção, % Projeção. Apenas grupos com conta_valor=True.
+    Ordenado por % Atingimento; quando meta zerada para todas as
+    regiões, ordena por Valor (maior = 1º).
+    """
+    if "REGIAO" not in df.columns or "grupo_dashboard" not in df.columns:
+        return {}
+
+    du_total, du_dec, _ = calcular_dias_uteis(ano, mes, dia_atual)
+
+    grupo_meta_map = (
+        categorias[categorias["grupo_dashboard"].notna()]
+        .groupby("grupo_dashboard")["grupo_meta"]
+        .first()
+        .to_dict()
+    )
+
+    grupos = sorted(
+        categorias[
+            categorias["grupo_dashboard"].notna()
+            & categorias["conta_valor"].fillna(False).astype(bool)
+        ]["grupo_dashboard"]
+        .unique()
+        .tolist()
+    )
+
+    regioes = sorted(df["REGIAO"].unique())
+    resultado: Dict[str, pd.DataFrame] = {}
+
+    for grupo in grupos:
+        df_g = df[df["grupo_dashboard"] == grupo]
+        rows = []
+
+        for regiao in regioes:
+            df_r = df_g[df_g["REGIAO"] == regiao]
+            lojas_r = df[df["REGIAO"] == regiao]["LOJA"].unique()
+
+            valor = df_r["VALOR"].sum()
+            qtd = int((df_r["VALOR"] > 0).sum())
+            ticket_medio = valor / qtd if qtd > 0 else 0.0
+
+            meta_key = grupo_meta_map.get(grupo, grupo)
+            meta = 0.0
+            if (
+                not df_metas_produto.empty
+                and meta_key in df_metas_produto.columns
+            ):
+                meta = (
+                    pd.to_numeric(
+                        df_metas_produto[
+                            df_metas_produto["LOJA"].isin(lojas_r)
+                        ][meta_key],
+                        errors="coerce",
+                    )
+                    .fillna(0)
+                    .sum()
+                )
+
+            perc = (valor / meta * 100) if meta > 0 else 0.0
+            projecao = (valor / du_dec * du_total) if du_dec > 0 else 0.0
+            perc_proj = (projecao / meta * 100) if meta > 0 else 0.0
+
+            rows.append(
+                {
+                    "Região": regiao,
+                    "Qtd": qtd,
+                    "Valor": valor,
+                    "Meta": meta,
+                    "% Atingimento": perc,
+                    "Ticket Médio": ticket_medio,
+                    "Projeção": projecao,
+                    "% Projeção": perc_proj,
+                }
+            )
+
+        if not rows:
+            continue
+
+        df_rk = pd.DataFrame(rows)
+        sort_col = "% Atingimento" if df_rk["Meta"].sum() > 0 else "Valor"
+        df_rk = df_rk.sort_values(sort_col, ascending=False).reset_index(
+            drop=True
+        )
+        df_rk.insert(0, "Pos.", range(1, len(df_rk) + 1))
+        resultado[grupo] = df_rk
+
+    return resultado
 
 
 def calcular_media_producao_regiao(

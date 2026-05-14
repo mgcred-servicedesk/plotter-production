@@ -157,6 +157,7 @@ def _fetch_contratos_pagos(mes: int, ano: int) -> pd.DataFrame:
         rows.append(
             {
                 "CONTRATO_ID": c.get("contrato_id"),
+                "NUM_PROPOSTA": c.get("num_proposta", ""),
                 "DATA": c.get("data_status_pagamento"),
                 "DATA_CADASTRO": c.get("data_cadastro"),
                 "LOJA": c.get("loja", ""),
@@ -167,6 +168,8 @@ def _fetch_contratos_pagos(mes: int, ano: int) -> pd.DataFrame:
                 "SUBTIPO": c.get("subtipo", ""),
                 "TIPO OPER.": c.get("tipo_operacao", ""),
                 "VALOR": float(c.get("valor", 0)),
+                "PRAZO": c.get("prazo", ""),
+                "VALOR_PARCELA": float(c.get("valor_parcela") or 0),
                 "BANCO": c.get("banco", ""),
                 "CONVENIO": c.get("convenio", ""),
                 "categoria_codigo": c.get("categoria_codigo", ""),
@@ -243,6 +246,7 @@ def _fetch_contratos_em_analise(mes: int, ano: int) -> pd.DataFrame:
         rows.append(
             {
                 "CONTRATO_ID": c.get("contrato_id"),
+                "NUM_PROPOSTA": c.get("num_proposta", ""),
                 "DATA_CADASTRO": c.get("data_cadastro"),
                 "LOJA": c.get("loja", ""),
                 "REGIAO": c.get("regiao", ""),
@@ -328,6 +332,7 @@ def _fetch_contratos_cancelados(mes: int, ano: int) -> pd.DataFrame:
         rows.append(
             {
                 "CONTRATO_ID": c.get("contrato_id"),
+                "NUM_PROPOSTA": c.get("num_proposta", ""),
                 "DATA_CADASTRO": c.get("data_cadastro"),
                 "LOJA": c.get("loja", ""),
                 "REGIAO": c.get("regiao", ""),

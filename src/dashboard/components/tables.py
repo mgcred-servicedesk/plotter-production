@@ -66,7 +66,7 @@ def _classificar_coluna(
     if any(kw in col for kw in _NUMERO_KEYWORDS):
         return "numero"
     if any(kw in col for kw in _MOEDA_KEYWORDS):
-        return "numero"
+        return "moeda"
     return None
 
 
@@ -258,11 +258,17 @@ def _formatar_dataframe_br(
     colunas_numero: Optional[List[str]],
 ) -> pd.DataFrame:
     """
-    Retorna cópia do DataFrame com colunas monetárias e
-    numéricas formatadas no padrão brasileiro.
+    Retorna cópia do DataFrame com colunas monetárias,
+    numéricas e de data formatadas no padrão brasileiro.
+    Datas (datetime64) são convertidas automaticamente para dd/mm/aaaa.
     """
     df_fmt = df.copy()
     for col in df.columns:
+        if pd.api.types.is_datetime64_any_dtype(df[col]):
+            df_fmt[col] = df[col].dt.strftime("%d/%m/%Y").where(
+                df[col].notna(), other=""
+            )
+            continue
         tipo = _classificar_coluna(
             col, colunas_moeda, colunas_percentual, colunas_numero
         )
@@ -278,6 +284,10 @@ def _formatar_dataframe_br(
     return df_fmt
 
 
+_HIGHLIGHT_BG = "#fffbeb"   # amber-50 — linha destacada
+_HIGHLIGHT_STYLE = f"background-color: {_HIGHLIGHT_BG}; font-weight: 600;"
+
+
 def _exibir_dataframe(
     df: pd.DataFrame,
     altura: int,
@@ -285,14 +295,27 @@ def _exibir_dataframe(
     colunas_percentual: Optional[List[str]],
     colunas_numero: Optional[List[str]],
     column_config: Optional[Dict],
+    highlight_mask: Optional["pd.Series"] = None,
 ) -> None:
     """Exibe tabela usando st.dataframe nativo (fallback)."""
     df_fmt = _formatar_dataframe_br(
         df, colunas_moeda, colunas_percentual, colunas_numero
     )
 
+    if highlight_mask is not None and highlight_mask.any():
+        mask = highlight_mask.reindex(df_fmt.index, fill_value=False)
+
+        def _hl(row: "pd.Series") -> list:
+            if mask.get(row.name, False):
+                return [_HIGHLIGHT_STYLE] * len(row)
+            return [""] * len(row)
+
+        data = df_fmt.style.apply(_hl, axis=1)
+    else:
+        data = df_fmt
+
     st.dataframe(
-        df_fmt,
+        data,
         width="stretch",
         hide_index=True,
         height=altura,
@@ -310,6 +333,7 @@ def exibir_tabela(
     colunas_numero: Optional[List[str]] = None,
     column_config: Optional[Dict] = None,
     usar_aggrid: Optional[bool] = None,
+    highlight_mask: Optional["pd.Series"] = None,
 ) -> None:
     """
     Exibe tabela com formatação automática.
@@ -331,6 +355,8 @@ def exibir_tabela(
             (apenas st.dataframe).
         usar_aggrid: Forçar AG Grid (True), st.dataframe
             (False), ou automático (None).
+        highlight_mask: Série booleana (mesmo índice do df)
+            indicando quais linhas destacar.
     """
     if df.empty:
         st.info("Nenhum dado disponível para exibição.")
@@ -352,5 +378,5 @@ def exibir_tabela(
     else:
         _exibir_dataframe(
             df, h, colunas_moeda, colunas_percentual,
-            colunas_numero, column_config,
+            colunas_numero, column_config, highlight_mask,
         )

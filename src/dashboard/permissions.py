@@ -38,7 +38,7 @@ MATRIZ: dict[str, dict[str, bool]] = {
     "tab_regioes": {
         "admin": True,
         "gestor": True,
-        "gerente_comercial": True,
+        "gerente_comercial": False,
         "supervisor": False,
         "consultor": False,
     },
@@ -46,8 +46,8 @@ MATRIZ: dict[str, dict[str, bool]] = {
         "admin": True,
         "gestor": True,
         "gerente_comercial": True,
-        "supervisor": False,
-        "consultor": False,
+        "supervisor": True,
+        "consultor": True,
     },
     "tab_rankings_cons": {
         "admin": True,

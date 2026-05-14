@@ -1,12 +1,13 @@
 """
 Rankings de lojas e consultores — atingimento, ticket
-medio, pontos, media por DU e rankings por produto.
+medio, pontos, media por DU, rankings por produto e aceleradores.
 """
 
 from typing import Dict, Optional
 
 import pandas as pd
 
+from src.config.settings import PRODUTOS_EMISSAO
 from src.dashboard.kpis.gerais import excluir_supervisores
 
 
@@ -63,7 +64,7 @@ def calcular_ranking_lojas(
 
     ranking = ranking.sort_values("Atingimento %", ascending=False).head(top_n)
     ranking.insert(0, "Posição", range(1, len(ranking) + 1))
-    return ranking
+    return ranking.drop(columns=["Qtd", "Meta Prata"], errors="ignore")
 
 
 def calcular_ranking_consultores(
@@ -114,7 +115,7 @@ def calcular_ranking_consultores(
 
     ranking = ranking.sort_values("Atingimento %", ascending=False).head(top_n)
     ranking.insert(0, "Posição", range(1, len(ranking) + 1))
-    return ranking
+    return ranking.drop(columns=["Qtd", "Meta Prata"], errors="ignore")
 
 
 def calcular_ranking_ticket_medio(
@@ -268,7 +269,7 @@ def calcular_ranking_pontos(
         "Pontos", ascending=False,
     ).head(top_n)
     ranking.insert(0, "Posição", range(1, len(ranking) + 1))
-    return ranking
+    return ranking.drop(columns=["Qtd"], errors="ignore")
 
 
 def calcular_ranking_media_du(
@@ -326,3 +327,80 @@ def calcular_ranking_media_du(
     ).head(top_n)
     ranking.insert(0, "Posição", range(1, len(ranking) + 1))
     return ranking
+
+
+def calcular_ranking_por_acelerador(
+    df: pd.DataFrame,
+    tipo: str = "loja",
+    top_n: int = 10,
+    df_supervisores: Optional[pd.DataFrame] = None,
+) -> Dict[str, pd.DataFrame]:
+    """Rankings por acelerador (BMG Med, Vida Familiar, Emissao, Super Conta).
+
+    Ordena por quantidade de contratos — aceleradores nao tem valor monetario
+    significativo para ranking.
+    """
+    df_base = (
+        excluir_supervisores(df, df_supervisores)
+        if tipo == "consultor"
+        else df.copy()
+    )
+
+    coluna = "LOJA" if tipo == "loja" else "CONSULTOR"
+    label = "Loja" if tipo == "loja" else "Consultor"
+
+    if coluna not in df_base.columns:
+        return {}
+
+    def _flag(col: str) -> pd.Series:
+        return (
+            df_base.get(col, pd.Series(False, index=df_base.index))
+            .fillna(False)
+            .astype(bool)
+        )
+
+    aceleradores = {
+        "BMG Med": _flag("is_bmg_med"),
+        "Vida Familiar": _flag("is_seguro_vida"),
+        "Emissao": (
+            df_base["TIPO_PRODUTO"].str.upper().isin(
+                {p.upper() for p in PRODUTOS_EMISSAO}
+            )
+            if "TIPO_PRODUTO" in df_base.columns
+            else pd.Series(False, index=df_base.index)
+        ),
+        "Super Conta": (
+            df_base["SUBTIPO"].str.strip().str.upper() == "SUPER CONTA"
+            if "SUBTIPO" in df_base.columns
+            else pd.Series(False, index=df_base.index)
+        ),
+    }
+
+    rankings: Dict[str, pd.DataFrame] = {}
+    for nome, mask in aceleradores.items():
+        df_acel = df_base[mask]
+        if df_acel.empty:
+            continue
+
+        rk = (
+            df_acel.groupby(coluna)
+            .size()
+            .reset_index(name="Qtd")
+            .rename(columns={coluna: label})
+        )
+
+        if tipo == "consultor" and "LOJA" in df_acel.columns:
+            loja_map = df_acel.groupby(coluna)["LOJA"].first()
+            rk["Loja"] = rk[label].map(loja_map)
+
+        if tipo == "loja" and "REGIAO" in df_base.columns:
+            df_reg = df_base[["LOJA", "REGIAO"]].drop_duplicates()
+            rk = rk.merge(
+                df_reg, left_on=label, right_on="LOJA", how="left",
+            ).drop("LOJA", axis=1)
+
+        rk = rk.sort_values("Qtd", ascending=False).head(top_n)
+        rk.insert(0, "Posição", range(1, len(rk) + 1))
+        rankings[nome] = rk
+
+    return rankings
