@@ -19,17 +19,21 @@ def render_tab_detalhes(df):
         color="blue",
     )
 
+    filt_loja = "Todas"
+    filt_reg = "Todas"
     col1, col2, col3 = st.columns(3)
     with col1:
-        lojas = ["Todas"] + sorted(df["LOJA"].unique().tolist())
-        filt_loja = st.selectbox("Loja", lojas)
+        if df["LOJA"].nunique() > 1:
+            filt_loja = st.selectbox(
+                "Loja", ["Todas"] + sorted(df["LOJA"].unique().tolist())
+            )
 
     with col2:
-        if "REGIAO" in df.columns:
-            regioes = ["Todas"] + sorted(df["REGIAO"].unique().tolist())
-            filt_reg = st.selectbox("Regiao (detalhe)", regioes)
-        else:
-            filt_reg = "Todas"
+        if "REGIAO" in df.columns and df["REGIAO"].nunique() > 1:
+            filt_reg = st.selectbox(
+                "Regiao (detalhe)",
+                ["Todas"] + sorted(df["REGIAO"].unique().tolist()),
+            )
 
     with col3:
         prods = ["Todos"] + sorted(

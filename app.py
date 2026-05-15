@@ -446,6 +446,19 @@ def main():
     if not tela_login():
         return
 
+    # Oculta barra nativa do Streamlit (deploy, animação, menu ⋮)
+    # e remove o espaço reservado para ela — apenas para não-admins.
+    _perfil_logado = (usuario_logado() or {}).get("perfil")
+    if _perfil_logado != "admin":
+        st.markdown(
+            """<style>
+            [data-testid="stHeader"] { display: none !important; }
+            [data-testid="stAppViewContainer"] { padding-top: 0 !important; }
+            .main .block-container { padding-top: 1rem !important; }
+            </style>""",
+            unsafe_allow_html=True,
+        )
+
     # Overlay de transição para login recém-efetuado.
     # Cobre o viewport inteiro (position:fixed, z-index:9999) desde o
     # início do run pós-login, ocultando qualquer resíduo do formulário
@@ -1322,6 +1335,7 @@ def main():
                 df_sup_f,
                 df_analise_f,
                 df_cancelados_f,
+                perfil=role,
             )
         elif tab == "Evolucao":
             render_tab_evolucao(

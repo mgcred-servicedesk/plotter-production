@@ -774,6 +774,100 @@ def calcular_aceleradores_consultor(
     return resultado
 
 
+def calcular_status_aceleradores_proprio(
+    df: pd.DataFrame,
+    df_metas_produto: pd.DataFrame,
+) -> List[Dict]:
+    """
+    Retorna o status de cada acelerador para o próprio consultor.
+
+    ``df`` já está filtrado por RLS — contém apenas contratos deste consultor.
+    Soma as colunas booleanas diretamente e compara com a meta da loja.
+
+    Returns:
+        Lista de dicts: produto, nome, icon, qtd_atual, meta, perc_meta
+    """
+    resultado = []
+    for acel in _ACELERADORES:
+        col_bool = acel["col_bool"]
+        col_meta = acel["col_meta"]
+
+        qtd_atual = int(df[col_bool].sum()) if col_bool in df.columns else 0
+
+        meta = 0.0
+        if not df_metas_produto.empty and col_meta in df_metas_produto.columns:
+            meta = float(
+                pd.to_numeric(df_metas_produto[col_meta], errors="coerce")
+                .fillna(0)
+                .sum()
+            )
+
+        perc_meta = (qtd_atual / meta * 100) if meta > 0 else None
+
+        resultado.append(
+            {
+                "produto": acel["produto"],
+                "nome": acel["nome"],
+                "icon": acel["icon"],
+                "qtd_atual": qtd_atual,
+                "meta": int(meta),
+                "perc_meta": perc_meta,
+            }
+        )
+
+    return resultado
+
+
+def calcular_planejamento_consultor(
+    kpis: Dict,
+    df_analise: Optional[pd.DataFrame],
+) -> Dict:
+    """
+    Calcula Meta Diária necessária e pipeline em análise para o consultor.
+
+    Meta Diária = gap_valor / du_restantes — varia a cada dia conforme a
+    produção acumulada e os dias úteis que restam no mês.
+
+    Returns:
+        Dict com: meta_diaria_necessaria, media_du_atual, du_restantes,
+        gap_valor, pipeline (list of {produto, qtd, valor}).
+    """
+    gap_valor = float(kpis.get("gap_valor", 0) or 0)
+    du_restantes = int(kpis.get("du_restantes", 0) or 0)
+    media_du_atual = float(kpis.get("media_du", 0) or 0)
+
+    meta_diaria_necessaria = gap_valor / du_restantes if du_restantes > 0 else 0.0
+
+    pipeline: List[Dict] = []
+    if (
+        df_analise is not None
+        and not df_analise.empty
+        and "categoria_codigo" in df_analise.columns
+    ):
+        for nome_prod, codigos in PRODUTOS_DASHBOARD.items():
+            mask = df_analise["categoria_codigo"].isin(codigos)
+            df_prod = df_analise[mask]
+            if not df_prod.empty:
+                pipeline.append(
+                    {
+                        "produto": nome_prod,
+                        "qtd": int(len(df_prod)),
+                        "valor": float(df_prod["VALOR"].sum())
+                        if "VALOR" in df_prod.columns
+                        else 0.0,
+                    }
+                )
+        pipeline.sort(key=lambda x: x["valor"], reverse=True)
+
+    return {
+        "meta_diaria_necessaria": meta_diaria_necessaria,
+        "media_du_atual": media_du_atual,
+        "du_restantes": du_restantes,
+        "gap_valor": gap_valor,
+        "pipeline": pipeline,
+    }
+
+
 def _render_item_acelerador(nome: str, qtd: int, detalhe: str, is_zero: bool) -> str:
     """Retorna HTML de um item compacto de acelerador."""
     cor = "#EF4444" if is_zero else "#F59E0B"
@@ -831,6 +925,122 @@ def _render_expander_zeros_consultor(restantes: List[Dict], total: int) -> None:
                     loja_txt,
                     is_zero=True,
                 )
+            )
+        st.markdown("".join(itens_html), unsafe_allow_html=True)
+
+
+def _render_aceleradores_proprio_coluna(status_list: List[Dict]) -> None:
+    """Renderiza status dos aceleradores do próprio consultor em coluna única."""
+    if not status_list:
+        st.info("Nenhum acelerador disponível.")
+        return
+
+    itens_html = []
+    for s in status_list:
+        perc = s["perc_meta"]
+        qtd = s["qtd_atual"]
+        meta = s["meta"]
+
+        if perc is None:
+            cor = "#6B7280"
+            bg = "#F3F4F6"
+            status_txt = "s/ meta configurada"
+        elif qtd == 0:
+            cor = "#EF4444"
+            bg = "#FEF2F2"
+            status_txt = "Zerado — atenção!"
+        elif perc < 70:
+            cor = "#F59E0B"
+            bg = "#FFFBEB"
+            status_txt = f"{perc:.0f}% da meta"
+        else:
+            cor = "#10B981"
+            bg = "#F0FDF4"
+            status_txt = f"{perc:.0f}% da meta ✓"
+
+        meta_txt = str(meta) if meta > 0 else "—"
+        itens_html.append(
+            f'<div class="mg-prioridade-card" style="border-left-color:{cor}; '
+            f'padding:10px 14px; margin-bottom:8px;">'
+            f'<div style="display:flex; justify-content:space-between; align-items:center;">'
+            f'<span style="font-size:13px; font-weight:600; color:var(--mg-text);">'
+            f'{s["icon"]} {s["nome"]}</span>'
+            f'<span style="font-size:14px; font-weight:700; color:{cor}; '
+            f'background:{bg}; padding:2px 8px; border-radius:4px;">'
+            f"{qtd} / {meta_txt}</span>"
+            f"</div>"
+            f'<div style="font-size:11px; color:{cor}; margin-top:3px; '
+            f'font-weight:600;">{status_txt}</div>'
+            f"</div>"
+        )
+
+    st.markdown("".join(itens_html), unsafe_allow_html=True)
+
+
+def _render_planejamento_consultor_coluna(planejamento: Dict) -> None:
+    """Renderiza Meta Diária e Pipeline em Análise do próprio consultor."""
+    meta_nec = planejamento["meta_diaria_necessaria"]
+    media_atual = planejamento["media_du_atual"]
+    du_rest = planejamento["du_restantes"]
+    gap = planejamento["gap_valor"]
+    pipeline = planejamento["pipeline"]
+
+    st.markdown(
+        '<div style="font-size:13px; font-weight:700; margin-bottom:6px; '
+        'color:var(--mg-text);">📅 Meta Diária</div>',
+        unsafe_allow_html=True,
+    )
+
+    if gap <= 0:
+        st.success("Meta atingida! 🎉")
+    elif du_rest <= 0:
+        st.warning("Sem dias úteis restantes no mês.")
+    else:
+        ritmo_ok = media_atual >= meta_nec
+        cor_ritmo = "#10B981" if ritmo_ok else "#EF4444"
+        status_ritmo = "No ritmo ✅" if ritmo_ok else "Precisa acelerar ⚠️"
+        html_meta = (
+            f'<div class="mg-prioridade-card" style="border-left-color:{cor_ritmo}; '
+            f"padding:10px 14px; margin-bottom:8px;\">"
+            f'<div style="font-size:12px; color:var(--mg-text-muted);">Necessário por DU</div>'
+            f'<div style="font-size:18px; font-weight:700; color:{cor_ritmo};">'
+            f"{formatar_moeda(meta_nec)}</div>"
+            f'<div style="font-size:12px; color:var(--mg-text-muted); margin-top:4px;">'
+            f"Ritmo atual: {formatar_moeda(media_atual)}/DU "
+            f'· <span style="color:{cor_ritmo}; font-weight:600;">{status_ritmo}</span>'
+            f"</div>"
+            f'<div style="font-size:11px; color:var(--mg-text-muted); margin-top:2px;">'
+            f"{du_rest} dias úteis restantes · Gap: {formatar_moeda(gap)}"
+            f"</div>"
+            f"</div>"
+        )
+        st.markdown(html_meta, unsafe_allow_html=True)
+
+    st.markdown(
+        '<div style="font-size:13px; font-weight:700; margin-top:10px; '
+        'margin-bottom:6px; color:var(--mg-text);">📋 Pipeline em Análise</div>',
+        unsafe_allow_html=True,
+    )
+
+    if not pipeline:
+        st.info("Nenhum contrato em análise.")
+    else:
+        itens_html = []
+        for item in pipeline:
+            s = "s" if item["qtd"] != 1 else ""
+            itens_html.append(
+                f'<div class="mg-prioridade-card" style="border-left-color:#6366F1; '
+                f"padding:8px 12px; margin-bottom:6px;\">"
+                f'<div style="display:flex; justify-content:space-between; align-items:center;">'
+                f'<span style="font-size:12px; font-weight:600; color:var(--mg-text);">'
+                f'{item["produto"]}</span>'
+                f'<span style="font-size:12px; font-weight:700; color:#6366F1;">'
+                f"{formatar_moeda(item['valor'])}</span>"
+                f"</div>"
+                f'<div style="font-size:11px; color:var(--mg-text-muted); margin-top:2px;">'
+                f"{item['qtd']} contrato{s} pendente{s}"
+                f"</div>"
+                f"</div>"
             )
         st.markdown("".join(itens_html), unsafe_allow_html=True)
 
@@ -1294,6 +1504,7 @@ def render_prioridades_acao(
 
     _eh_gerente = perfil == "gerente_comercial"
     _eh_supervisor = perfil == "supervisor"
+    _eh_consultor = perfil == "consultor"
 
     if _eh_gerente:
         prioridades_consultor = calcular_prioridades_consultor(
@@ -1304,6 +1515,10 @@ def render_prioridades_acao(
             df, df_sup, du_decorridos, top_n=50, categorias=categorias
         )
         acel_cons_supervisor = calcular_aceleradores_consultor(df, df_sup, top_n=4)
+    elif _eh_consultor:
+        prioridades_consultor = []
+        status_acel_proprio = calcular_status_aceleradores_proprio(df, df_metas_produto)
+        planejamento_consultor = calcular_planejamento_consultor(kpis, df_analise)
     else:
         prioridades_consultor = []
 
@@ -1380,6 +1595,9 @@ def render_prioridades_acao(
                 prioridades_consultor, 4, _html_card_consultor,
                 "consultores", "Todos os consultores estão acima de 80% da média da loja! 🎉",
             )
+        elif _eh_consultor:
+            st.markdown("**🚀 Aceleradores que Precisam de Atenção**")
+            _render_aceleradores_proprio_coluna(status_acel_proprio)
         else:
             st.markdown("**📍 Regiões que Precisam de Atenção**")
             _render_lista_com_expander(
@@ -1400,6 +1618,9 @@ def render_prioridades_acao(
             _render_aceleradores_supervisor_coluna(
                 acel_cons_supervisor, pode_expandir=pode_expandir_sup
             )
+        elif _eh_consultor:
+            st.markdown("**📅 Meta Diária & Pipeline**")
+            _render_planejamento_consultor_coluna(planejamento_consultor)
         else:
             st.markdown("**🏪 Lojas que Precisam de Atenção**")
             _render_lista_com_expander(
@@ -1407,8 +1628,8 @@ def render_prioridades_acao(
                 "lojas", "Todas as lojas estão acima da meta! 🎉",
             )
 
-    # Seção dedicada dos Aceleradores (supervisor usa col3 em vez desta seção)
-    if not _eh_supervisor:
+    # Seção dedicada dos Aceleradores (supervisor e consultor usam col3 em vez desta seção)
+    if not _eh_supervisor and not _eh_consultor:
         render_prioridades_aceleradores(df, df_metas_produto, df_sup, perfil)
 
     # Resumo de ação
@@ -1437,6 +1658,21 @@ def render_prioridades_acao(
             top_cons = prioridades_consultor[0]
             acoes.append(
                 f"Apoiar **{top_cons['consultor']}** ({formatar_percentual(top_cons['perc_media'])} da média da loja)"
+            )
+    elif _eh_consultor:
+        pland = planejamento_consultor
+        if pland["meta_diaria_necessaria"] > 0 and pland["du_restantes"] > 0:
+            acoes.append(
+                f"Produzir **{formatar_moeda(pland['meta_diaria_necessaria'])}/DU** "
+                f"nos próximos {pland['du_restantes']} dias úteis para fechar o gap"
+            )
+        if pland["pipeline"]:
+            top_pipe = pland["pipeline"][0]
+            s = "s" if top_pipe["qtd"] != 1 else ""
+            acoes.append(
+                f"Acionar pipeline de **{top_pipe['produto']}**: "
+                f"{top_pipe['qtd']} contrato{s} em análise "
+                f"({formatar_moeda(top_pipe['valor'])})"
             )
     else:
         if prioridades_reg:

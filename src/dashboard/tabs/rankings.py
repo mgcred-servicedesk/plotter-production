@@ -43,11 +43,26 @@ def _make_highlight_fn(
 
     Gerente comercial: destaca todas as lojas da sua região.
     Supervisor:        destaca apenas a sua loja.
+    Consultor:         destaca o próprio nome na coluna "Consultor".
     Outros perfis:     sem highlight (retorna None).
 
-    A função retornada recebe um df de ranking (que deve ter coluna
-    "Loja") e devolve uma pd.Series bool com o mesmo índice.
+    A função retornada recebe um df de ranking e devolve uma
+    pd.Series bool com o mesmo índice.
     """
+    if perfil == "consultor":
+        if "CONSULTOR" not in df_scope.columns or df_scope.empty:
+            return None
+        nomes: frozenset = frozenset(df_scope["CONSULTOR"].dropna().unique())
+        if not nomes:
+            return None
+
+        def _fn_consultor(rk: pd.DataFrame) -> pd.Series:
+            if "Consultor" in rk.columns:
+                return rk["Consultor"].isin(nomes)
+            return pd.Series(False, index=rk.index)
+
+        return _fn_consultor
+
     if perfil not in ("gerente_comercial", "supervisor"):
         return None
     if "LOJA" not in df_scope.columns or df_scope.empty:

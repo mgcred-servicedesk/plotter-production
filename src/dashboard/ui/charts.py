@@ -61,7 +61,6 @@ def _aplicar(fig, t):
         font=t["font"],
         legend=t["legend"],
         hoverlabel=t["hoverlabel"],
-        title_font_color=text_color,
     )
     # subplot_titles criam annotations — forcar cor do texto
     for ann in fig.layout.annotations:
@@ -272,9 +271,15 @@ def criar_grafico_produtos(
     return _aplicar(fig, t)
 
 
-def criar_grafico_evolucao(df_evolucao, kpis):
+def criar_grafico_evolucao(df_evolucao, kpis, ano=None, mes=None):
     """Grafico de evolucao diaria."""
+    import calendar
+    from datetime import date as _date
+
     t = _template()
+    meta_valor = float(kpis.get("meta_global_valor", 0) or 0)
+    projecao_valor = float(kpis.get("projecao", 0) or 0)
+
     fig = make_subplots(
         rows=2,
         cols=1,
@@ -292,6 +297,7 @@ def criar_grafico_evolucao(df_evolucao, kpis):
             y=df_evolucao["VALOR"],
             marker_color=CHART_COLORS["primary"],
             marker_line=dict(width=0),
+            hovertemplate="%{x|%d/%m}<br>%{y:,.0f}<extra>Valor Diário</extra>",
         ),
         row=1,
         col=1,
@@ -311,31 +317,61 @@ def criar_grafico_evolucao(df_evolucao, kpis):
             line=dict(width=3, color=CHART_COLORS["primary_dark"]),
             fill="tozeroy",
             fillcolor="rgba(37, 99, 235, 0.08)",
+            hovertemplate="%{x|%d/%m}<br>Acumulado: %{y:,.0f}<extra></extra>",
         ),
         row=2,
         col=1,
     )
 
-    fig.add_hline(
-        y=kpis["meta_prata"],
-        line_dash="dash",
-        line_color=CHART_COLORS["success"],
-        line_width=2,
-        annotation_text="Meta Prata",
-        annotation_font=dict(size=11, color=CHART_COLORS["success"]),
-        row=2,
-        col=1,
-    )
-    fig.add_hline(
-        y=kpis["projecao"],
-        line_dash="dot",
-        line_color=CHART_COLORS["warning"],
-        line_width=2,
-        annotation_text="Projecao",
-        annotation_font=dict(size=11, color=CHART_COLORS["warning"]),
-        row=2,
-        col=1,
-    )
+    # Trajetória de meta: linha diagonal do 1º ao último dia do mês,
+    # mostrando o ritmo diário necessário para atingir a meta em R$.
+    if meta_valor > 0 and ano and mes:
+        last_day = calendar.monthrange(ano, mes)[1]
+        traj_x = [
+            pd.Timestamp(_date(ano, mes, 1)),
+            pd.Timestamp(_date(ano, mes, last_day)),
+        ]
+        fig.add_trace(
+            go.Scatter(
+                name="Ritmo de Meta",
+                x=traj_x,
+                y=[0, meta_valor],
+                mode="lines",
+                line=dict(width=2, color=CHART_COLORS["success"], dash="dash"),
+                hovertemplate="%{x|%d/%m}<br>Esperado: %{y:,.0f}<extra>Ritmo de Meta</extra>",
+            ),
+            row=2,
+            col=1,
+        )
+
+    # Meta total (linha horizontal em R$)
+    if meta_valor > 0:
+        fig.add_hline(
+            y=meta_valor,
+            line_dash="dot",
+            line_color=CHART_COLORS["success"],
+            line_width=2,
+            annotation_text=f"Meta ({formatar_moeda(meta_valor)})",
+            annotation_font=dict(size=11, color=CHART_COLORS["success"]),
+            row=2,
+            col=1,
+        )
+
+    # Projeção (em R$) — exibe apenas quando difere da meta em mais de 2%
+    if projecao_valor > 0 and (
+        meta_valor == 0
+        or abs(projecao_valor - meta_valor) > meta_valor * 0.02
+    ):
+        fig.add_hline(
+            y=projecao_valor,
+            line_dash="dot",
+            line_color=CHART_COLORS["warning"],
+            line_width=2,
+            annotation_text=f"Projecao ({formatar_moeda(projecao_valor)})",
+            annotation_font=dict(size=11, color=CHART_COLORS["warning"]),
+            row=2,
+            col=1,
+        )
 
     fig.update_layout(
         height=640,

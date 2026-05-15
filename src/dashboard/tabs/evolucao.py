@@ -23,7 +23,7 @@ def render_tab_evolucao(df, ano, mes, kpis):
     df_ev = calcular_evolucao_diaria(df, ano, mes)
 
     if not df_ev.empty:
-        fig = criar_grafico_evolucao(df_ev, kpis)
+        fig = criar_grafico_evolucao(df_ev, kpis, ano=ano, mes=mes)
         chart_card_open(
             "Evolucao Diaria de Vendas",
             icon="📈",
@@ -48,7 +48,13 @@ def render_tab_evolucao(df, ano, mes, kpis):
                 f"{len(df_ev)} dias com vendas",
             )
         with col3:
-            acima = (df_ev["VALOR"] >= kpis["meta_diaria"]).sum()
+            _meta_valor = float(kpis.get("meta_global_valor", 0) or 0)
+            _du_total = int(kpis.get("du_total", 0) or 0)
+            meta_diaria_valor = _meta_valor / _du_total if _meta_valor > 0 and _du_total > 0 else 0
+            if meta_diaria_valor > 0:
+                acima = int((df_ev["VALOR"] >= meta_diaria_valor).sum())
+            else:
+                acima = len(df_ev)
             perc = acima / len(df_ev) * 100 if len(df_ev) > 0 else 0
             st.metric(
                 "Dias Acima da Meta",

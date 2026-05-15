@@ -640,7 +640,9 @@ def render_tab_produtos(
     chart_card_close()
 
     # ── Análise Regional: Emissão e Seguros ─────────
-    if df_analise is not None:
+    # Consultor já visualiza seus aceleradores nos KPI cards e no painel
+    # de Prioridades — a visão regional não agrega para quem tem escopo único.
+    if df_analise is not None and perfil_role != "consultor":
         sac.divider(
             label="Emissão e Seguros — Análise Regional",
             icon="geo-alt-fill",

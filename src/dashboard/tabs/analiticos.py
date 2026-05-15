@@ -395,7 +395,7 @@ def _render_busca_ade(df, df_analise, df_cancelados):
 
 
 def render_tab_analiticos(
-    df, df_sup, df_analise, df_cancelados,
+    df, df_sup, df_analise, df_cancelados, perfil: str = "",
 ):
     """Renderiza aba de Analiticos."""
     sac.divider(
@@ -407,29 +407,21 @@ def render_tab_analiticos(
 
     _render_busca_ade(df, df_analise, df_cancelados)
 
+    _is_consultor = perfil == "consultor"
+
+    tab_items = [
+        sac.TabsItem(label="Propostas Pagas", icon="check-circle"),
+        sac.TabsItem(label="Em Analise", icon="hourglass-split"),
+        sac.TabsItem(label="Cancelados", icon="x-circle"),
+    ]
+    if not _is_consultor:
+        tab_items += [
+            sac.TabsItem(label="Consultores por Produto", icon="people"),
+            sac.TabsItem(label="Distribuicao de Produtos", icon="pie-chart"),
+        ]
+
     menu = sac.tabs(
-        items=[
-            sac.TabsItem(
-                label="Propostas Pagas",
-                icon="check-circle",
-            ),
-            sac.TabsItem(
-                label="Em Analise",
-                icon="hourglass-split",
-            ),
-            sac.TabsItem(
-                label="Cancelados",
-                icon="x-circle",
-            ),
-            sac.TabsItem(
-                label="Consultores por Produto",
-                icon="people",
-            ),
-            sac.TabsItem(
-                label="Distribuicao de Produtos",
-                icon="pie-chart",
-            ),
-        ],
+        items=tab_items,
         align="start",
         variant="outline",
     )

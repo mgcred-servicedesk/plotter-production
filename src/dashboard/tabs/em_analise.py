@@ -30,18 +30,23 @@ def render_tab_em_analise(df_analise, df_sup):
         supervisores = []
 
     # ── Filtros ────────────────────────────────────
+    filt_loja = "Todas"
+    filt_reg = "Todas"
     col1, col2, col3 = st.columns(3)
     with col1:
-        lojas = ["Todas"] + sorted(df_a["LOJA"].unique().tolist())
-        filt_loja = st.selectbox("Loja", lojas, key="analise_loja")
-    with col2:
-        if "REGIAO" in df_a.columns:
-            regioes = ["Todas"] + sorted(df_a["REGIAO"].unique().tolist())
-            filt_reg = st.selectbox(
-                "Regiao", regioes, key="analise_regiao"
+        if df_a["LOJA"].nunique() > 1:
+            filt_loja = st.selectbox(
+                "Loja",
+                ["Todas"] + sorted(df_a["LOJA"].unique().tolist()),
+                key="analise_loja",
             )
-        else:
-            filt_reg = "Todas"
+    with col2:
+        if "REGIAO" in df_a.columns and df_a["REGIAO"].nunique() > 1:
+            filt_reg = st.selectbox(
+                "Regiao",
+                ["Todas"] + sorted(df_a["REGIAO"].unique().tolist()),
+                key="analise_regiao",
+            )
     with col3:
         status_opts = ["Todos"] + sorted(
             [str(x) for x in df_a["STATUS_BANCO"].unique() if pd.notna(x)]
