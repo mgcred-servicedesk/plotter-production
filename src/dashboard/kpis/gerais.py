@@ -25,6 +25,18 @@ PRODUTOS_DASHBOARD = {
     "FGTS_ANT_BEN_CNC13": ["FGTS", "ANT_BENEF", "CNC_13"],
 }
 
+# Mapeia produto_display do dashboard → nome da coluna na tabela `metas`.
+# Usado para casamento determinístico (sem fuzzy match por substring), que
+# antes confundia colunas com nomes parecidos (ex.: meta `FGTS` independente
+# sendo somada na categoria FGTS_ANT_BEN_CNC13).
+PRODUTOS_DASHBOARD_COL_META: Dict[str, str] = {
+    "CNC": "CNC",
+    "CLT": "CLT",
+    "SAQUE": "SAQUE",
+    "CONSIGNADO": "CONSIGNADO",
+    "FGTS_ANT_BEN_CNC13": "FGTS_ANT_BENEF_13",
+}
+
 
 def excluir_supervisores(
     df: pd.DataFrame,
@@ -91,9 +103,9 @@ def calcular_kpis_gerais(
 
     # Meta MIX: coluna "MIX" para escopo LOJA, ou soma dos produtos
     # componentes para escopo CONSULTOR (que não tem linha MIX no banco).
-    _MIX_COMPONENTES = [
-        "CNC", "CLT", "SAQUE", "CONSIGNADO", "FGTS_ANT_BEN_CNC13",
-    ]
+    # Os componentes vêm do mapeamento canônico produto_display → coluna do
+    # banco, garantindo que `_MIX_COMPONENTES` fique sempre em sincronia.
+    _MIX_COMPONENTES = list(PRODUTOS_DASHBOARD_COL_META.values())
     meta_mix = 0
     if not df_metas_produto.empty:
         if "MIX" in df_metas_produto.columns:
@@ -409,27 +421,21 @@ def calcular_metas_produto_diarias(
             df["LOJA"].unique() if "LOJA" in df.columns else []
         )
 
-        # Calcular meta total do produto (soma das metas das lojas presentes no df)
-        meta_total = 0
-        if not df_metas_produto.empty and "LOJA" in df.columns:
-            colunas_meta = [c for c in df_metas_produto.columns if c != "LOJA"]
-
-            for col in colunas_meta:
-                if col.upper() in [c.upper() for c in categorias] or \
-                   any(cat in col.upper() for cat in categorias):
-                    meta_total += df_metas_produto.loc[
-                        df_metas_produto["LOJA"].isin(lojas_ativas), col
-                    ].sum()
-
-        # Se nao encontrou meta especifica, tentar pelo nome do produto
-        if meta_total == 0 and not df_metas_produto.empty:
-            for col in df_metas_produto.columns:
-                if col == "LOJA":
-                    continue
-                if produto_display.upper() in col.upper():
-                    meta_total += df_metas_produto.loc[
-                        df_metas_produto["LOJA"].isin(lojas_ativas), col
-                    ].sum()
+        # Meta total do produto: casamento determinístico via
+        # PRODUTOS_DASHBOARD_COL_META (produto_display → coluna do banco).
+        meta_total = 0.0
+        col_meta = PRODUTOS_DASHBOARD_COL_META.get(produto_display)
+        if (
+            col_meta
+            and not df_metas_produto.empty
+            and "LOJA" in df.columns
+            and col_meta in df_metas_produto.columns
+        ):
+            meta_total = float(
+                df_metas_produto.loc[
+                    df_metas_produto["LOJA"].isin(lojas_ativas), col_meta
+                ].sum()
+            )
 
         # Calcular ritmo e metas diarias
         ritmo_diario = (
