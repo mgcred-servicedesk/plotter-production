@@ -1041,3 +1041,101 @@ def _executar_consolidacao(
     )
 
     return df, df_metas, df_supervisores, diag
+
+
+# ══════════════════════════════════════════════════════
+# Pagamentos online (extrator DNA — estimativa do dia)
+#
+# Fonte: view v_pagamentos_online_efetivo. A view ja aplica
+# o filtro Agrupamento='Paga', o calculo de valor_producao e
+# a exclusao das ADEs ja consolidadas em `contratos`.
+#
+# Ingestao via angry-man (TRUNCATE+INSERT horario). TTL
+# de cache curto (5 min) — menor que o ciclo de importacao
+# para nao mostrar dado anterior por muito tempo.
+# ══════════════════════════════════════════════════════
+
+
+def carregar_pagamentos_online() -> pd.DataFrame:
+    """Carrega pagamentos online via v_pagamentos_online_efetivo.
+
+    TTL: 5min. Sempre snapshot atual — a view nao depende de
+    periodo (mes/ano).
+    """
+    return _pagamentos_online_cache()
+
+
+@st.cache_data(ttl=300)
+def _pagamentos_online_cache() -> pd.DataFrame:
+    """Pagamentos online — snapshot do dia. TTL 5min."""
+    return _fetch_pagamentos_online()
+
+
+def _fetch_pagamentos_online() -> pd.DataFrame:
+    """Executa a query da view sem cache, paginada."""
+    all_data: List[dict] = []
+    offset = 0
+    while True:
+        resp = (
+            _sb()
+            .from_("v_pagamentos_online_efetivo")
+            .select("*")
+            .order("data_status", desc=True)
+            .order("proposta")
+            .limit(_PAGE_SIZE)
+            .offset(offset)
+            .execute()
+        )
+        batch = resp.data or []
+        all_data.extend(batch)
+        if len(batch) < _PAGE_SIZE:
+            break
+        offset += _PAGE_SIZE
+
+    if not all_data:
+        return pd.DataFrame()
+
+    rows = []
+    for r in all_data:
+        rows.append(
+            {
+                "PROPOSTA": r.get("proposta", ""),
+                "DATA_IMPLANTACAO": r.get("data_implantacao"),
+                "DATA_STATUS": r.get("data_status"),
+                "CLIENTE": r.get("cliente", ""),
+                "GRUPO_PRODUTO": r.get("grupo_produto", ""),
+                "PRODUTO": r.get("produto", ""),
+                "LOJA_CODIGO": r.get("loja_codigo", ""),
+                "LOJA": r.get("loja_nome") or "",
+                "REGIAO_ID": r.get("regiao_id"),
+                "CONSULTOR": r.get("usuario_nome") or "",
+                "VALOR_LIQ_DIGITADO": float(
+                    r.get("valor_liquido_digitado") or 0
+                ),
+                "VALOR_LIQ_APROVADO": float(
+                    r.get("valor_liquido_aprovado") or 0
+                ),
+                "VALOR_SEGURO_APROVADO": float(
+                    r.get("valor_seguro_aprovado") or 0
+                ),
+                "VALOR": float(r.get("valor_producao") or 0),
+                "IMPORTED_AT": r.get("imported_at"),
+            }
+        )
+
+    df = pd.DataFrame(rows)
+
+    if "DATA_IMPLANTACAO" in df.columns:
+        df["DATA_IMPLANTACAO"] = pd.to_datetime(
+            df["DATA_IMPLANTACAO"], errors="coerce"
+        )
+    if "DATA_STATUS" in df.columns:
+        df["DATA_STATUS"] = pd.to_datetime(
+            df["DATA_STATUS"], errors="coerce"
+        )
+    if "IMPORTED_AT" in df.columns:
+        df["IMPORTED_AT"] = pd.to_datetime(
+            df["IMPORTED_AT"], errors="coerce", utc=True
+        )
+
+    return df

@@ -15,7 +15,10 @@ No Streamlit Cloud, configure estas variáveis de ambiente em **Settings > Secre
 
 ```toml
 SUPABASE_URL="https://seu-projeto.supabase.co"
-SUPABASE_KEY="sua-chave-anon-ou-service-role"
+SUPABASE_KEY="sua-chave-anon-publica"
+# NUNCA use a service_role aqui: ela faz bypass total das policies RLS
+# e seria carregada em uma instância singleton compartilhada por todos
+# os usuários autenticados, expondo dados de outros perfis.
 DATA_DIR_DIGITACAO="/digitacao"
 DATA_DIR_METAS="/metas"
 DATA_DIR_TABELAS="/tabelas"
@@ -62,7 +65,9 @@ O Streamlit Cloud criará automaticamente os diretórios necessários:
 ## Importante
 
 - **NÃO** faça commit do arquivo `.env` no Git
-- Use apenas chaves de **service_role** ou **anon** do Supabase
+- Use **apenas a chave `anon` (pública)** do Supabase no `SUPABASE_KEY`.
+  A `service_role` faz bypass de RLS e **nunca** deve ser usada na app —
+  reserve-a para scripts administrativos rodando offline.
 - Verifique se as políticas RLS do Supabase estão configuradas corretamente
 - O projeto usa autenticação integrada, não é necessário login externo
 

@@ -12,6 +12,8 @@ Frontend: streamlit-antd-components para navegacao,
 tabelas via st.dataframe, CSS design system customizado.
 """
 
+import html
+import logging
 import sys
 import warnings
 from pathlib import Path
@@ -49,6 +51,7 @@ from src.dashboard.loaders import (
     carregar_lojas_regioes,
     carregar_metas_produto,
     carregar_metas_produto_consultor,
+    carregar_pagamentos_online,
     carregar_pontuacao_efetiva,
     carregar_ultimo_periodo,
     consolidar_dados,
@@ -63,6 +66,7 @@ from src.dashboard.tabs.analiticos import render_tab_analiticos
 from src.dashboard.tabs.detalhes import render_tab_detalhes
 from src.dashboard.tabs.em_analise import render_tab_em_analise
 from src.dashboard.tabs.evolucao import render_tab_evolucao
+from src.dashboard.tabs.pagamentos_online import render_tab_pagamentos_online
 from src.dashboard.tabs.produtos import render_tab_produtos
 from src.dashboard.tabs.rankings import render_tab_rankings
 from src.dashboard.tabs.regioes import render_tab_regioes
@@ -94,6 +98,8 @@ from src.shared.dias_uteis import calcular_dias_uteis
 warnings.filterwarnings("ignore", category=FutureWarning)
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 warnings.filterwarnings("ignore", message=".*ScriptRunContext.*")
+
+logger = logging.getLogger(__name__)
 
 st.set_page_config(
     page_title="Dashboard de Vendas - MGCred",
@@ -168,14 +174,16 @@ def _render_sidebar_usuario():
     escopo_html = ""
     if user["perfil"] not in ("admin", "gestor") and user.get("escopo"):
         escopo_txt = ", ".join(user["escopo"])
-        escopo_html = f'<div class="mg-user-escopo">{escopo_txt}</div>'
+        escopo_html = (
+            f'<div class="mg-user-escopo">{html.escape(escopo_txt)}</div>'
+        )
 
     st.markdown(
         f'<div class="mg-sidebar-user">'
-        f'<div class="mg-avatar">{iniciais}</div>'
+        f'<div class="mg-avatar">{html.escape(iniciais)}</div>'
         f'<div class="mg-user-info">'
-        f'<div class="mg-user-name">{user["nome"]}</div>'
-        f'<span class="mg-badge {badge_cls}">{badge_lbl}</span>'
+        f'<div class="mg-user-name">{html.escape(user["nome"])}</div>'
+        f'<span class="mg-badge {badge_cls}">{html.escape(badge_lbl)}</span>'
         f"{escopo_html}"
         f"</div></div>",
         unsafe_allow_html=True,
@@ -512,7 +520,7 @@ def main():
             </style>
             <div class="mg-fresh-overlay">
                 <div class="mg-fresh-check">&#10003;</div>
-                <p class="mg-fresh-name">Bem-vindo, {_nome}!</p>
+                <p class="mg-fresh-name">Bem-vindo, {html.escape(_nome)}!</p>
                 <p class="mg-fresh-sub">Carregando dashboard&hellip;</p>
             </div>
             """,
@@ -1235,6 +1243,7 @@ def main():
             ("tab_evolucao", "Evolucao", "graph-up-arrow"),
             ("tab_em_analise", "Em Analise", "clock-history"),
             ("tab_detalhes", "Detalhes", "table"),
+            ("tab_pagamentos_online", "Pagamentos Online", "lightning-charge-fill"),
         ]
         tab_items = [
             sac.TabsItem(label=rotulo, icon=icone)
@@ -1348,10 +1357,15 @@ def main():
             render_tab_em_analise(df_analise_f, df_sup_f)
         elif tab == "Detalhes":
             render_tab_detalhes(df_f)
+        elif tab == "Pagamentos Online":
+            df_pag_online = carregar_pagamentos_online()
+            render_tab_pagamentos_online(df_pag_online)
 
-    except Exception as e:
-        st.error(f"Erro inesperado: {e}")
-        st.exception(e)
+    except Exception:
+        logger.exception("Erro inesperado no main()")
+        st.error(
+            "Erro inesperado. Tente recarregar a página ou contate o suporte."
+        )
 
 
 if __name__ == "__main__":

@@ -15,6 +15,7 @@ Elementos (keys):
     tab_evolucao          Evolucao temporal
     tab_em_analise        Pipeline em analise
     tab_detalhes          Tabela detalhada
+    tab_pagamentos_online Estimativa horaria do extrator DNA
     cards_gerenciais      Cards agregados (num consultores,
                           ticket medio/consultor etc.)
     visualizar_como       Seletor 'Visualizar Como'
@@ -83,6 +84,13 @@ MATRIZ: dict[str, dict[str, bool]] = {
         "gerente_comercial": True,
         "supervisor": True,
         "consultor": True,
+    },
+    "tab_pagamentos_online": {
+        "admin": True,
+        "gestor": True,
+        "gerente_comercial": False,
+        "supervisor": False,
+        "consultor": False,
     },
     # Grupos de cards
     "cards_gerenciais": {
