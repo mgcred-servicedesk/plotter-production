@@ -155,7 +155,7 @@ def render_tab_pagamentos_online(df: pd.DataFrame):
 
     st.info(
         "Estimativa nao consolidada. Os numeros oficiais entram no "
-        "dashboard apenas D+1, apos o processamento do consolidado."
+        "dashboard apenas D-1, apos o processamento do consolidado."
     )
 
     if df is None or df.empty:

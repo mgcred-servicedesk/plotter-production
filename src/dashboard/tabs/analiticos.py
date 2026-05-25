@@ -8,9 +8,9 @@ import pandas as pd
 import streamlit as st
 import streamlit_antd_components as sac
 
+from src.config.settings import PRODUTOS_EMISSAO
 from src.dashboard.components.tables import exibir_tabela
 from src.dashboard.formatters import formatar_moeda, formatar_numero
-from src.dashboard.kpis.evolucao import calcular_analitico_consultores
 from src.dashboard.kpis.produtos import calcular_distribuicao_produtos
 
 
@@ -394,6 +394,311 @@ def _render_busca_ade(df, df_analise, df_cancelados):
     _exportar_csv(df_res, "busca_ade", "exp_busca_ade")
 
 
+def _pool_seguros(
+    df: pd.DataFrame,
+    df_analise: pd.DataFrame,
+    df_cancelados: pd.DataFrame,
+    tipo_oper: str,
+) -> pd.DataFrame:
+    """Une seguros (BMG MED ou Seguro) das 3 fontes e dedupe por CONTRATO_ID.
+
+    Para BMG Med / Vida Familiar o "status" real do contrato vive em
+    SUB_STATUS (Liquidada=paga, Cancelada=cancelada, demais=em analise);
+    `status_banco` nao reflete o ciclo desses produtos.
+
+    Em caso de duplicidade entre fontes (mesmo CONTRATO_ID), preserva a
+    linha de pagos > analise > cancelados.
+    """
+    pieces = []
+    for src, origem in (
+        (df, "pago"),
+        (df_analise, "analise"),
+        (df_cancelados, "cancelado"),
+    ):
+        if src is None or src.empty or "TIPO OPER." not in src.columns:
+            continue
+        sub = src[src["TIPO OPER."] == tipo_oper].copy()
+        if sub.empty:
+            continue
+        sub["_origem"] = origem
+        pieces.append(sub)
+
+    if not pieces:
+        return pd.DataFrame()
+
+    pool = pd.concat(pieces, ignore_index=True, sort=False)
+    if "SUB_STATUS" not in pool.columns:
+        pool["SUB_STATUS"] = ""
+    pool["SUB_STATUS"] = pool["SUB_STATUS"].fillna("").astype(str)
+
+    if "CONTRATO_ID" in pool.columns:
+        prio = {"pago": 0, "analise": 1, "cancelado": 2}
+        pool["_prio"] = pool["_origem"].map(prio).fillna(99)
+        pool = (
+            pool.sort_values("_prio")
+            .drop_duplicates(subset=["CONTRATO_ID"], keep="first")
+            .drop(columns=["_prio"])
+        )
+
+    return pool
+
+
+def _classificar_status_seguro(sub_status: pd.Series) -> pd.Series:
+    """Mapeia SUB_STATUS de seguros para Pagas / Em Analise / Cancelados."""
+    s = sub_status.fillna("").astype(str).str.strip()
+    return pd.Series(
+        ["Pagas" if v == "Liquidada"
+         else "Cancelados" if v == "Cancelada"
+         else "Em Analise"
+         for v in s],
+        index=sub_status.index,
+    )
+
+
+def _filtrar_loja_consultor(df: pd.DataFrame, key_prefix: str) -> pd.DataFrame:
+    """Filtros de Loja e Consultor compartilhados pelos expanders."""
+    if df.empty:
+        return df
+    col1, col2 = st.columns(2)
+    with col1:
+        lojas = ["Todas"] + sorted(df["LOJA"].dropna().unique().tolist())
+        filt_loja = st.selectbox("Loja", lojas, key=f"{key_prefix}_loja")
+    with col2:
+        cons = ["Todos"] + sorted(df["CONSULTOR"].dropna().unique().tolist())
+        filt_cons = st.selectbox(
+            "Consultor", cons, key=f"{key_prefix}_cons",
+        )
+    out = df.copy()
+    if filt_loja != "Todas":
+        out = out[out["LOJA"] == filt_loja]
+    if filt_cons != "Todos":
+        out = out[out["CONSULTOR"] == filt_cons]
+    return out
+
+
+def _render_expander_seguro(
+    nome: str,
+    tipo_oper: str,
+    df: pd.DataFrame,
+    df_analise: pd.DataFrame,
+    df_cancelados: pd.DataFrame,
+    status_sel: str,
+):
+    """Renderiza expander para BMG Med ou Vida Familiar.
+
+    Estes nao tem `status_banco` no fluxo normal; classificam por
+    `SUB_STATUS` (Liquidada/Cancelada/demais).
+    """
+    pool = _pool_seguros(df, df_analise, df_cancelados, tipo_oper)
+    if pool.empty:
+        with st.expander(nome, expanded=False):
+            st.warning(f"Nenhum contrato {nome} no periodo.")
+        return
+
+    pool["_STATUS"] = _classificar_status_seguro(pool["SUB_STATUS"])
+    df_st = pool[pool["_STATUS"] == status_sel]
+    qtd_total = len(df_st)
+
+    titulo = f"{nome} — {qtd_total} contratos"
+    with st.expander(titulo, expanded=False):
+        if df_st.empty:
+            st.info(f"Nenhum contrato {nome} em '{status_sel}'.")
+            return
+
+        df_f = _filtrar_loja_consultor(df_st, f"acel_{tipo_oper}")
+        st.metric("Quantidade", formatar_numero(len(df_f)))
+
+        df_f = df_f.copy()
+        df_f["NR_ADE"] = _nr_ade(df_f)
+        col_data = "DATA" if status_sel == "Pagas" else "DATA_CADASTRO"
+        cols = ["NR_ADE", col_data, "LOJA", "CONSULTOR"]
+        if "REGIAO" in df_f.columns:
+            cols.append("REGIAO")
+        cols += ["TIPO_PRODUTO", "SUB_STATUS", "BANCO"]
+        cols_disp = [c for c in cols if c in df_f.columns]
+
+        df_tab = (
+            df_f[cols_disp]
+            .sort_values(col_data, ascending=False)
+            .rename(columns={
+                "NR_ADE": "Nº ADE",
+                "DATA": "Data Pagamento",
+                "DATA_CADASTRO": "Data Cadastro",
+                "TIPO_PRODUTO": "Produto",
+                "SUB_STATUS": "Sub-Status",
+                "BANCO": "Banco",
+                "LOJA": "Loja",
+                "CONSULTOR": "Consultor",
+                "REGIAO": "Regiao",
+            })
+        )
+        exibir_tabela(df_tab)
+        _exportar_csv(
+            df_tab, f"acel_{nome.lower().replace(' ', '_')}_{status_sel.lower().replace(' ', '_')}",
+            f"exp_acel_{tipo_oper}_{status_sel}",
+        )
+
+
+def _render_expander_emissao(
+    df: pd.DataFrame,
+    df_analise: pd.DataFrame,
+    df_cancelados: pd.DataFrame,
+    status_sel: str,
+):
+    """Emissao segue o ciclo normal (status_banco) — usa as 3 fontes
+    nativas. Conta apenas como quantidade (VALOR zerado por design)."""
+    fonte = {"Pagas": df, "Em Analise": df_analise, "Cancelados": df_cancelados}[status_sel]
+    if fonte is None or fonte.empty or "TIPO_PRODUTO" not in fonte.columns:
+        with st.expander("Emissao", expanded=False):
+            st.warning("Nenhum contrato de emissao no periodo.")
+        return
+
+    mask = fonte["TIPO_PRODUTO"].astype(str).str.upper().isin(
+        {p.upper() for p in PRODUTOS_EMISSAO}
+    )
+    df_e = fonte[mask]
+
+    titulo = f"Emissao — {len(df_e)} contratos"
+    with st.expander(titulo, expanded=False):
+        if df_e.empty:
+            st.info(f"Nenhuma emissao em '{status_sel}'.")
+            return
+
+        df_f = _filtrar_loja_consultor(df_e, "acel_emissao")
+        st.metric("Quantidade", formatar_numero(len(df_f)))
+
+        df_f = df_f.copy()
+        df_f["NR_ADE"] = _nr_ade(df_f)
+        col_data = "DATA" if status_sel == "Pagas" else "DATA_CADASTRO"
+        cols = ["NR_ADE", col_data, "LOJA", "CONSULTOR"]
+        if "REGIAO" in df_f.columns:
+            cols.append("REGIAO")
+        cols += ["TIPO_PRODUTO", "TIPO OPER.", "BANCO"]
+        if status_sel != "Pagas" and "STATUS_BANCO" in df_f.columns:
+            cols.append("STATUS_BANCO")
+        cols_disp = [c for c in cols if c in df_f.columns]
+
+        df_tab = (
+            df_f[cols_disp]
+            .sort_values(col_data, ascending=False)
+            .rename(columns={
+                "NR_ADE": "Nº ADE",
+                "DATA": "Data Pagamento",
+                "DATA_CADASTRO": "Data Cadastro",
+                "TIPO_PRODUTO": "Produto",
+                "TIPO OPER.": "Tipo Operacao",
+                "STATUS_BANCO": "Status Banco",
+                "BANCO": "Banco",
+                "LOJA": "Loja",
+                "CONSULTOR": "Consultor",
+                "REGIAO": "Regiao",
+            })
+        )
+        exibir_tabela(df_tab)
+        _exportar_csv(
+            df_tab, f"acel_emissao_{status_sel.lower().replace(' ', '_')}",
+            f"exp_acel_emissao_{status_sel}",
+        )
+
+
+def _render_expander_super_conta(
+    df: pd.DataFrame,
+    df_analise: pd.DataFrame,
+    df_cancelados: pd.DataFrame,
+    status_sel: str,
+):
+    """Super Conta segue o ciclo normal (status_banco). Conta valor e
+    quantidade (e o mesmo valor ja esta computado em CNC por regra de
+    negocio — exibido aqui apenas para auditoria)."""
+    fonte = {"Pagas": df, "Em Analise": df_analise, "Cancelados": df_cancelados}[status_sel]
+    if fonte is None or fonte.empty or "SUBTIPO" not in fonte.columns:
+        with st.expander("Super Conta", expanded=False):
+            st.warning("Nenhum contrato Super Conta no periodo.")
+        return
+
+    mask = fonte["SUBTIPO"].fillna("").astype(str).str.strip().str.upper() == "SUPER CONTA"
+    df_s = fonte[mask]
+
+    titulo = f"Super Conta — {len(df_s)} contratos"
+    with st.expander(titulo, expanded=False):
+        st.caption(
+            "Valores tambem computados em CNC (regra de contagem dupla); "
+            "isolados aqui para auditoria."
+        )
+        if df_s.empty:
+            st.info(f"Nenhuma Super Conta em '{status_sel}'.")
+            return
+
+        df_f = _filtrar_loja_consultor(df_s, "acel_super_conta")
+        total_valor = float(df_f["VALOR"].sum()) if "VALOR" in df_f.columns else 0.0
+        col1, col2 = st.columns(2)
+        with col1:
+            st.metric("Quantidade", formatar_numero(len(df_f)))
+        with col2:
+            st.metric("Valor Total", formatar_moeda(total_valor))
+
+        df_f = df_f.copy()
+        df_f["NR_ADE"] = _nr_ade(df_f)
+        col_data = "DATA" if status_sel == "Pagas" else "DATA_CADASTRO"
+        cols = ["NR_ADE", col_data, "LOJA", "CONSULTOR"]
+        if "REGIAO" in df_f.columns:
+            cols.append("REGIAO")
+        cols += ["TIPO_PRODUTO", "TIPO OPER.", "VALOR", "BANCO"]
+        if status_sel != "Pagas" and "STATUS_BANCO" in df_f.columns:
+            cols.append("STATUS_BANCO")
+        cols_disp = [c for c in cols if c in df_f.columns]
+
+        df_tab = (
+            df_f[cols_disp]
+            .sort_values(col_data, ascending=False)
+            .rename(columns={
+                "NR_ADE": "Nº ADE",
+                "DATA": "Data Pagamento",
+                "DATA_CADASTRO": "Data Cadastro",
+                "TIPO_PRODUTO": "Produto",
+                "TIPO OPER.": "Tipo Operacao",
+                "VALOR": "Valor",
+                "STATUS_BANCO": "Status Banco",
+                "BANCO": "Banco",
+                "LOJA": "Loja",
+                "CONSULTOR": "Consultor",
+                "REGIAO": "Regiao",
+            })
+        )
+        exibir_tabela(df_tab, colunas_moeda=["Valor"])
+        _exportar_csv(
+            df_tab, f"acel_super_conta_{status_sel.lower().replace(' ', '_')}",
+            f"exp_acel_super_conta_{status_sel}",
+        )
+
+
+def _render_aceleradores(
+    df: pd.DataFrame,
+    df_analise: pd.DataFrame,
+    df_cancelados: pd.DataFrame,
+):
+    """Sub-aba Aceleradores: BMG Med, Vida Familiar, Emissao, Super Conta."""
+    status_sel = sac.segmented(
+        items=[
+            sac.SegmentedItem(label="Pagas", icon="check-circle"),
+            sac.SegmentedItem(label="Em Analise", icon="hourglass-split"),
+            sac.SegmentedItem(label="Cancelados", icon="x-circle"),
+        ],
+        align="start",
+        use_container_width=False,
+        key="acel_status",
+    )
+
+    _render_expander_seguro(
+        "BMG Med", "BMG MED", df, df_analise, df_cancelados, status_sel,
+    )
+    _render_expander_seguro(
+        "Vida Familiar", "Seguro", df, df_analise, df_cancelados, status_sel,
+    )
+    _render_expander_emissao(df, df_analise, df_cancelados, status_sel)
+    _render_expander_super_conta(df, df_analise, df_cancelados, status_sel)
+
+
 def render_tab_analiticos(
     df, df_sup, df_analise, df_cancelados, perfil: str = "",
 ):
@@ -413,12 +718,12 @@ def render_tab_analiticos(
         sac.TabsItem(label="Propostas Pagas", icon="check-circle"),
         sac.TabsItem(label="Em Analise", icon="hourglass-split"),
         sac.TabsItem(label="Cancelados", icon="x-circle"),
+        sac.TabsItem(label="Aceleradores", icon="lightning-charge"),
     ]
     if not _is_consultor:
-        tab_items += [
-            sac.TabsItem(label="Consultores por Produto", icon="people"),
-            sac.TabsItem(label="Distribuicao de Produtos", icon="pie-chart"),
-        ]
+        tab_items.append(
+            sac.TabsItem(label="Distribuicao de Produtos", icon="pie-chart")
+        )
 
     menu = sac.tabs(
         items=tab_items,
@@ -435,75 +740,8 @@ def render_tab_analiticos(
     elif menu == "Cancelados":
         _render_detalhamento_cancelados(df_cancelados)
 
-    elif menu == "Consultores por Produto":
-        df_a = calcular_analitico_consultores(df, df_sup)
-        if not df_a.empty:
-            st.info(f"Total de {df_a['Consultor'].nunique()} consultores analisados")
-
-            col1, col2 = st.columns(2)
-            with col1:
-                opts_c = ["Todos"] + sorted(df_a["Consultor"].unique().tolist())
-                filt_c = st.selectbox("Filtrar por Consultor", opts_c)
-            with col2:
-                opts_p = ["Todos"] + sorted(df_a["Produto"].unique().tolist())
-                filt_p = st.selectbox("Filtrar por Produto", opts_p)
-
-            df_af = df_a.copy()
-            if filt_c != "Todos":
-                df_af = df_af[df_af["Consultor"] == filt_c]
-            if filt_p != "Todos":
-                df_af = df_af[df_af["Produto"] == filt_p]
-
-            exibir_tabela(df_af)
-            _exportar_csv(
-                df_af, "consultores_por_produto",
-                "exp_cons_prod",
-            )
-
-            # Cards resumo: usar df original (mesma base dos KPIs
-            # principais) para manter consistencia, aplicando apenas
-            # os filtros de consultor/produto selecionados pelo usuario
-            mask_cards = df["VALOR"] > 0
-            if "is_bmg_med" in df.columns:
-                mask_cards = mask_cards | df["is_bmg_med"]
-            if "is_seguro_vida" in df.columns:
-                mask_cards = mask_cards | df["is_seguro_vida"]
-            df_cards = df[mask_cards].copy()
-            df_cards["PRODUTO_MIX"] = df_cards[
-                "grupo_dashboard"
-            ].fillna("OUTROS")
-            if "is_bmg_med" in df_cards.columns:
-                df_cards.loc[
-                    df_cards["is_bmg_med"], "PRODUTO_MIX"
-                ] = "BMG Med"
-            if "is_seguro_vida" in df_cards.columns:
-                df_cards.loc[
-                    df_cards["is_seguro_vida"], "PRODUTO_MIX"
-                ] = "Vida Familiar"
-            if filt_c != "Todos":
-                df_cards = df_cards[df_cards["CONSULTOR"] == filt_c]
-            if filt_p != "Todos":
-                df_cards = df_cards[df_cards["PRODUTO_MIX"] == filt_p]
-
-            total_valor = df_cards["VALOR"].sum()
-            total_trans = len(df_cards[df_cards["VALOR"] > 0])
-            tk_medio = (
-                total_valor / total_trans if total_trans > 0 else 0
-            )
-
-            col1, col2 = st.columns(2)
-            with col1:
-                st.metric(
-                    "Total de Valor",
-                    formatar_moeda(total_valor),
-                )
-            with col2:
-                st.metric(
-                    "Ticket Medio Geral",
-                    formatar_moeda(tk_medio),
-                )
-        else:
-            st.warning("Dados nao disponiveis")
+    elif menu == "Aceleradores":
+        _render_aceleradores(df, df_analise, df_cancelados)
 
     elif menu == "Distribuicao de Produtos":
         df_dist, cols_moeda, cols_num = calcular_distribuicao_produtos(df, df_sup)
