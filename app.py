@@ -937,7 +937,14 @@ def main():
         if not df.empty:
             ultima_data = df["DATA"].max()
             dia_atual = ultima_data.day if hasattr(ultima_data, "day") else None
+            ultima_atualizacao = (
+                df["CREATED_AT"].max()
+                if "CREATED_AT" in df.columns
+                else None
+            )
         else:
+            ultima_data = None
+            ultima_atualizacao = None
             dia_atual = datetime.now().day
         _, du_decorridos, _ = calcular_dias_uteis(ano, mes, dia_atual)
 
@@ -975,6 +982,7 @@ def main():
             "Todas",
             num_em_analise=len(df_analise_f),
             num_cancelados=_n_cancel_admin,
+            ultima_atualizacao=ultima_atualizacao,
         )
 
         # ── Aviso de pontuacao com fallback ───────

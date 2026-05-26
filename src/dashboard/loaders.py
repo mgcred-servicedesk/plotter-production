@@ -178,6 +178,7 @@ def _fetch_contratos_pagos(mes: int, ano: int) -> pd.DataFrame:
                 "grupo_meta": c.get("grupo_meta"),
                 "conta_valor": c.get("conta_valor", True),
                 "conta_pontuacao": c.get("conta_pontuacao", True),
+                "CREATED_AT": c.get("created_at"),
             }
         )
 
@@ -185,6 +186,11 @@ def _fetch_contratos_pagos(mes: int, ano: int) -> pd.DataFrame:
 
     if "DATA" in df.columns:
         df["DATA"] = pd.to_datetime(df["DATA"], errors="coerce")
+
+    if "CREATED_AT" in df.columns:
+        df["CREATED_AT"] = pd.to_datetime(
+            df["CREATED_AT"], errors="coerce", utc=True
+        )
 
     return df
 

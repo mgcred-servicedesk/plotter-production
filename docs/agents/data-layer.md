@@ -13,11 +13,11 @@ def _sb():
 
 | Objeto | Tipo | Uso |
 |---|---|---|
-| `v_contratos_dashboard` | view | contratos pagos com joins + flags já resolvidos |
+| `v_contratos_dashboard` | view | contratos pagos com joins + flags já resolvidos + `created_at` (rótulo "Atualizado em" no status bar) |
 | `v_contratos_cancelados` | view | contratos cancelados agregados |
 | `obter_pontuacao_periodo(p_mes, p_ano)` | RPC | pontuação final por consultor/loja/região |
 
-Migrações em `database/migrations/` (numeradas 001–006). Nunca consultar
+Migrações em `database/migrations/` (numeradas sequencialmente a partir de 001). Nunca consultar
 `contratos` diretamente quando uma view cobre o caso — a view já
 encapsula joins, filtros de status e resolução de `grupo_dashboard`/`grupo_meta`.
 
@@ -158,6 +158,7 @@ Config estática sem `mes`/`ano` pode usar um único `@st.cache_data(ttl=86400)`
 | `VALOR` | float | sempre `float(c.get("valor", 0))` |
 | `pontos` | float | lowercase — campo computado |
 | `DATA` | datetime | `pd.to_datetime(..., errors="coerce")` |
+| `CREATED_AT` | datetime (UTC) | `pd.to_datetime(..., utc=True)`; usado pelo status bar para "Atualizado em" (convertido para `America/Sao_Paulo` na exibição) |
 | `grupo_dashboard` | str \| None | da view / `categorias_produto` |
 | `grupo_meta` | str \| None | idem |
 | `conta_valor` | bool | se False → `VALOR = 0` no agregado |

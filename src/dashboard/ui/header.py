@@ -69,8 +69,17 @@ def render_status_bar(
     filtro_regiao: str,
     num_em_analise: int = 0,
     num_cancelados: int = 0,
+    ultima_atualizacao=None,
 ) -> None:
-    """Renderiza barra de status com totais e filtros."""
+    """Renderiza barra de status com totais e filtros.
+
+    Args:
+        ultima_data: data de competencia dos dados exibidos (rotulo
+            "Dados em"). Normalmente o maior ``data_status_pagamento``.
+        ultima_atualizacao: timestamp da ultima insercao de contrato
+            no Supabase (rotulo "Atualizado em"). Pode ser ``None``
+            quando nao houver dados.
+    """
     regiao_txt = (
         f" &middot; Regiao: {filtro_regiao}"
         if filtro_regiao != "Todas"
@@ -80,6 +89,21 @@ def render_status_bar(
         ultima_data.strftime("%d/%m/%Y")
         if hasattr(ultima_data, "strftime")
         else str(ultima_data)
+    )
+    # CREATED_AT chega em UTC; converte para America/Sao_Paulo para
+    # evitar deslocamento de 1 dia em insercoes apos as 21h locais.
+    if hasattr(ultima_atualizacao, "tz_convert"):
+        atualizacao_str = ultima_atualizacao.tz_convert(
+            "America/Sao_Paulo"
+        ).strftime("%d/%m/%Y")
+    elif hasattr(ultima_atualizacao, "strftime"):
+        atualizacao_str = ultima_atualizacao.strftime("%d/%m/%Y")
+    else:
+        atualizacao_str = None
+    atualizacao_txt = (
+        f" &middot; Atualizado em <strong>{atualizacao_str}</strong>"
+        if atualizacao_str
+        else ""
     )
     analise_txt = (
         f" &middot; <strong>{num_em_analise:,}</strong> em analise"
@@ -96,8 +120,9 @@ def render_status_bar(
         '<span class="status-dot"></span>'
         f"<span><strong>{num_registros:,}</strong>"
         f" pagos{analise_txt}{cancel_txt}"
-        f" &middot; Atualizado em"
+        f" &middot; Dados em"
         f" <strong>{data_str}</strong>"
+        f"{atualizacao_txt}"
         f"{regiao_txt}</span></div>",
         unsafe_allow_html=True,
     )
