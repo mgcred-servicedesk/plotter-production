@@ -536,6 +536,7 @@ def render_tab_produtos(
     df_metas_produto_full: Optional[pd.DataFrame] = None,
     df_ant: Optional[pd.DataFrame] = None,
     du_dec_ant: int = 0,
+    df_ano_ant: Optional[pd.DataFrame] = None,
 ) -> None:
     """Renderiza aba de Produtos."""
     sac.divider(
@@ -624,12 +625,15 @@ def render_tab_produtos(
     mes_ant = mes - 1 if mes > 1 else 12
     ano_ant = ano if mes > 1 else ano - 1
     _fer_ant = carregar_feriados(mes_ant, ano_ant)
+    _fer_ano_ant = carregar_feriados(mes, ano - 1)
     fig = criar_grafico_produtos(
         df_prod,
         df_atual=df,
         df_ant=df_ant,
         feriados_atual=_fer_atual,
         feriados_ant=_fer_ant,
+        df_ano_ant=df_ano_ant,
+        feriados_ano_ant=_fer_ano_ant,
     )
     chart_card_open(
         "Analise Completa de Produtos",

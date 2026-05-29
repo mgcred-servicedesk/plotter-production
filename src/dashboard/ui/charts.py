@@ -120,6 +120,8 @@ def criar_grafico_produtos(
     df_ant: Optional[pd.DataFrame] = None,
     feriados_atual: Optional[set] = None,
     feriados_ant: Optional[set] = None,
+    df_ano_ant: Optional[pd.DataFrame] = None,
+    feriados_ano_ant: Optional[set] = None,
 ):
     """Grafico completo de produtos."""
     t = _template()
@@ -243,6 +245,32 @@ def criar_grafico_produtos(
                     dash="dash",
                 ),
                 hovertemplate="DU %{x}<br>%{y:,.0f}<extra>Mês Anterior</extra>",
+            ),
+            row=1,
+            col=2,
+        )
+
+    # Acumulado mesmo mês / ano anterior
+    dus_ano_ant, acum_ano_ant = _serie_acumulado_por_du(
+        df_ano_ant, feriados_ano_ant,
+    )
+    if dus_ano_ant:
+        fig.add_trace(
+            go.Scatter(
+                name="Mesmo Mês / Ano Anterior",
+                x=dus_ano_ant,
+                y=acum_ano_ant,
+                mode="lines+markers",
+                marker=dict(size=5, color=CHART_COLORS["rose"]),
+                line=dict(
+                    width=2,
+                    color=CHART_COLORS["rose"],
+                    dash="dot",
+                ),
+                hovertemplate=(
+                    "DU %{x}<br>%{y:,.0f}"
+                    "<extra>Mesmo Mês / Ano Anterior</extra>"
+                ),
             ),
             row=1,
             col=2,

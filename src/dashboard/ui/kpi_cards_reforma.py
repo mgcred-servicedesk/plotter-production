@@ -19,6 +19,7 @@ from src.dashboard.formatters import (
     formatar_percentual,
 )
 from src.dashboard.ui.colors import (
+    get_status_color,
     get_status_full,
     get_churn_status,
     get_ritmo_status,
@@ -611,6 +612,99 @@ def render_cards_aceleradores(
     )
 
 
+def render_cards_reconquista(
+    dados: Optional[Dict],
+    mes: int,
+    ano: int,
+) -> None:
+    """Bloco resumido de KPIs da maciça de Reconquista MG CRED.
+
+    Renderiza 4 cards (Base, Reconquistados, Taxa, Gap) usando o
+    estilo `mg-kpi-context` para alinhar com os demais blocos.
+    No-op se nao houver maciça ativa para o periodo.
+    """
+    if not dados or dados.get("macica") is None:
+        return
+
+    macica = dados["macica"]
+    por_loja = dados.get("por_loja")
+    if por_loja is None or por_loja.empty:
+        return
+
+    total = int(por_loja["total_clientes"].sum())
+    reconq = int(por_loja["reconquistados"].sum())
+    taxa = (reconq / total * 100) if total > 0 else 0.0
+    meta = float(macica.get("meta_retencao") or 0)
+    gap_clientes = max(0, int(round(total * meta / 100)) - reconq)
+
+    cor_taxa = get_status_color(taxa / meta * 100 if meta > 0 else 0)
+    delta_pp = taxa - meta
+    sinal_pp = "+" if delta_pp >= 0 else ""
+
+    st.markdown("---")
+    st.markdown(
+        f"### 🎯 Reconquista — {(macica.get('descricao') or macica.get('codigo', '')).replace('Macica', 'Maciça')}"
+    )
+
+    # Aviso quando a maciça exibida é de mês anterior (fallback)
+    if macica.get("codigo") and macica["codigo"] != f"{ano}{mes:02d}":
+        st.caption(
+            f"ℹ️ Exibindo {macica.get('descricao') or macica['codigo']} — "
+            f"maciça de {mes:02d}/{ano} ainda não disponível."
+        )
+
+    card_base = (
+        f'<div class="mg-kpi-context" style="flex: 1;">'
+        f'<div class="mg-kpi-ctx-label">📋 Base da Maciça</div>'
+        f'<div class="mg-kpi-ctx-valor">{total:,}</div>'
+        f'<div class="mg-kpi-ctx-sub">Clientes elegíveis</div>'
+        f'</div>'
+    ).replace(",", ".")
+
+    card_reconq = (
+        f'<div class="mg-kpi-context" style="flex: 1;">'
+        f'<div class="mg-kpi-ctx-label">✅ Reconquistados</div>'
+        f'<div class="mg-kpi-ctx-valor">{reconq:,}</div>'
+        f'<div class="mg-kpi-ctx-sub">Último snapshot por cliente</div>'
+        f'</div>'
+    ).replace(",", ".")
+
+    card_taxa = (
+        f'<div class="mg-kpi-context" style="flex: 1;">'
+        f'<div class="mg-kpi-ctx-label">📊 Taxa Atual</div>'
+        f'<div class="mg-kpi-ctx-valor" style="color: {cor_taxa};">{taxa:.1f}%</div>'
+        f'<div class="mg-kpi-ctx-sub">'
+        f'Meta: <strong>{meta:.0f}%</strong> '
+        f'(<strong style="color: {cor_taxa};">{sinal_pp}{delta_pp:.1f} pp</strong>)'
+        f'</div>'
+        f'</div>'
+    )
+
+    if gap_clientes > 0:
+        sub_gap = "Clientes para atingir meta"
+        valor_gap = f"{gap_clientes:,}".replace(",", ".")
+        cor_gap = ""
+    else:
+        sub_gap = "Meta de reconquista atingida"
+        valor_gap = "✓"
+        cor_gap = "color: #10A37F;"
+
+    card_gap = (
+        f'<div class="mg-kpi-context" style="flex: 1;">'
+        f'<div class="mg-kpi-ctx-label">🎯 Gap p/ Meta</div>'
+        f'<div class="mg-kpi-ctx-valor" style="{cor_gap}">{valor_gap}</div>'
+        f'<div class="mg-kpi-ctx-sub">{sub_gap}</div>'
+        f'</div>'
+    )
+
+    st.markdown(
+        '<div style="display:flex; gap:clamp(10px,1.2vw,20px); align-items:stretch;">'
+        + card_base + card_reconq + card_taxa + card_gap
+        + '</div>',
+        unsafe_allow_html=True,
+    )
+
+
 def render_kpis_reforma(
     kpis: Dict,
     kpis_analise: Dict,
@@ -621,6 +715,9 @@ def render_kpis_reforma(
     daily_pago: Optional[Sequence[float]] = None,
     medias_organizacao: Optional[Dict[str, float]] = None,
     perfil: Optional[str] = None,
+    reconquista: Optional[Dict] = None,
+    mes: Optional[int] = None,
+    ano: Optional[int] = None,
 ) -> None:
     """
     Renderiza o novo bloco de KPIs reformulado.
@@ -630,7 +727,8 @@ def render_kpis_reforma(
     2. KPIs de contexto
     3. Cards por produto MIX
     4. Cards Aceleradores (qtd)
-    5. Ritmo + Projeção
+    5. Cards Reconquista (resumo da maciça ativa)
+    6. Ritmo + Projeção
     """
     # 1. KPIs Principais
     render_kpis_principais(kpis, kpis_analise, kpis_cancel, daily_pago)
@@ -651,5 +749,9 @@ def render_kpis_reforma(
     # 4. Cards Aceleradores (por quantidade)
     render_cards_aceleradores(kpis_qtd, perfil=perfil or "")
 
-    # 5. Média e Projeção
+    # 5. Cards Reconquista
+    if reconquista is not None and mes is not None and ano is not None:
+        render_cards_reconquista(reconquista, mes, ano)
+
+    # 6. Média e Projeção
     render_bloco_media_projecao(kpis)

@@ -17,12 +17,13 @@ side-effects em funcoes cacheadas.
 """
 
 from datetime import datetime
-from typing import List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import pandas as pd
 import streamlit as st
 
 from src.config.supabase_client import get_supabase_client
+from src.dashboard.rls import _obter_perfil_efetivo
 
 
 _PAGE_SIZE = 1000
@@ -925,6 +926,11 @@ def _executar_consolidacao(
         "PORTABILIDADE": "PORTABILIDADE",
     }
 
+    # Normaliza NaN → "" antes da máscara: contratos com categoria_id NULL
+    # no banco chegam como NaN (float) e quebram diagnósticos posteriores
+    # (sorted misturando float/str). Ex.: Maio/2025 tinha 13 linhas
+    # PAPCARD/CONTA SIMPLES sem categoria.
+    df["categoria_codigo"] = df["categoria_codigo"].fillna("")
     mask_sem_cat = df["categoria_codigo"] == ""
     if mask_sem_cat.any() and "TIPO_PRODUTO" in df.columns:
         df.loc[mask_sem_cat, "categoria_codigo"] = (
@@ -1147,3 +1153,149 @@ def _fetch_pagamentos_online() -> pd.DataFrame:
         )
 
     return df
+
+
+# ══════════════════════════════════════════════════════
+# Reconquista MG CRED
+#
+# Maciças (campanhas) com snapshots por envio. KPIs
+# pre-agregados em v_reconquista_por_loja / _por_consultor
+# / _indiferentes. A maciça vigente para um mes/ano e
+# resolvida por fn_macica_ativa (fallback p/ anterior).
+#
+# Ver docs/RECONQUISTA_MIGRATION.md.
+# ══════════════════════════════════════════════════════
+
+
+def _fetch_view_macica(view: str, macica_id: str) -> List[dict]:
+    """Pagina uma view filtrada por macica_id."""
+    all_data: List[dict] = []
+    offset = 0
+    while True:
+        resp = (
+            _sb()
+            .from_(view)
+            .select("*")
+            .eq("macica_id", macica_id)
+            .limit(_PAGE_SIZE)
+            .offset(offset)
+            .execute()
+        )
+        batch = resp.data or []
+        all_data.extend(batch)
+        if len(batch) < _PAGE_SIZE:
+            break
+        offset += _PAGE_SIZE
+    return all_data
+
+
+@st.cache_data(ttl=600)
+def _reconquista_cache(mes: int, ano: int) -> dict:
+    """Snapshot cacheado dos dados de reconquista. TTL 10min."""
+    sb = _sb()
+
+    macica = sb.rpc(
+        "fn_macica_ativa", {"p_mes": mes, "p_ano": ano}
+    ).execute()
+
+    if not macica.data:
+        return {
+            "macica": None,
+            "por_loja": pd.DataFrame(),
+            "resistentes": pd.DataFrame(),
+            "clientes": pd.DataFrame(),
+        }
+
+    m = macica.data[0]
+    mid = m["id"]
+
+    return {
+        "macica": m,
+        "por_loja": pd.DataFrame(
+            _fetch_view_macica("v_reconquista_por_loja", mid)
+        ),
+        "resistentes": pd.DataFrame(
+            _fetch_view_macica("v_reconquista_resistentes", mid)
+        ),
+        "clientes": pd.DataFrame(
+            _fetch_view_macica("v_reconquista_clientes", mid)
+        ),
+    }
+
+
+def _filtrar_rls_reconquista(dados: dict) -> dict:
+    """Aplica RLS sobre os DataFrames agregados de reconquista.
+
+    Views expoem `loja`, `regiao` e `consultor` em texto. Para
+    o perfil consultor, por_loja é derivado das lojas presentes
+    em `clientes` (fonte canonica de aparicoes do consultor).
+    """
+    if dados.get("macica") is None:
+        return dados
+
+    perfil = _obter_perfil_efetivo()
+    if not perfil or perfil["perfil"] in ("admin", "gestor"):
+        return dados
+
+    role = perfil["perfil"]
+    escopo = perfil.get("escopo") or []
+    if not escopo:
+        return dados
+
+    por_loja = dados["por_loja"]
+    resistentes = dados["resistentes"]
+    clientes = dados["clientes"]
+
+    def _filtra(df: pd.DataFrame, coluna: str, valores: list) -> pd.DataFrame:
+        if df.empty or coluna not in df.columns:
+            return df
+        return df[df[coluna].isin(valores)].copy()
+
+    if role == "gerente_comercial":
+        por_loja = _filtra(por_loja, "regiao", escopo)
+        resistentes = _filtra(resistentes, "regiao", escopo)
+        clientes = _filtra(clientes, "regiao", escopo)
+
+    elif role == "supervisor":
+        por_loja = _filtra(por_loja, "loja", escopo)
+        resistentes = _filtra(resistentes, "loja", escopo)
+        clientes = _filtra(clientes, "loja", escopo)
+
+    elif role == "consultor":
+        resistentes = _filtra(resistentes, "consultor", escopo)
+        clientes = _filtra(clientes, "consultor", escopo)
+        # por_loja: restringe as lojas em que o consultor tem
+        # aparicoes (derivado de `clientes`, fonte canonica).
+        if (
+            not clientes.empty
+            and "loja" in clientes.columns
+            and not por_loja.empty
+            and "loja" in por_loja.columns
+        ):
+            lojas_cons = clientes["loja"].dropna().unique().tolist()
+            por_loja = por_loja[por_loja["loja"].isin(lojas_cons)].copy()
+        elif not por_loja.empty:
+            por_loja = por_loja.iloc[0:0].copy()
+
+    return {
+        "macica": dados["macica"],
+        "por_loja": por_loja,
+        "resistentes": resistentes,
+        "clientes": clientes,
+    }
+
+
+def carregar_reconquista(mes: int, ano: int) -> Dict:
+    """Retorna dados de reconquista da maciça ativa para mes/ano.
+
+    Estrutura:
+        {
+            "macica": dict | None,
+            "por_loja":      DataFrame,
+            "por_consultor": DataFrame,
+            "indiferentes":  DataFrame,
+        }
+
+    TTL 10min. RLS aplicado por perfil efetivo apos o cache.
+    """
+    return _filtrar_rls_reconquista(_reconquista_cache(mes, ano))

@@ -53,6 +53,7 @@ from src.dashboard.loaders import (
     carregar_metas_produto_consultor,
     carregar_pagamentos_online,
     carregar_pontuacao_efetiva,
+    carregar_reconquista,
     carregar_ultimo_periodo,
     consolidar_dados,
 )
@@ -1202,11 +1203,22 @@ def main():
             )
             return
 
+        # Reconquista: maciça ativa para o período (TTL 10min,
+        # RLS aplicada no loader). Carregada uma vez e reusada
+        # tanto pelo bloco resumido do header quanto pela sub-aba
+        # de Analiticos.
+        try:
+            dados_reconquista = carregar_reconquista(mes, ano)
+        except Exception:
+            logger.exception("Falha ao carregar Reconquista")
+            dados_reconquista = None
+
         # Consultor nao ve cards gerenciais; sua aba
         # renderiza os cards pessoais
         if pode_ver("cards_gerenciais", role):
             # KPIs Principais Reformulados
-            # (3 principais + contexto + MIX + Aceleradores + Média/Projeção)
+            # (3 principais + contexto + MIX + Aceleradores
+            # + Reconquista + Média/Projeção)
             render_kpis_reforma(
                 kpis=kpis,
                 kpis_analise=kpis_analise,
@@ -1217,6 +1229,9 @@ def main():
                 daily_pago=daily_pago,
                 medias_organizacao=medias_organizacao,
                 perfil=role,
+                reconquista=dados_reconquista,
+                mes=mes,
+                ano=ano,
             )
 
             # Resumo Executivo comentado (após KPIs visuais)
@@ -1302,12 +1317,54 @@ def main():
                         or st.session_state.get("ui_filtro_consultor")
                     ):
                         _df_ant = _aplicar_filtros_ui(_df_ant)
-                except Exception:
+                except Exception as exc:
+                    logger.exception(
+                        "Falha ao carregar mês anterior (%s/%s)",
+                        mes_ant, ano_ant,
+                    )
+                    st.warning(
+                        f"Não foi possível carregar o mês anterior "
+                        f"({mes_ant:02d}/{ano_ant}): {exc}"
+                    )
                     _df_ant = pd.DataFrame()
                 st.session_state["_df_ant_cache"] = _df_ant
                 st.session_state["_df_ant_chave"] = chave_ant
             df_ant_full = st.session_state["_df_ant_cache"]
             du_dec_ant = calcular_dias_uteis(ano_ant, mes_ant, 1)[0]
+
+            # Mesmo mês / ano anterior — lazy load com cache próprio.
+            ano_yoy = ano - 1
+            chave_yoy = (
+                mes,
+                ano_yoy,
+                role,
+                tuple(perfil_efetivo.get("escopo", []) if perfil_efetivo else []),
+                tuple(sorted(st.session_state.get("ui_filtro_lojas") or [])),
+                st.session_state.get("ui_filtro_consultor") or "",
+            )
+            if st.session_state.get("_df_ano_ant_chave") != chave_yoy:
+                try:
+                    _df_yoy, _, _ = consolidar_dados(mes, ano_yoy)
+                    _df_yoy = _aplicar_nomes_display(_df_yoy)
+                    _df_yoy = aplicar_rls(_df_yoy)
+                    if (
+                        st.session_state.get("ui_filtro_lojas")
+                        or st.session_state.get("ui_filtro_consultor")
+                    ):
+                        _df_yoy = _aplicar_filtros_ui(_df_yoy)
+                except Exception as exc:
+                    logger.exception(
+                        "Falha ao carregar mesmo mês / ano anterior (%s/%s)",
+                        mes, ano_yoy,
+                    )
+                    st.warning(
+                        f"Não foi possível carregar o comparativo YoY "
+                        f"({mes:02d}/{ano_yoy}): {exc}"
+                    )
+                    _df_yoy = pd.DataFrame()
+                st.session_state["_df_ano_ant_cache"] = _df_yoy
+                st.session_state["_df_ano_ant_chave"] = chave_yoy
+            df_ano_ant_full = st.session_state["_df_ano_ant_cache"]
 
             render_tab_produtos(
                 df_f,
@@ -1324,6 +1381,7 @@ def main():
                 df_metas_produto_full=df_metas_produto_full,
                 df_ant=df_ant_full,
                 du_dec_ant=du_dec_ant,
+                df_ano_ant=df_ano_ant_full,
             )
         elif tab == "Regioes":
             render_tab_regioes(
@@ -1353,6 +1411,7 @@ def main():
                 df_analise_f,
                 df_cancelados_f,
                 perfil=role,
+                reconquista=dados_reconquista,
             )
         elif tab == "Evolucao":
             render_tab_evolucao(
