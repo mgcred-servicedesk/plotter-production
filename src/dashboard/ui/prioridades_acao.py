@@ -835,6 +835,7 @@ def calcular_planejamento_consultor(
     gap_valor = float(kpis.get("gap_valor", 0) or 0)
     du_restantes = int(kpis.get("du_restantes", 0) or 0)
     media_du_atual = float(kpis.get("media_du", 0) or 0)
+    meta_mix = float(kpis.get("meta_mix", 0) or 0)
 
     meta_diaria_necessaria = gap_valor / du_restantes if du_restantes > 0 else 0.0
 
@@ -864,6 +865,7 @@ def calcular_planejamento_consultor(
         "media_du_atual": media_du_atual,
         "du_restantes": du_restantes,
         "gap_valor": gap_valor,
+        "meta_mix": meta_mix,
         "pipeline": pipeline,
     }
 
@@ -983,6 +985,7 @@ def _render_planejamento_consultor_coluna(planejamento: Dict) -> None:
     media_atual = planejamento["media_du_atual"]
     du_rest = planejamento["du_restantes"]
     gap = planejamento["gap_valor"]
+    meta_total = planejamento.get("meta_mix", 0)
     pipeline = planejamento["pipeline"]
 
     st.markdown(
@@ -991,7 +994,9 @@ def _render_planejamento_consultor_coluna(planejamento: Dict) -> None:
         unsafe_allow_html=True,
     )
 
-    if gap <= 0:
+    if meta_total <= 0:
+        st.info("Sem meta definida.")
+    elif gap <= 0:
         st.success("Meta atingida! 🎉")
     elif du_rest <= 0:
         st.warning("Sem dias úteis restantes no mês.")
@@ -1573,13 +1578,43 @@ def render_prioridades_acao(
     """
     st.markdown(css_prioridades, unsafe_allow_html=True)
 
+    # Detecta ausência de metas para diferenciar "sem meta" de "meta batida"
+    # nas mensagens de empty state.
+    tem_meta_produto = any(
+        float(p.get("meta_total", 0) or 0) > 0 for p in metas_produto
+    )
+    tem_meta_loja = (
+        not df_metas_produto.empty
+        and "MIX" in df_metas_produto.columns
+        and float(
+            pd.to_numeric(df_metas_produto["MIX"], errors="coerce")
+            .fillna(0)
+            .sum()
+        ) > 0
+    )
+    msg_prod_vazia = (
+        "Todos os produtos atingiram a meta! 🎉"
+        if tem_meta_produto
+        else "Sem meta definida para os produtos."
+    )
+    msg_loja_vazia = (
+        "Todas as lojas estão acima da meta! 🎉"
+        if tem_meta_loja
+        else "Sem meta definida para as lojas."
+    )
+    msg_reg_vazia = (
+        "Todas as regiões estão acima da meta! 🎉"
+        if tem_meta_loja
+        else "Sem meta definida para as regiões."
+    )
+
     col1, col2, col3 = st.columns(3)
 
     with col1:
         st.markdown("**🔥 Produtos que Precisam de Atenção**")
         _render_lista_com_expander(
             prioridades_prod, 3, _html_card_produto,
-            "produtos", "Todos os produtos atingiram a meta! 🎉",
+            "produtos", msg_prod_vazia,
         )
 
     with col2:
@@ -1587,7 +1622,7 @@ def render_prioridades_acao(
             st.markdown("**🏪 Lojas que Precisam de Atenção**")
             _render_lista_com_expander(
                 prioridades_loja, 4, _html_card_loja,
-                "lojas", "Todas as lojas estão acima da meta! 🎉",
+                "lojas", msg_loja_vazia,
             )
         elif _eh_supervisor:
             st.markdown("**👤 Consultores que Precisam de Atenção**")
@@ -1602,7 +1637,7 @@ def render_prioridades_acao(
             st.markdown("**📍 Regiões que Precisam de Atenção**")
             _render_lista_com_expander(
                 prioridades_reg, 2, _html_card_regiao,
-                "regiões", "Todas as regiões estão acima da meta! 🎉",
+                "regiões", msg_reg_vazia,
             )
 
     with col3:
@@ -1625,7 +1660,7 @@ def render_prioridades_acao(
             st.markdown("**🏪 Lojas que Precisam de Atenção**")
             _render_lista_com_expander(
                 prioridades_loja, 4, _html_card_loja,
-                "lojas", "Todas as lojas estão acima da meta! 🎉",
+                "lojas", msg_loja_vazia,
             )
 
     # Seção dedicada dos Aceleradores (supervisor e consultor usam col3 em vez desta seção)

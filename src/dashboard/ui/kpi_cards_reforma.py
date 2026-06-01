@@ -92,19 +92,38 @@ def render_kpis_principais(
             </div>
         </div>"""
 
-    card_meta = f"""
-        <div class="mg-kpi-hero" style="flex: 1;">
-            <div class="mg-kpi-label">📊 % Meta Atingida</div>
-            <div class="mg-kpi-valor" style="color: {cor_status};">
-                {formatar_percentual(perc_ating)}
-            </div>
-            <div class="mg-kpi-sub" style="font-size: 14px;">
-                Projeção: {formatar_percentual(perc_proj)} |
-                MIX: {meta_mix_fmt}
-            </div>
-        </div>"""
+    if meta_mix > 0:
+        card_meta = f"""
+            <div class="mg-kpi-hero" style="flex: 1;">
+                <div class="mg-kpi-label">📊 % Meta Atingida</div>
+                <div class="mg-kpi-valor" style="color: {cor_status};">
+                    {formatar_percentual(perc_ating)}
+                </div>
+                <div class="mg-kpi-sub" style="font-size: 14px;">
+                    Projeção: {formatar_percentual(perc_proj)} |
+                    MIX: {meta_mix_fmt}
+                </div>
+            </div>"""
+    else:
+        card_meta = """
+            <div class="mg-kpi-hero" style="flex: 1;">
+                <div class="mg-kpi-label">📊 % Meta Atingida</div>
+                <div class="mg-kpi-valor" style="color: var(--mg-text-muted);">—</div>
+                <div class="mg-kpi-sub" style="font-size: 14px;">
+                    Sem meta definida
+                </div>
+            </div>"""
 
-    if gap > 0:
+    if meta_mix <= 0:
+        card_gap = """
+            <div class="mg-kpi-hero" style="flex: 1;">
+                <div class="mg-kpi-label">🎯 Falta para Meta</div>
+                <div class="mg-kpi-valor" style="color: var(--mg-text-muted);">—</div>
+                <div class="mg-kpi-sub" style="font-size: 14px;">
+                    Sem meta definida
+                </div>
+            </div>"""
+    elif gap > 0:
         gap_fmt = _formatar_valor_moeda(gap)
         gap_por_dia = gap / du_restantes if du_restantes > 1 else gap
         gap_por_dia_fmt = _formatar_valor_moeda(gap_por_dia)
@@ -274,7 +293,14 @@ def render_bloco_media_projecao(kpis: Dict) -> None:
 
     # Cores por status
     cor_media, emoji_media, status_texto = get_ritmo_status(desvio)
-    cor_proj = get_status_color(perc_proj)
+    cor_proj = (
+        get_status_color(perc_proj) if meta_mix > 0 else "var(--mg-text)"
+    )
+    projecao_fmt = (
+        f"{formatar_moeda_compacta(projecao)} ({formatar_percentual(perc_proj)})"
+        if meta_mix > 0
+        else formatar_moeda_compacta(projecao)
+    )
 
     # Progresso temporal: percentual de dias úteis decorridos
     perc_tempo = (
@@ -282,17 +308,27 @@ def render_bloco_media_projecao(kpis: Dict) -> None:
     )
 
     # Mensagem contextual
-    msg_desvio = (
-        f"{abs(desvio):.0f}% {'acima' if desvio > 0 else 'abaixo'} do necessário"
-        if media_necessaria > 0
-        else "Meta atingida"
-    )
-    msg_fechamento = (
-        f"Fecharemos {abs(100 - perc_proj):.0f}% "
-        f"{'acima' if perc_proj >= 100 else 'abaixo'} da meta"
-        if meta_mix > 0
-        else ""
-    )
+    meta_atingida = meta_mix > 0 and total_vendas >= meta_mix
+    periodo_encerrado = du_restantes <= 0
+    if meta_mix <= 0:
+        msg_desvio = "Sem meta definida"
+    elif meta_atingida:
+        msg_desvio = "Meta atingida"
+    elif periodo_encerrado:
+        msg_desvio = "Período encerrado — meta não atingida"
+    else:
+        msg_desvio = (
+            f"{abs(desvio):.0f}% "
+            f"{'acima' if desvio > 0 else 'abaixo'} do necessário"
+        )
+    if meta_mix <= 0:
+        msg_fechamento = ""
+    else:
+        verbo = "Fechamos" if periodo_encerrado else "Fecharemos"
+        direcao = "acima" if perc_proj >= 100 else "abaixo"
+        msg_fechamento = (
+            f"{verbo} {abs(100 - perc_proj):.0f}% {direcao} da meta"
+        )
 
     st.markdown("---")
     st.markdown("### 📈 Para Onde Estamos Indo")
@@ -334,7 +370,7 @@ def render_bloco_media_projecao(kpis: Dict) -> None:
                         Projeção Fim
                     </div>
                     <div style="font-size: 24px; font-weight: 700; color: {cor_proj};">
-                        {formatar_moeda_compacta(projecao)} ({formatar_percentual(perc_proj)})
+                        {projecao_fmt}
                     </div>
                 </div>
             </div>

@@ -224,7 +224,11 @@ def render_resumo_executivo(
     produtos_abaixo.sort(key=lambda x: x["perc"])
 
     # ── Status headline ───────────────────────────────────────────────────
-    if perc_ating >= 100:
+    if meta_mix <= 0:
+        status_class = "mg-status-warning"
+        status_icon = "ℹ️"
+        status_text = "Sem meta definida para o período"
+    elif perc_ating >= 100:
         status_class = "mg-status-success"
         status_icon = "✅"
         status_text = f"Meta MIX atingida — {perc_ating:.1f}% em valor (R$)"
@@ -237,11 +241,16 @@ def render_resumo_executivo(
         status_icon = "🚨"
         status_text = f"Apenas {perc_ating:.1f}% da meta MIX atingida (R$)"
 
-    status_sub = (
-        f"Realizado: {formatar_moeda_compacta(total_vendas)} de "
-        f"{formatar_moeda_compacta(meta_mix)} · "
-        f"Faltam: {formatar_moeda_compacta(gap)}"
-    )
+    if meta_mix <= 0:
+        status_sub = (
+            f"Realizado: {formatar_moeda_compacta(total_vendas)} · Sem meta definida"
+        )
+    else:
+        status_sub = (
+            f"Realizado: {formatar_moeda_compacta(total_vendas)} de "
+            f"{formatar_moeda_compacta(meta_mix)} · "
+            f"Faltam: {formatar_moeda_compacta(gap)}"
+        )
 
     # ── Cores por faixa de atingimento ───────────────────────────────────
     proj_mix_class = (
@@ -345,7 +354,9 @@ def render_resumo_executivo(
         f'<div class="mg-metric-item">'
         f'<div class="mg-metric-label">Dias Úteis Restantes</div>'
         f'<div class="mg-metric-value">{du_restantes}</div>'
-        f'<div class="mg-metric-sub">Gap: {formatar_moeda_compacta(gap)}</div>'
+        f'<div class="mg-metric-sub">'
+        f'{"Sem meta definida" if meta_mix <= 0 else f"Gap: {formatar_moeda_compacta(gap)}"}'
+        f'</div>'
         f'</div>'
         f'</div>'
         f'{produtos_block}'

@@ -29,6 +29,22 @@ from src.dashboard.rls import _obter_perfil_efetivo
 _PAGE_SIZE = 1000
 
 
+# Portabilidade herda os pontos do CONSIG do banco origem.
+# Chaves normalizadas (strip + upper). CONSIG_PRIV nao entra:
+# Privado nao se aplica a portabilidade.
+_PORTAB_BANCO_TO_CONSIG = {
+    "BMG": "CONSIG_BMG",
+    "BANCO BMG": "CONSIG_BMG",
+    "C6 BANK": "CONSIG_C6",
+    "C6": "CONSIG_C6",
+    "BANCO C6": "CONSIG_C6",
+    "ITAU": "CONSIG_ITAU",
+    "ITAÚ": "CONSIG_ITAU",
+    "BANCO ITAU": "CONSIG_ITAU",
+    "BANCO ITAÚ": "CONSIG_ITAU",
+}
+
+
 # ══════════════════════════════════════════════════════
 # Helpers internos
 # ══════════════════════════════════════════════════════
@@ -970,6 +986,26 @@ def _executar_consolidacao(
     else:
         mapa_pontos = {}
         df["PONTOS"] = 0
+
+    # PORTABILIDADE herda a pontuacao do CONSIG do banco origem.
+    # Regra: Portabilidade BMG -> CONSIG_BMG, C6 -> CONSIG_C6,
+    # Itau -> CONSIG_ITAU. CONSIG_PRIV nao se aplica a portabilidade
+    # (produto distinto). Bancos sem mapeamento permanecem com 0.
+    # Resolvido em codigo (nao via tabela pontuacao) porque o
+    # diferencial e o BANCO do contrato, granularidade maior que
+    # categoria.
+    if "BANCO" in df.columns:
+        mask_portab = df["categoria_codigo"] == "PORTABILIDADE"
+        if mask_portab.any():
+            banco_norm = (
+                df.loc[mask_portab, "BANCO"]
+                .astype(str).str.strip().str.upper()
+            )
+            consig_alvo = banco_norm.map(_PORTAB_BANCO_TO_CONSIG)
+            pts_alias = consig_alvo.map(mapa_pontos)
+            df.loc[mask_portab, "PONTOS"] = pts_alias.fillna(0).astype(
+                float
+            )
 
     # ── Diagnostico de mapeamento ──────────────────
     total = len(df)

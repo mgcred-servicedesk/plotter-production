@@ -350,7 +350,11 @@ def _card_pontos_efetivos(kpis: Dict) -> None:
     du_restantes = kpis.get("du_restantes", 0)
 
     clamped = max(0.0, min(perc_ating, 100.0))
-    if perc_ating >= 100:
+    if meta_prata <= 0:
+        card_mod = "mg-prod-card--accent-teal"
+        badge_mod = ""
+        bar_mod = "mg-primary"
+    elif perc_ating >= 100:
         card_mod = "mg-prod-card--success"
         badge_mod = "mg-prod-badge--success"
         bar_mod = "mg-success"
@@ -363,7 +367,13 @@ def _card_pontos_efetivos(kpis: Dict) -> None:
         badge_mod = "mg-prod-badge--danger"
         bar_mod = "mg-danger"
 
-    if perc_ating < 100 and du_restantes > 0:
+    if meta_prata <= 0:
+        footer_meta = (
+            '<span class="mg-prod-footer-meta">'
+            "Sem meta definida</span>"
+        )
+        footer_sec = ""
+    elif perc_ating < 100 and du_restantes > 0:
         gap = meta_prata - total_pontos
         nec = gap / du_restantes
         nec_cls = (
@@ -389,19 +399,32 @@ def _card_pontos_efetivos(kpis: Dict) -> None:
             f"Proj: {formatar_percentual(perc_proj)} da meta</span>"
         )
 
-    html = (
-        f'<div class="mg-prod-card {card_mod}">'
-        f'<div class="mg-prod-header">'
-        f'<span class="mg-prod-name">Pontos Efetivos</span>'
-        f'<span class="mg-prod-badge {badge_mod}">'
-        f"{formatar_percentual(perc_ating)}</span>"
-        f"</div>"
-        f'<div class="mg-prod-value">'
-        f"{formatar_numero(total_pontos)}</div>"
+    badge_txt = (
+        formatar_percentual(perc_ating) if meta_prata > 0 else ""
+    )
+    badge_html = (
+        f'<span class="mg-prod-badge {badge_mod}">{badge_txt}</span>'
+        if badge_txt
+        else ""
+    )
+    track_html = (
         f'<div class="mg-prod-track">'
         f'<div class="mg-prod-fill {bar_mod}" '
         f'style="width:{clamped:.1f}%"></div>'
         f"</div>"
+        if meta_prata > 0
+        else ""
+    )
+
+    html = (
+        f'<div class="mg-prod-card {card_mod}">'
+        f'<div class="mg-prod-header">'
+        f'<span class="mg-prod-name">Pontos Efetivos</span>'
+        f"{badge_html}"
+        f"</div>"
+        f'<div class="mg-prod-value">'
+        f"{formatar_numero(total_pontos)}</div>"
+        f"{track_html}"
         f'<div class="mg-prod-footer">'
         f"{footer_meta}{footer_sec}"
         f"</div>"

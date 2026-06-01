@@ -12,6 +12,27 @@ produção.
 - Se `conta_pontuacao = False` na categoria → `pontos = 0`.
 - Se `conta_valor = False` na categoria → `VALOR = 0` no agregado.
 
+### Portabilidade — alias por banco
+
+A categoria `PORTABILIDADE` **não tem entrada própria** em `pontuacao`. O
+multiplicador é herdado do `CONSIG_<banco>` correspondente ao `BANCO` do
+contrato:
+
+| `BANCO` (normalizado) | Categoria de pts usada |
+|---|---|
+| `BMG` / `BANCO BMG` | `CONSIG_BMG` |
+| `C6 BANK` / `C6` / `BANCO C6` | `CONSIG_C6` |
+| `ITAU` / `ITAÚ` / `BANCO ITAU` / `BANCO ITAÚ` | `CONSIG_ITAU` |
+
+`CONSIG_PRIV` **não se aplica a portabilidade** (produto distinto). Bancos
+não mapeados permanecem com `PONTOS = 0`.
+
+Resolvido em código ([`src/dashboard/loaders.py`](../../src/dashboard/loaders.py)
+— constante `_PORTAB_BANCO_TO_CONSIG` + override após o lookup de `PONTOS`)
+e não via tabela `pontuacao` porque o diferencial é `BANCO`, granularidade
+maior que categoria. A migration 013 explicitamente deixou portabilidade
+fora do alias estrutural por causa dessa granularidade.
+
 ## Emissão de cartão
 
 `TIPO_PRODUTO ∈ {CARTÃO BENEFICIO, Venda Pré-Adesão}`:
