@@ -33,6 +33,18 @@ e não via tabela `pontuacao` porque o diferencial é `BANCO`, granularidade
 maior que categoria. A migration 013 explicitamente deixou portabilidade
 fora do alias estrutural por causa dessa granularidade.
 
+### Diagnóstico de categorias sem pontuação
+
+Categoria presente nos contratos mas **ausente** da tabela `pontuacao` do
+período pontua **zero** e distorce silenciosamente os KPIs. O dashboard
+detecta isso na carga (`app.py`) e emite `st.warning`:
+
+- `N contratos sem categoria` — `TIPO_PRODUTO` não mapeado em `categorias_produto`.
+- `N categorias sem pontuacao` — categoria do contrato sem entrada em `pontuacao`.
+
+Revisar no início de cada período e ao introduzir produtos novos. (Sucessor
+vivo do antigo aviso baseado na planilha `pontuacao/pontos_{mes}.xlsx`.)
+
 ## Emissão de cartão
 
 `TIPO_PRODUTO ∈ {CARTÃO BENEFICIO, Venda Pré-Adesão}`:

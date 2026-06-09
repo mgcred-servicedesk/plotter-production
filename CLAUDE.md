@@ -73,17 +73,13 @@ Quando descobrir/decidir algo não óbvio, contribua de volta:
 ## Rodando o projeto
 
 ```bash
-# Dashboard (entrypoint único)
+# Dashboard (entrypoint único — Supabase direto)
 streamlit run app.py
-
-# Relatórios Excel
-python gerar_relatorio.py
-
-# Relatórios PDF
-python gerar_relatorio_pdf.py
 ```
 
-Saídas: `outputs/relatorios_excel/` e `outputs/relatorios_pdf/`.
+> O pipeline de relatórios Excel/PDF (`gerar_relatorio*.py`, `src/reports/`,
+> `src/data_processing/`) foi removido — o `app.py` consome o Supabase
+> diretamente e é a única superfície do projeto.
 
 ## Testes e lint
 

@@ -3,8 +3,8 @@
 Esta pasta é a **fonte única de verdade** para qualquer agente de IA
 (Claude Code, Windsurf, Cursor, Cody, etc.) que trabalhe neste projeto.
 
-`CLAUDE.md` (root), `AGENTS.md` (root), `.windsurf/rules/*.md` e
-`.windsurf/skills/*/SKILL.md` são **pontos de entrada específicos de cada
+`CLAUDE.md` (root), `AGENTS.md` (root), `.devin/rules/*.md` e
+`.devin/skills/*/SKILL.md` são **pontos de entrada específicos de cada
 ferramenta** que apontam para este diretório. Todo conhecimento de
 projeto mora aqui; os entry points contêm apenas regras comportamentais
 da respectiva ferramenta.

@@ -9,18 +9,14 @@ KPI antigos nem dos loaders Excel.
 Comando: `streamlit run app.py`
 
 Após a refatoração (`refactor-kpis`), `app.py` é um **orquestrador fino**
-(~970 linhas): autentica, monta sidebar, carrega dados, aplica RLS,
+(~1440 linhas): autentica, monta sidebar, carrega dados, aplica RLS,
 calcula KPIs e delega render para `src/dashboard/tabs/*`. Toda lógica
-pesada vive em `src/dashboard/{loaders,kpis,ui,tabs,theme}/`.
+pesada vive em `src/dashboard/{loaders,kpis,ui,tabs,pages}/`.
 
-### Arquivos legados (não usar / não modificar)
-
-- `dashboard.py`
-- `dashboard_refatorado.py`
-- `dashboard_supabase.py`
-- `src/dashboard/app.py` (entry antigo; mantido por histórico)
-
-Todos têm deprecation notice no topo. Features novas **vão para `app.py`** na raiz.
+Features novas vão **sempre** para `app.py` na raiz. Os antigos
+`dashboard*.py` e o pipeline Excel/PDF (`src/reports/`,
+`src/data_processing/`, `gerar_relatorio*.py`) foram **removidos** do
+projeto — o `app.py` consome o Supabase diretamente.
 
 ## Árvore
 
@@ -29,7 +25,7 @@ app.py                         ← ★ main entry point (orquestrador)
 src/
   config/
     supabase_client.py         ← get_supabase_client()
-    settings.py                ← MESES_PT, LISTA_PRODUTOS, NOMES_DISPLAY_PRODUTO, constantes
+    settings.py                ← PRODUTOS_EMISSAO, NOMES_DISPLAY_PRODUTO (taxonomia vem do banco)
   shared/
     dias_uteis.py              ← calcular_dias_uteis() + carregar_feriados()
   dashboard/
@@ -51,27 +47,29 @@ src/
       consultor.py             ← KPIs do dashboard individual do consultor
       evolucao.py              ← séries temporais
     tabs/                      ← render de cada aba
-      produtos.py, regioes.py, rankings.py, analiticos.py,
-      evolucao.py, em_analise.py, detalhes.py, consultor.py
+      produtos.py, regioes.py, rankings.py, analiticos.py, evolucao.py,
+      em_analise.py, detalhes.py, consultor.py, pagamentos_online.py
     ui/                        ← componentes visuais
       theme.py                 ← sistema de temas (CHART_THEME, CSS vars, aplicar_tema)
+      theme_claro_avancado.py  ← variante de tema claro
       header.py                ← render_header, render_status_bar
       kpi_cards.py             ← cards de KPIs principais, metas e quantidade
-      cards.py                 ← cards genéricos
+      kpi_cards_reforma.py     ← KPIs dominantes da reforma (render_kpis_reforma)
+      resumo_executivo.py      ← farol/resumo executivo narrativo
+      prioridades_acao.py      ← bloco "onde agir agora"
       charts.py                ← funções de criação de gráficos Plotly
       skeleton.py              ← loading state
     components/
       tables.py                ← exibir_tabela()
-  data_processing/             ← legado (pipeline Excel; usado só por relatórios)
-  reports/                     ← geradores Excel e PDF
+    pages/
+      dashboard_pontuacao.py   ← dashboard de pontuação
 database/
-  migrations/                  ← 001_views_dashboard.sql → 006_perfil_consultor.sql
+  migrations/                  ← migrations numeradas (001…)
   schema.sql
 assets/
   dashboard_style.css          ← design system + tema CSS custom properties
   logotipo-mg-cred.png
 configuracao/                  ← planilhas auxiliares (HC, lojas, supervisores)
-outputs/                       ← relatorios_excel/, relatorios_pdf/
 ```
 
 ## Fluxo de carregamento (em `app.py`)

@@ -31,7 +31,7 @@ Demais referências (cache, RLS, convenções, UI) estão linkadas no README.
 Cada agente segue regras adicionais específicas da sua ferramenta:
 
 - Claude Code: [`CLAUDE.md`](CLAUDE.md)
-- Windsurf: [`.windsurf/rules/`](.windsurf/rules/) e [`.windsurf/skills/`](.windsurf/skills/)
+- Devin: [`.devin/rules/`](.devin/rules/) e [`.devin/skills/`](.devin/skills/)
 - (adicione outros conforme forem introduzidos)
 
 Essas regras **não devem duplicar** conhecimento de projeto — apenas

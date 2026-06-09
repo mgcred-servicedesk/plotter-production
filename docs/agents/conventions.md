@@ -124,6 +124,21 @@ cores = df["% Atingimento"].apply(
 - No máx. 3 tipos de gráfico por página.
 - Sem 3D; sem paletas arcoíris; sem widgets decorativos.
 
+### Estrutura narrativa (reforma)
+
+A tela segue uma ordem de altitude decrescente — de resultado para ação:
+
+1. **Onde estamos** — resumo executivo + 3 KPIs dominantes (realizado, % meta, gap).
+2. **Para onde vamos** — ritmo atual vs. necessário e projeção de fechamento.
+3. **Onde agir** — prioridades de ação (produtos/regiões/consultores críticos).
+4. **Exploração** — tabs com tabelas e gráficos detalhados.
+
+Cor comunica **status** (verde ≥ meta, amarelo atenção, vermelho crítico,
+azul/cinza neutro), nunca decoração. Implementado em
+[`ui/resumo_executivo.py`](../../src/dashboard/ui/resumo_executivo.py),
+[`ui/prioridades_acao.py`](../../src/dashboard/ui/prioridades_acao.py) e
+[`ui/kpi_cards_reforma.py`](../../src/dashboard/ui/kpi_cards_reforma.py).
+
 ## Pandas/NumPy
 
 - Vetorizar > `apply()` > loops.

@@ -16,7 +16,7 @@ from src.shared.dias_uteis import calcular_dias_uteis
 
 
 # Mapeamento de produtos do dashboard para categoria_codigo
-# Baseado em MAPEAMENTO_PRODUTOS de settings.py
+# (taxonomia oriunda da tabela categorias_produto no Supabase).
 PRODUTOS_DASHBOARD = {
     "CNC": ["CNC", "SUPER_CONTA"],  # CNC inclui Super Conta
     "CLT": ["CONSIG_PRIV"],  # CLT = CONSIG PRIVADO

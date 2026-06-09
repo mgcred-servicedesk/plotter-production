@@ -6,4 +6,3 @@ streamlit-antd-components>=0.3.2
 python-dotenv==1.2.2
 bcrypt>=5.0.0
 supabase==2.31.0
-matplotlib>=3.10.9
