@@ -445,7 +445,7 @@ def tela_login() -> bool:
                 st.error("Preencha usuário e senha.")
                 return False
 
-            with st.spinner("Verificando credenciais..."):
+            with st.spinner(":shimmer[Verificando credenciais...]"):
                 dados = autenticar(usuario, senha)
 
             if dados:

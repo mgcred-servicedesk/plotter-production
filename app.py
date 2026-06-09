@@ -705,7 +705,9 @@ def main():
             skeleton_ph = st.empty()
             with skeleton_ph:
                 render_skeleton()
-            _status_obj = st.status("Carregando dados...", expanded=False)
+            _status_obj = st.status(
+                ":shimmer[Carregando dados...]", expanded=False
+            )
             _status_obj.__enter__()
         else:
             skeleton_ph = None
@@ -713,7 +715,7 @@ def main():
 
         def _upd_status(label: str) -> None:
             if _status_obj is not None:
-                _status_obj.update(label=label)
+                _status_obj.update(label=f":shimmer[{label}]")
 
         _upd_status("Carregando contratos pagos...")
         df, df_metas, df_sup = consolidar_dados(mes, ano)
