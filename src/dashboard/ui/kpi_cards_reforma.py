@@ -648,94 +648,101 @@ def render_cards_aceleradores(
     )
 
 
+_MESES_RECONQ = {
+    1: "Jan", 2: "Fev", 3: "Mar", 4: "Abr", 5: "Mai", 6: "Jun",
+    7: "Jul", 8: "Ago", 9: "Set", 10: "Out", 11: "Nov", 12: "Dez",
+}
+
+
 def render_cards_reconquista(
     dados: Optional[Dict],
     mes: int,
     ano: int,
 ) -> None:
-    """Bloco resumido de KPIs da maciça de Reconquista MG CRED.
+    """Bloco resumido de KPIs do Reconquista MG CRED (v2).
 
-    Renderiza 4 cards (Base, Reconquistados, Taxa, Gap) usando o
-    estilo `mg-kpi-context` para alinhar com os demais blocos.
-    No-op se nao houver maciça ativa para o periodo.
+    Renderiza 4 cards minimalistas (Clientes do mês, Efetivadas,
+    Promessas, Sem reconquista) no estilo `mg-kpi-context`. A
+    apuracao é mensal por dt_fim_relacionamento com defasagem de
+    1 mes (ja resolvida no loader). No-op se `dados` for vazio.
     """
-    if not dados or dados.get("macica") is None:
+    if not dados:
         return
 
-    macica = dados["macica"]
-    por_loja = dados.get("por_loja")
-    if por_loja is None or por_loja.empty:
+    totais = dados.get("totais") or {}
+    total = int(totais.get("total", 0))
+
+    ref_mes = dados.get("ref_mes")
+    ref_ano = dados.get("ref_ano")
+    ref_label = (
+        f"{_MESES_RECONQ.get(ref_mes, '?')}/{ref_ano}" if ref_mes else "—"
+    )
+
+    st.markdown("---")
+    st.markdown("### 🎯 Reconquista")
+    st.caption(
+        f"Apuração {_MESES_RECONQ.get(mes, '?')}/{ano} · fim de "
+        f"relacionamento em **{ref_label}** (defasagem de 1 mês)"
+    )
+
+    if total == 0:
+        st.info(
+            f"Sem contratos com fim de relacionamento em {ref_label}."
+        )
         return
 
-    total = int(por_loja["total_clientes"].sum())
-    reconq = int(por_loja["reconquistados"].sum())
-    taxa = (reconq / total * 100) if total > 0 else 0.0
-    meta = float(macica.get("meta_retencao") or 0)
-    gap_clientes = max(0, int(round(total * meta / 100)) - reconq)
+    efet = int(totais.get("efetivadas", 0))
+    prom = int(totais.get("promessas", 0))
+    sem = int(totais.get("sem_reconquista", 0))
+    taxa = float(totais.get("taxa", 0.0))
+    meta = float(totais.get("meta", 0.0))
+
+    pct_efet = efet / total * 100 if total else 0.0
+    pct_prom = prom / total * 100 if total else 0.0
+    pct_sem = sem / total * 100 if total else 0.0
 
     cor_taxa = get_status_color(taxa / meta * 100 if meta > 0 else 0)
     delta_pp = taxa - meta
     sinal_pp = "+" if delta_pp >= 0 else ""
 
-    st.markdown("---")
-    st.markdown(
-        f"### 🎯 Reconquista — {(macica.get('descricao') or macica.get('codigo', '')).replace('Macica', 'Maciça')}"
-    )
-
-    # Aviso quando a maciça exibida é de mês anterior (fallback)
-    if macica.get("codigo") and macica["codigo"] != f"{ano}{mes:02d}":
-        st.caption(
-            f"ℹ️ Exibindo {macica.get('descricao') or macica['codigo']} — "
-            f"maciça de {mes:02d}/{ano} ainda não disponível."
-        )
-
-    card_base = (
+    card_total = (
         f'<div class="mg-kpi-context" style="flex: 1;">'
-        f'<div class="mg-kpi-ctx-label">📋 Base da Maciça</div>'
+        f'<div class="mg-kpi-ctx-label">📋 Clientes do mês</div>'
         f'<div class="mg-kpi-ctx-valor">{total:,}</div>'
-        f'<div class="mg-kpi-ctx-sub">Clientes elegíveis</div>'
+        f'<div class="mg-kpi-ctx-sub">Fim de relacionamento {ref_label}</div>'
         f'</div>'
     ).replace(",", ".")
 
-    card_reconq = (
+    card_efet = (
         f'<div class="mg-kpi-context" style="flex: 1;">'
-        f'<div class="mg-kpi-ctx-label">✅ Reconquistados</div>'
-        f'<div class="mg-kpi-ctx-valor">{reconq:,}</div>'
-        f'<div class="mg-kpi-ctx-sub">Último snapshot por cliente</div>'
-        f'</div>'
-    ).replace(",", ".")
-
-    card_taxa = (
-        f'<div class="mg-kpi-context" style="flex: 1;">'
-        f'<div class="mg-kpi-ctx-label">📊 Taxa Atual</div>'
-        f'<div class="mg-kpi-ctx-valor" style="color: {cor_taxa};">{taxa:.1f}%</div>'
+        f'<div class="mg-kpi-ctx-label">✅ Efetivadas</div>'
+        f'<div class="mg-kpi-ctx-valor" style="color: {cor_taxa};">{efet:,}</div>'
         f'<div class="mg-kpi-ctx-sub">'
-        f'Meta: <strong>{meta:.0f}%</strong> '
+        f'{pct_efet:.1f}% · meta <strong>{meta:.0f}%</strong> '
         f'(<strong style="color: {cor_taxa};">{sinal_pp}{delta_pp:.1f} pp</strong>)'
         f'</div>'
         f'</div>'
-    )
+    ).replace(",", ".")
 
-    if gap_clientes > 0:
-        sub_gap = "Clientes para atingir meta"
-        valor_gap = f"{gap_clientes:,}".replace(",", ".")
-        cor_gap = ""
-    else:
-        sub_gap = "Meta de reconquista atingida"
-        valor_gap = "✓"
-        cor_gap = "color: #10A37F;"
-
-    card_gap = (
+    card_prom = (
         f'<div class="mg-kpi-context" style="flex: 1;">'
-        f'<div class="mg-kpi-ctx-label">🎯 Gap p/ Meta</div>'
-        f'<div class="mg-kpi-ctx-valor" style="{cor_gap}">{valor_gap}</div>'
-        f'<div class="mg-kpi-ctx-sub">{sub_gap}</div>'
+        f'<div class="mg-kpi-ctx-label">⏳ Promessas</div>'
+        f'<div class="mg-kpi-ctx-valor">{prom:,}</div>'
+        f'<div class="mg-kpi-ctx-sub">{pct_prom:.1f}% · pipeline em aberto</div>'
         f'</div>'
-    )
+    ).replace(",", ".")
+
+    card_sem = (
+        f'<div class="mg-kpi-context" style="flex: 1;">'
+        f'<div class="mg-kpi-ctx-label">🎯 Sem reconquista</div>'
+        f'<div class="mg-kpi-ctx-valor">{sem:,}</div>'
+        f'<div class="mg-kpi-ctx-sub">{pct_sem:.1f}% · a trabalhar</div>'
+        f'</div>'
+    ).replace(",", ".")
 
     st.markdown(
         '<div style="display:flex; gap:clamp(10px,1.2vw,20px); align-items:stretch;">'
-        + card_base + card_reconq + card_taxa + card_gap
+        + card_total + card_efet + card_prom + card_sem
         + '</div>',
         unsafe_allow_html=True,
     )

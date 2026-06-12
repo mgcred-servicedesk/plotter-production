@@ -1,5 +1,21 @@
 # Reconquista MG CRED — Plano de Migração e Integração
 
+> ⚠️ **HISTÓRICO (v1 — superado).** Este documento descreve o **modelo
+> antigo** de Reconquista (snapshots por envio + maciças + flags). Esse
+> modelo foi **substituído pela v2** em 2026-06-12 (export único, 1 linha
+> por cliente, classificação por `de_status_reconquista`, apuração mensal
+> por `dt_fim_relacionamento` com defasagem de 1 mês).
+>
+> **Fonte de verdade da v2:**
+> - Regras: [`docs/agents/business-rules.md` → Reconquista (v2)](agents/business-rules.md)
+> - Decisões: [`docs/agents/progress/2026-06-12-reconquista-v2.md`](agents/progress/2026-06-12-reconquista-v2.md)
+> - Código: migrations `028/029/030`, `scripts/importar_reconquista.py`,
+>   `src/dashboard/loaders.py` (`carregar_reconquista`).
+> - Remoção do v1: migration `031_reconquista_drop_v1.sql` (destrutiva).
+>
+> Mantido apenas como referência do que existiu. Não usar como guia de
+> implementação.
+
 **Versão:** 1.1  
 **Data:** 2026-05-28  
 **Projetos afetados:** `Numeros_venda` · `angry-man`  

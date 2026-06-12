@@ -133,3 +133,42 @@ def _excluir_supervisores(df, df_sup):
 ```
 
 Aplicar **antes** de rankings, contagens de consultores e médias por consultor.
+
+## Reconquista (v2)
+
+Campanha de retenção. Fonte: export único `reconquista.xlsx`, **1 linha por
+cliente** (`co_adesao`), já classificado em `status`. Tabela `reconquista`
+(truncada e realimentada a cada carga via RPC `fn_importar_reconquista`);
+leitura pela view `v_reconquista`. Loader: `carregar_reconquista(mes, ano)`.
+
+### Estados (validados 100% contra o arquivo)
+
+- **EFETIVADA** — reconquista confirmada: `dt_macica > dt_fim_relacionamento`.
+- **PROMESSA** — aceite via DNA **ou** produção de CNC (exceto antecipação)
+  após o fim: (`dt_dna > dt_fim_relacionamento` ou
+  `dt_producao > dt_fim_relacionamento`) e não-efetivada.
+- **SEM RECONQUISTA** — demais (a trabalhar).
+
+### Apuração mensal com defasagem de 1 mês
+
+O mês de apuração `M` exibe os contratos com `dt_fim_relacionamento` em
+`M-1` (os de `M` só entram na esteira no mês seguinte). A defasagem é
+aplicada no **loader** (`_mes_apuracao_anterior`); a view expõe o mês real
+de `dt_fim` em `ref_ano`/`ref_mes`.
+
+| Apuração (seleção) | `dt_fim_relacionamento` | EFET / PROM / SEM |
+|---|---|---|
+| Maio/2026 | Abril/2026 | 36 / 23 / 249 |
+| Junho/2026 | Maio/2026 | 0 / 33 / 288 |
+
+EFETIVADA "zerada" no mês mais recente é **esperado**: depende de
+`dt_macica > dt_fim`; quando a maciça desses contratos virar (novo
+`dt_macica` no próximo export), eles migram para EFETIVADA.
+
+### KPI
+
+- **Meta = 30%**; taxa de reconquista = `EFETIVADA / total` do mês de
+  referência. PROMESSA é pipeline; SEM RECONQUISTA é a trabalhar.
+
+> **LGPD:** `nu_matricula` **não** é armazenada. `co_adesao` identifica o
+> contrato, não a pessoa.

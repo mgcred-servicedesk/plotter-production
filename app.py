@@ -1205,10 +1205,10 @@ def main():
             )
             return
 
-        # Reconquista: maciça ativa para o período (TTL 10min,
-        # RLS aplicada no loader). Carregada uma vez e reusada
-        # tanto pelo bloco resumido do header quanto pela sub-aba
-        # de Analiticos.
+        # Reconquista: apuração mensal por dt_fim_relacionamento
+        # com defasagem de 1 mês (TTL 10min, RLS aplicada no
+        # loader). Carregada uma vez e reusada tanto pelo bloco
+        # resumido do header quanto pela sub-aba de Analiticos.
         try:
             dados_reconquista = carregar_reconquista(mes, ano)
         except Exception:

@@ -704,42 +704,47 @@ def _render_reconquista_por_loja(por_loja: pd.DataFrame) -> None:
         st.warning("Sem dados por loja no escopo atual.")
         return
     cols = [
-        "loja", "regiao", "total_clientes", "reconquistados",
-        "taxa_pct", "gap_pp", "saldo_medio", "dias_atraso_medio",
+        "loja", "regiao", "total_clientes", "efetivadas", "promessas",
+        "sem_reconquista", "taxa_pct", "saldo_medio", "dias_atraso_medio",
     ]
     df_view = por_loja[[c for c in cols if c in por_loja.columns]].rename(
         columns={
             "loja": "Loja",
             "regiao": "Regiao",
-            "total_clientes": "Base",
-            "reconquistados": "Reconquistados",
-            "taxa_pct": "Taxa %",
-            "gap_pp": "Gap (pp)",
+            "total_clientes": "Clientes",
+            "efetivadas": "Efetivadas",
+            "promessas": "Promessas",
+            "sem_reconquista": "Sem Reconquista",
+            "taxa_pct": "Taxa Efet. %",
             "saldo_medio": "Saldo Medio",
             "dias_atraso_medio": "Dias Atraso Medio",
         }
-    ).sort_values("Taxa %", ascending=False)
+    ).sort_values("Efetivadas", ascending=False)
     exibir_tabela(
         df_view,
         colunas_moeda=["Saldo Medio"],
-        colunas_numero=["Base", "Reconquistados", "Dias Atraso Medio"],
+        colunas_numero=[
+            "Clientes", "Efetivadas", "Promessas",
+            "Sem Reconquista", "Dias Atraso Medio",
+        ],
     )
     _exportar_csv(df_view, "reconquista_por_loja", "exp_rec_loja")
 
 
 def _render_reconquista_detalhamento(clientes: pd.DataFrame) -> None:
-    """Listagem analitica completa — 1 linha por cliente (cod_ade)."""
+    """Listagem analitica — 1 linha por cliente (co_adesao) + link."""
     if clientes.empty:
-        st.warning("Sem clientes nesta maciça no escopo atual.")
+        st.warning("Sem clientes no escopo/mês atual.")
         return
 
     # Filtros locais
-    c1, c2, c3, c4 = st.columns(4)
+    c1, c2, c3 = st.columns(3)
 
     with c1:
-        status_opts = ["Todos"] + sorted(
-            clientes["status"].dropna().unique().tolist()
-        ) if "status" in clientes.columns else ["Todos"]
+        status_opts = ["Todos"] + (
+            sorted(clientes["status"].dropna().unique().tolist())
+            if "status" in clientes.columns else []
+        )
         filt_status = st.selectbox("Status", status_opts, key="rec_det_status")
 
     with c2:
@@ -753,16 +758,11 @@ def _render_reconquista_detalhamento(clientes: pd.DataFrame) -> None:
         )
 
     with c3:
-        cons_opts = ["Todos"] + sorted(
-            clientes["consultor"].dropna().unique().tolist()
-        ) if "consultor" in clientes.columns else ["Todos"]
-        filt_cons = st.selectbox("Consultor", cons_opts, key="rec_det_cons")
-
-    with c4:
-        bloqueio_opts = ["Todos", "Com bloqueio", "Sem bloqueio"]
-        filt_bloq = st.selectbox(
-            "Bloqueio", bloqueio_opts, key="rec_det_bloqueio"
+        cons_opts = ["Todos"] + (
+            sorted(clientes["consultor"].dropna().unique().tolist())
+            if "consultor" in clientes.columns else []
         )
+        filt_cons = st.selectbox("Consultor", cons_opts, key="rec_det_cons")
 
     df_f = clientes.copy()
     if filt_status != "Todos" and "status" in df_f.columns:
@@ -771,116 +771,82 @@ def _render_reconquista_detalhamento(clientes: pd.DataFrame) -> None:
         df_f = df_f[df_f["loja"].isin(filt_lojas)]
     if filt_cons != "Todos" and "consultor" in df_f.columns:
         df_f = df_f[df_f["consultor"] == filt_cons]
-    if "mot_ipd_operar" in df_f.columns:
-        if filt_bloq == "Com bloqueio":
-            df_f = df_f[df_f["mot_ipd_operar"].notna() & (df_f["mot_ipd_operar"] != "")]
-        elif filt_bloq == "Sem bloqueio":
-            df_f = df_f[df_f["mot_ipd_operar"].isna() | (df_f["mot_ipd_operar"] == "")]
 
     st.caption(
-        f"{len(df_f):,} de {len(clientes):,} clientes "
-        "(últimos estados após filtros)."
+        f"{len(df_f):,} de {len(clientes):,} clientes (após filtros)."
+        .replace(",", ".")
     )
 
     cols = [
-        "cod_ade", "loja", "regiao", "consultor",
-        "status", "tipo_conversao", "mot_ipd_operar",
-        "subproduto", "saldo_contabil", "dias_atraso", "faixa_atraso",
-        "banco_origem", "banco_destino",
-        "aparicoes", "primeira_aparicao", "ultima_aparicao",
+        "co_adesao", "status", "loja", "regiao", "consultor", "subproduto",
+        "dt_fim_relacionamento", "dt_macica", "dt_dna",
+        "banco_origem", "banco_destino", "saldo_contabil", "dias_atraso",
+        "faixa_atraso", "tipo_pagamento", "link_aceite",
     ]
     df_view = df_f[[c for c in cols if c in df_f.columns]].rename(
         columns={
-            "cod_ade": "Cod ADE",
+            "co_adesao": "Cod ADE",
+            "status": "Status",
             "loja": "Loja",
             "regiao": "Regiao",
             "consultor": "Consultor",
-            "status": "Status",
-            "tipo_conversao": "Tipo Conversao",
-            "mot_ipd_operar": "Bloqueio",
             "subproduto": "Subproduto",
+            "dt_fim_relacionamento": "Fim Relac.",
+            "dt_macica": "Dt Maciça",
+            "dt_dna": "Dt DNA",
+            "banco_origem": "Banco Origem",
+            "banco_destino": "Banco Destino",
             "saldo_contabil": "Saldo",
             "dias_atraso": "Dias Atraso",
             "faixa_atraso": "Faixa Atraso",
-            "banco_origem": "Banco Origem",
-            "banco_destino": "Banco Destino",
-            "aparicoes": "Aparicoes",
-            "primeira_aparicao": "1a Aparicao",
-            "ultima_aparicao": "Ultima Aparicao",
+            "tipo_pagamento": "Tipo Pgto",
+            "link_aceite": "Link Aceite",
         }
-    ).sort_values("Aparicoes", ascending=False)
+    )
 
     exibir_tabela(
         df_view,
         colunas_moeda=["Saldo"],
-        colunas_numero=["Dias Atraso", "Aparicoes"],
+        colunas_numero=["Dias Atraso"],
     )
     _exportar_csv(df_view, "reconquista_clientes", "exp_rec_clientes")
 
 
-def _render_reconquista_resistentes(resistentes: pd.DataFrame) -> None:
-    st.caption(
-        f"{len(resistentes):,} clientes com 3+ aparições nesta maciça "
-        "sem conversão. **Bloqueio** preenchido indica impedimento "
-        "operacional (não é resistência real)."
-    )
-    if resistentes.empty:
-        st.warning("Nenhum cliente nessa condição.")
-        return
-    cols = [
-        "cod_ade", "loja", "consultor", "mot_ipd_operar",
-        "aparicoes", "saldo_medio", "dias_atraso_medio",
-        "primeira_aparicao", "ultima_aparicao",
-    ]
-    df_view = resistentes[[c for c in cols if c in resistentes.columns]].rename(
-        columns={
-            "cod_ade": "Cod ADE",
-            "loja": "Loja",
-            "consultor": "Consultor",
-            "mot_ipd_operar": "Bloqueio",
-            "aparicoes": "Aparicoes",
-            "saldo_medio": "Saldo Medio",
-            "dias_atraso_medio": "Dias Atraso Medio",
-            "primeira_aparicao": "1a Aparicao",
-            "ultima_aparicao": "Ultima Aparicao",
-        }
-    ).sort_values("Aparicoes", ascending=False)
-    exibir_tabela(
-        df_view,
-        colunas_moeda=["Saldo Medio"],
-        colunas_numero=["Aparicoes", "Dias Atraso Medio"],
-    )
-    _exportar_csv(df_view, "reconquista_resistentes", "exp_rec_resist")
-
-
 def _render_reconquista(reconquista: dict | None):
-    """Sub-aba Reconquista: drill-down da maciça ativa.
+    """Sub-aba Reconquista (v2): apuração mensal por dt_fim_relacionamento.
 
-    Foco em loja/regiao (o lead pertence a loja). Detalhamento
-    expoe listagem por cliente; Resistentes destaca o subconjunto
-    acionavel (3+ aparicoes sem conversao).
+    Defasagem de 1 mes ja resolvida no loader. Foco em loja/regiao;
+    Detalhamento lista por cliente com o link de aceite.
     """
-    if not reconquista or reconquista.get("macica") is None:
-        st.info("Nenhuma maciça de reconquista disponível para este período.")
+    if not reconquista:
+        st.info("Sem dados de reconquista para este período.")
         return
 
-    macica = reconquista["macica"]
+    totais = reconquista.get("totais") or {}
+    ref_mes = reconquista.get("ref_mes")
+    ref_ano = reconquista.get("ref_ano")
     por_loja = reconquista.get("por_loja", pd.DataFrame())
     clientes = reconquista.get("clientes", pd.DataFrame())
-    resistentes = reconquista.get("resistentes", pd.DataFrame())
 
+    ref_label = f"{ref_mes:02d}/{ref_ano}" if ref_mes else "—"
     st.caption(
-        f"Maciça **{macica.get('descricao') or macica.get('codigo', '')}** · "
-        f"Meta: **{float(macica.get('meta_retencao') or 0):.0f}%** · "
-        f"Primeiro envio: {macica.get('dat_primeiro_envio', '—')} · "
-        f"Último envio: {macica.get('dat_ultimo_envio') or '—'}"
+        f"Apuração com defasagem de 1 mês · fim de relacionamento em "
+        f"**{ref_label}** · {totais.get('total', 0)} clientes · "
+        f"Efetivadas: {totais.get('efetivadas', 0)} · "
+        f"Promessas: {totais.get('promessas', 0)} · "
+        f"Sem reconquista: {totais.get('sem_reconquista', 0)}"
     )
+
+    if clientes is None or clientes.empty:
+        st.info(
+            f"Sem contratos com fim de relacionamento em {ref_label}."
+        )
+        return
 
     menu = sac.tabs(
         items=[
             sac.TabsItem(label="Por Loja", icon="shop"),
             sac.TabsItem(label="Detalhamento", icon="table"),
-            sac.TabsItem(label="Resistentes", icon="exclamation-diamond"),
         ],
         align="start",
         variant="outline",
@@ -891,8 +857,6 @@ def _render_reconquista(reconquista: dict | None):
         _render_reconquista_por_loja(por_loja)
     elif menu == "Detalhamento":
         _render_reconquista_detalhamento(clientes)
-    elif menu == "Resistentes":
-        _render_reconquista_resistentes(resistentes)
 
 
 def render_tab_analiticos(

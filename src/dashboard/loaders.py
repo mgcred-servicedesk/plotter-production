@@ -1192,27 +1192,45 @@ def _fetch_pagamentos_online() -> pd.DataFrame:
 
 
 # ══════════════════════════════════════════════════════
-# Reconquista MG CRED
+# Reconquista MG CRED (v2)
 #
-# Maciças (campanhas) com snapshots por envio. KPIs
-# pre-agregados em v_reconquista_por_loja / _por_consultor
-# / _indiferentes. A maciça vigente para um mes/ano e
-# resolvida por fn_macica_ativa (fallback p/ anterior).
+# Export unico, 1 linha por cliente (co_adesao), ja
+# classificado em `status` (EFETIVADA/PROMESSA/SEM
+# RECONQUISTA). Fonte: view `v_reconquista`. A apuracao e
+# MENSAL pelo mes de dt_fim_relacionamento (ref_ano/ref_mes),
+# com DEFASAGEM de 1 mes: a apuracao do mes M exibe os
+# contratos cujo dt_fim caiu em M-1 (os de M so entram na
+# esteira no mes seguinte).
 #
-# Ver docs/RECONQUISTA_MIGRATION.md.
+# KPIs (3 estados + taxa) e a quebra por loja sao derivados
+# em pandas a partir da view detalhada. Ver
+# docs/agents/business-rules.md.
 # ══════════════════════════════════════════════════════
 
+_RECONQUISTA_META = 30.0  # meta de reconquista (% de EFETIVADA)
 
-def _fetch_view_macica(view: str, macica_id: str) -> List[dict]:
-    """Pagina uma view filtrada por macica_id."""
+
+def _mes_apuracao_anterior(mes: int, ano: int) -> Tuple[int, int]:
+    """Defasagem de 1 mes: apuracao de (mes, ano) -> mes anterior."""
+    ref_mes = mes - 1
+    ref_ano = ano
+    if ref_mes == 0:
+        ref_mes = 12
+        ref_ano = ano - 1
+    return ref_mes, ref_ano
+
+
+def _fetch_reconquista(ref_ano: int, ref_mes: int) -> List[dict]:
+    """Pagina v_reconquista filtrada pelo periodo de referencia."""
     all_data: List[dict] = []
     offset = 0
     while True:
         resp = (
             _sb()
-            .from_(view)
+            .from_("v_reconquista")
             .select("*")
-            .eq("macica_id", macica_id)
+            .eq("ref_ano", ref_ano)
+            .eq("ref_mes", ref_mes)
             .limit(_PAGE_SIZE)
             .offset(offset)
             .execute()
@@ -1227,111 +1245,116 @@ def _fetch_view_macica(view: str, macica_id: str) -> List[dict]:
 
 @st.cache_data(ttl=600)
 def _reconquista_cache(mes: int, ano: int) -> dict:
-    """Snapshot cacheado dos dados de reconquista. TTL 10min."""
-    sb = _sb()
-
-    macica = sb.rpc(
-        "fn_macica_ativa", {"p_mes": mes, "p_ano": ano}
-    ).execute()
-
-    if not macica.data:
-        return {
-            "macica": None,
-            "por_loja": pd.DataFrame(),
-            "resistentes": pd.DataFrame(),
-            "clientes": pd.DataFrame(),
-        }
-
-    m = macica.data[0]
-    mid = m["id"]
-
+    """Detalhe cacheado do mes de referencia (defasado). TTL 10min."""
+    ref_mes, ref_ano = _mes_apuracao_anterior(mes, ano)
     return {
-        "macica": m,
-        "por_loja": pd.DataFrame(
-            _fetch_view_macica("v_reconquista_por_loja", mid)
-        ),
-        "resistentes": pd.DataFrame(
-            _fetch_view_macica("v_reconquista_resistentes", mid)
-        ),
-        "clientes": pd.DataFrame(
-            _fetch_view_macica("v_reconquista_clientes", mid)
-        ),
+        "ref_mes": ref_mes,
+        "ref_ano": ref_ano,
+        "clientes": pd.DataFrame(_fetch_reconquista(ref_ano, ref_mes)),
     }
 
 
 def _filtrar_rls_reconquista(dados: dict) -> dict:
-    """Aplica RLS sobre os DataFrames agregados de reconquista.
+    """Aplica RLS sobre o detalhe (`clientes`) por perfil efetivo.
 
-    Views expoem `loja`, `regiao` e `consultor` em texto. Para
-    o perfil consultor, por_loja é derivado das lojas presentes
-    em `clientes` (fonte canonica de aparicoes do consultor).
+    A view expoe `regiao`, `loja` e `consultor` em texto.
+    Admin/gestor veem tudo; demais perfis sao restritos ao seu
+    escopo (regiao/loja/consultor).
     """
-    if dados.get("macica") is None:
+    clientes = dados.get("clientes")
+    if clientes is None or clientes.empty:
         return dados
 
     perfil = _obter_perfil_efetivo()
     if not perfil or perfil["perfil"] in ("admin", "gestor"):
         return dados
 
-    role = perfil["perfil"]
     escopo = perfil.get("escopo") or []
     if not escopo:
         return dados
 
-    por_loja = dados["por_loja"]
-    resistentes = dados["resistentes"]
-    clientes = dados["clientes"]
+    coluna = {
+        "gerente_comercial": "regiao",
+        "supervisor": "loja",
+        "consultor": "consultor",
+    }.get(perfil["perfil"])
 
-    def _filtra(df: pd.DataFrame, coluna: str, valores: list) -> pd.DataFrame:
-        if df.empty or coluna not in df.columns:
-            return df
-        return df[df[coluna].isin(valores)].copy()
+    if coluna and coluna in clientes.columns:
+        clientes = clientes[clientes[coluna].isin(escopo)].copy()
 
-    if role == "gerente_comercial":
-        por_loja = _filtra(por_loja, "regiao", escopo)
-        resistentes = _filtra(resistentes, "regiao", escopo)
-        clientes = _filtra(clientes, "regiao", escopo)
+    return {**dados, "clientes": clientes}
 
-    elif role == "supervisor":
-        por_loja = _filtra(por_loja, "loja", escopo)
-        resistentes = _filtra(resistentes, "loja", escopo)
-        clientes = _filtra(clientes, "loja", escopo)
 
-    elif role == "consultor":
-        resistentes = _filtra(resistentes, "consultor", escopo)
-        clientes = _filtra(clientes, "consultor", escopo)
-        # por_loja: restringe as lojas em que o consultor tem
-        # aparicoes (derivado de `clientes`, fonte canonica).
-        if (
-            not clientes.empty
-            and "loja" in clientes.columns
-            and not por_loja.empty
-            and "loja" in por_loja.columns
-        ):
-            lojas_cons = clientes["loja"].dropna().unique().tolist()
-            por_loja = por_loja[por_loja["loja"].isin(lojas_cons)].copy()
-        elif not por_loja.empty:
-            por_loja = por_loja.iloc[0:0].copy()
-
+def _totais_reconquista(clientes: pd.DataFrame) -> Dict:
+    """KPIs do mes: contagem por estado + taxa de EFETIVADA."""
+    total = len(clientes)
+    if total == 0 or "status" not in clientes.columns:
+        return {
+            "total": 0, "efetivadas": 0, "promessas": 0,
+            "sem_reconquista": 0, "taxa": 0.0, "meta": _RECONQUISTA_META,
+        }
+    vc = clientes["status"].value_counts()
+    efetivadas = int(vc.get("EFETIVADA", 0))
     return {
-        "macica": dados["macica"],
-        "por_loja": por_loja,
-        "resistentes": resistentes,
-        "clientes": clientes,
+        "total": total,
+        "efetivadas": efetivadas,
+        "promessas": int(vc.get("PROMESSA", 0)),
+        "sem_reconquista": int(vc.get("SEM RECONQUISTA", 0)),
+        "taxa": efetivadas / total * 100 if total else 0.0,
+        "meta": _RECONQUISTA_META,
     }
 
 
-def carregar_reconquista(mes: int, ano: int) -> Dict:
-    """Retorna dados de reconquista da maciça ativa para mes/ano.
+def _por_loja_reconquista(clientes: pd.DataFrame) -> pd.DataFrame:
+    """Quebra por loja/regiao: 3 estados + taxa de efetivadas."""
+    if clientes.empty or "loja" not in clientes.columns:
+        return pd.DataFrame()
 
-    Estrutura:
+    df = clientes.copy()
+    df["_efet"] = (df["status"] == "EFETIVADA").astype(int)
+    df["_prom"] = (df["status"] == "PROMESSA").astype(int)
+    df["_sem"] = (df["status"] == "SEM RECONQUISTA").astype(int)
+
+    g = (
+        df.groupby(["loja", "regiao"], dropna=False)
+        .agg(
+            total_clientes=("co_adesao", "count"),
+            efetivadas=("_efet", "sum"),
+            promessas=("_prom", "sum"),
+            sem_reconquista=("_sem", "sum"),
+            saldo_medio=("saldo_contabil", "mean"),
+            dias_atraso_medio=("dias_atraso", "mean"),
+        )
+        .reset_index()
+    )
+    g["taxa_pct"] = (
+        g["efetivadas"] * 100.0
+        / g["total_clientes"].where(g["total_clientes"] > 0)
+    ).round(1)
+    return g.sort_values("efetivadas", ascending=False)
+
+
+def carregar_reconquista(mes: int, ano: int) -> Dict:
+    """Dados de reconquista do mes de apuracao (mes, ano).
+
+    Aplica a defasagem de 1 mes (exibe dt_fim_relacionamento do
+    mes anterior) e RLS por perfil. Estrutura:
         {
-            "macica": dict | None,
-            "por_loja":      DataFrame,
-            "por_consultor": DataFrame,
-            "indiferentes":  DataFrame,
+            "ref_mes": int, "ref_ano": int, "meta": float,
+            "totais":   dict,        # total/efetivadas/promessas/...
+            "por_loja": DataFrame,   # quebra por loja
+            "clientes": DataFrame,   # detalhe (1 linha por cliente)
         }
 
-    TTL 10min. RLS aplicado por perfil efetivo apos o cache.
+    TTL 10min no fetch; KPIs derivados apos a RLS.
     """
-    return _filtrar_rls_reconquista(_reconquista_cache(mes, ano))
+    dados = _filtrar_rls_reconquista(_reconquista_cache(mes, ano))
+    clientes = dados.get("clientes", pd.DataFrame())
+    return {
+        "ref_mes": dados.get("ref_mes"),
+        "ref_ano": dados.get("ref_ano"),
+        "meta": _RECONQUISTA_META,
+        "totais": _totais_reconquista(clientes),
+        "por_loja": _por_loja_reconquista(clientes),
+        "clientes": clientes,
+    }
