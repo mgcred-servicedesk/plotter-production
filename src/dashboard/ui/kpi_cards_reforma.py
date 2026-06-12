@@ -9,6 +9,7 @@ Novo layout: 3 KPIs principais dominantes + KPIs de contexto.
 Cores semânticas: Verde (>100%), Amarelo (60-99%), Vermelho (<60%)
 """
 
+import math
 from typing import Dict, List, Optional, Sequence
 
 import streamlit as st
@@ -682,7 +683,7 @@ def render_cards_reconquista(
     st.markdown("### 🎯 Reconquista")
     st.caption(
         f"Apuração {_MESES_RECONQ.get(mes, '?')}/{ano} · fim de "
-        f"relacionamento em **{ref_label}** (defasagem de 1 mês)"
+        f"relacionamento em **{ref_label}**"
     )
 
     if total == 0:
@@ -705,6 +706,46 @@ def render_cards_reconquista(
     delta_pp = taxa - meta
     sinal_pp = "+" if delta_pp >= 0 else ""
 
+    # Quantas efetivações ainda faltam para atingir a meta no mês.
+    alvo_meta = math.ceil(total * meta / 100) if meta > 0 else 0
+    gap_meta = max(0, alvo_meta - efet)
+    gap_txt = (
+        f"Faltam <strong>{gap_meta}</strong> p/ meta"
+        if gap_meta > 0
+        else "✓ meta atingida"
+    )
+
+    # Taxa que a base alcançaria se todas as promessas virassem efetivadas.
+    taxa_potencial = (efet + prom) / total * 100 if total else 0.0
+
+    # Quantos clientes "sem reconquista" precisam virar promessa para que
+    # a projeção (efetivadas + promessas) alcance a meta.
+    estimular = max(0, alvo_meta - efet - prom)
+    if estimular > 0:
+        _cli = "cliente" if estimular == 1 else "clientes"
+        estim_txt = f"Estimule <strong>{estimular}</strong> {_cli} a dar o aceite"
+    else:
+        estim_txt = "✓ aceites suficientes p/ meta"
+
+    # Variação das promessas vs o período de apuração anterior.
+    prom_ant = int(totais.get("promessas_anterior", 0))
+    if prom_ant > 0:
+        var_prom = (prom - prom_ant) / prom_ant * 100
+        if var_prom > 0:
+            seta_prom, cor_prom = "▲", "#10A37F"
+        elif var_prom < 0:
+            seta_prom, cor_prom = "▼", "#E5484D"
+        else:
+            seta_prom, cor_prom = "→", "var(--mg-text-muted)"
+        var_prom_html = (
+            f'<span style="color: {cor_prom};">'
+            f'{seta_prom} {abs(var_prom):.1f}%</span> vs período ant.'
+        )
+    elif prom > 0:
+        var_prom_html = '<span style="opacity: 0.8;">novo vs período ant.</span>'
+    else:
+        var_prom_html = '<span style="opacity: 0.8;">— vs período ant.</span>'
+
     card_total = (
         f'<div class="mg-kpi-context" style="flex: 1;">'
         f'<div class="mg-kpi-ctx-label">📋 Clientes do mês</div>'
@@ -720,6 +761,7 @@ def render_cards_reconquista(
         f'<div class="mg-kpi-ctx-sub">'
         f'{pct_efet:.1f}% · meta <strong>{meta:.0f}%</strong> '
         f'(<strong style="color: {cor_taxa};">{sinal_pp}{delta_pp:.1f} pp</strong>)'
+        f'<br><span style="opacity: 0.8;">{gap_txt}</span>'
         f'</div>'
         f'</div>'
     ).replace(",", ".")
@@ -728,7 +770,11 @@ def render_cards_reconquista(
         f'<div class="mg-kpi-context" style="flex: 1;">'
         f'<div class="mg-kpi-ctx-label">⏳ Promessas</div>'
         f'<div class="mg-kpi-ctx-valor">{prom:,}</div>'
-        f'<div class="mg-kpi-ctx-sub">{pct_prom:.1f}% · pipeline em aberto</div>'
+        f'<div class="mg-kpi-ctx-sub">'
+        f'{pct_prom:.1f}% · {var_prom_html}'
+        f'<br><span style="opacity: 0.8;">Se efetivadas: '
+        f'<strong>{taxa_potencial:.1f}%</strong> da base</span>'
+        f'</div>'
         f'</div>'
     ).replace(",", ".")
 
@@ -736,7 +782,10 @@ def render_cards_reconquista(
         f'<div class="mg-kpi-context" style="flex: 1;">'
         f'<div class="mg-kpi-ctx-label">🎯 Sem reconquista</div>'
         f'<div class="mg-kpi-ctx-valor">{sem:,}</div>'
-        f'<div class="mg-kpi-ctx-sub">{pct_sem:.1f}% · a trabalhar</div>'
+        f'<div class="mg-kpi-ctx-sub">'
+        f'{pct_sem:.1f}% · a trabalhar'
+        f'<br><span style="opacity: 0.8;">{estim_txt}</span>'
+        f'</div>'
         f'</div>'
     ).replace(",", ".")
 
@@ -744,6 +793,19 @@ def render_cards_reconquista(
         '<div style="display:flex; gap:clamp(10px,1.2vw,20px); align-items:stretch;">'
         + card_total + card_efet + card_prom + card_sem
         + '</div>',
+        unsafe_allow_html=True,
+    )
+
+    st.markdown(
+        '<div style="margin-top: 12px; padding: 10px 16px; '
+        'background: var(--mg-surface); border: 1px solid var(--mg-border); '
+        'border-left: 3px solid var(--mg-primary); '
+        'border-radius: var(--mg-radius-md); '
+        'font-size: clamp(12px, 0.85vw, 13px); color: var(--mg-text-muted); '
+        'line-height: 1.45;">'
+        'ℹ️&nbsp; O resultado definitivo, com o percentual alcançado por cada '
+        'loja, será divulgado após a virada da maciça.'
+        '</div>',
         unsafe_allow_html=True,
     )
 

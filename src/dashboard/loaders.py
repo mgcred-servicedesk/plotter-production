@@ -1245,26 +1245,28 @@ def _fetch_reconquista(ref_ano: int, ref_mes: int) -> List[dict]:
 
 @st.cache_data(ttl=600)
 def _reconquista_cache(mes: int, ano: int) -> dict:
-    """Detalhe cacheado do mes de referencia (defasado). TTL 10min."""
+    """Detalhe cacheado do mes de referencia (defasado). TTL 10min.
+
+    Inclui tambem o detalhe do mes de referencia ANTERIOR
+    (`clientes_ant`), usado para a variacao periodo-a-periodo.
+    """
     ref_mes, ref_ano = _mes_apuracao_anterior(mes, ano)
+    prev_mes, prev_ano = _mes_apuracao_anterior(ref_mes, ref_ano)
     return {
         "ref_mes": ref_mes,
         "ref_ano": ref_ano,
         "clientes": pd.DataFrame(_fetch_reconquista(ref_ano, ref_mes)),
+        "clientes_ant": pd.DataFrame(_fetch_reconquista(prev_ano, prev_mes)),
     }
 
 
 def _filtrar_rls_reconquista(dados: dict) -> dict:
-    """Aplica RLS sobre o detalhe (`clientes`) por perfil efetivo.
+    """Aplica RLS sobre os detalhes (`clientes`/`clientes_ant`).
 
     A view expoe `regiao`, `loja` e `consultor` em texto.
     Admin/gestor veem tudo; demais perfis sao restritos ao seu
     escopo (regiao/loja/consultor).
     """
-    clientes = dados.get("clientes")
-    if clientes is None or clientes.empty:
-        return dados
-
     perfil = _obter_perfil_efetivo()
     if not perfil or perfil["perfil"] in ("admin", "gestor"):
         return dados
@@ -1278,11 +1280,19 @@ def _filtrar_rls_reconquista(dados: dict) -> dict:
         "supervisor": "loja",
         "consultor": "consultor",
     }.get(perfil["perfil"])
+    if not coluna:
+        return dados
 
-    if coluna and coluna in clientes.columns:
-        clientes = clientes[clientes[coluna].isin(escopo)].copy()
+    def _filtra(df):
+        if df is None or df.empty or coluna not in df.columns:
+            return df
+        return df[df[coluna].isin(escopo)].copy()
 
-    return {**dados, "clientes": clientes}
+    return {
+        **dados,
+        "clientes": _filtra(dados.get("clientes")),
+        "clientes_ant": _filtra(dados.get("clientes_ant")),
+    }
 
 
 def _totais_reconquista(clientes: pd.DataFrame) -> Dict:
@@ -1350,11 +1360,22 @@ def carregar_reconquista(mes: int, ano: int) -> Dict:
     """
     dados = _filtrar_rls_reconquista(_reconquista_cache(mes, ano))
     clientes = dados.get("clientes", pd.DataFrame())
+    clientes_ant = dados.get("clientes_ant", pd.DataFrame())
+
+    totais = _totais_reconquista(clientes)
+    totais["promessas_anterior"] = (
+        int((clientes_ant["status"] == "PROMESSA").sum())
+        if clientes_ant is not None
+        and not clientes_ant.empty
+        and "status" in clientes_ant.columns
+        else 0
+    )
+
     return {
         "ref_mes": dados.get("ref_mes"),
         "ref_ano": dados.get("ref_ano"),
         "meta": _RECONQUISTA_META,
-        "totais": _totais_reconquista(clientes),
+        "totais": totais,
         "por_loja": _por_loja_reconquista(clientes),
         "clientes": clientes,
     }
