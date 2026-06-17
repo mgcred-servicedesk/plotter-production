@@ -42,6 +42,12 @@ negócio, padrões, convenções) mora em [`docs/agents/`](docs/agents/README.md
 - Se parecer não usado, **sinalize**: descreva o que é, por que parece desnecessário, consequência de remover.
 - Aguarde confirmação explícita antes de remover.
 
+### Migrations (Supabase)
+
+- Migration já aplicada no Supabase é **imutável** — nunca edite in-place.
+- Para alterar um objeto existente, crie uma nova migration numerada com
+  `CREATE OR REPLACE` (numeração sequencial em `database/migrations/`).
+
 ## Após codar
 
 - Rode `ruff check` e corrija erros que você introduziu.
@@ -72,9 +78,11 @@ Quando descobrir/decidir algo não óbvio, contribua de volta:
 
 ## Rodando o projeto
 
+> Sempre use os binários do `.venv` — nunca o Python/ruff do sistema.
+
 ```bash
 # Dashboard (entrypoint único — Supabase direto)
-streamlit run app.py
+.venv/bin/streamlit run app.py
 ```
 
 > O pipeline de relatórios Excel/PDF (`gerar_relatorio*.py`, `src/reports/`,
@@ -84,8 +92,12 @@ streamlit run app.py
 ## Testes e lint
 
 ```bash
-pytest tests/
-ruff check src/
+.venv/bin/python -m pytest tests/                                  # suíte completa
+.venv/bin/python -m pytest tests/test_kpis_gerais.py               # um arquivo
+.venv/bin/python -m pytest tests/test_kpis_gerais.py::TestCalcularKpisGerais  # uma classe/teste
+.venv/bin/ruff check src/ app.py
 ```
 
-Testes em `tests/`; organização em `tests/README.md`.
+Testes em `tests/` (`test_kpis_*.py`, um por domínio de KPI). Fixtures
+compartilhadas em `tests/conftest.py`. `pytest.ini` já aplica `-v` e
+`--strict-markers`; markers: `unit`, `integration`, `slow`, `data_validation`.

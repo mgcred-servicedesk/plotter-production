@@ -796,6 +796,9 @@ def render_cards_reconquista(
         unsafe_allow_html=True,
     )
 
+    # Prévia da apuração seguinte (promessas já se acumulando na esteira).
+    _render_previa_reconquista(dados.get("prox"))
+
     st.markdown(
         '<div style="margin-top: 12px; padding: 10px 16px; '
         'background: var(--mg-surface); border: 1px solid var(--mg-border); '
@@ -808,6 +811,112 @@ def render_cards_reconquista(
         '</div>',
         unsafe_allow_html=True,
     )
+
+
+def _render_previa_reconquista(prox: Optional[Dict]) -> None:
+    """Bloco-prévia da próxima apuração (mês selecionado como referência).
+
+    Antecipa as promessas que já se acumulam na esteira para a apuração
+    seguinte (mes+1). EFETIVADA tende a 0 até a virada da maciça
+    (`dt_macica > dt_fim`); por isso o card de Efetivadas só mostra o
+    percentual quando há valor consolidado. No-op se não houver clientes
+    na esteira (regra "exibir sempre que houver dados").
+    """
+    if not prox:
+        return
+
+    totais = prox.get("totais") or {}
+    total = int(totais.get("total", 0))
+    if total == 0:
+        return
+
+    apur_label = (
+        f"{_MESES_RECONQ.get(prox.get('apuracao_mes'), '?')}"
+        f"/{prox.get('apuracao_ano')}"
+    )
+    ref_label = (
+        f"{_MESES_RECONQ.get(prox.get('ref_mes'), '?')}/{prox.get('ref_ano')}"
+    )
+
+    efet = int(totais.get("efetivadas", 0))
+    prom = int(totais.get("promessas", 0))
+    sem = int(totais.get("sem_reconquista", 0))
+    pct_prom = prom / total * 100 if total else 0.0
+    pct_sem = sem / total * 100 if total else 0.0
+    taxa_potencial = (efet + prom) / total * 100 if total else 0.0
+
+    # Efetivadas só ganham percentual quando há consolidação; caso
+    # contrário sinaliza que ainda depende da virada da maciça.
+    if efet > 0:
+        pct_efet = efet / total * 100 if total else 0.0
+        efet_valor_style = ''
+        efet_sub = f'{pct_efet:.1f}% da base'
+    else:
+        efet_valor_style = ' style="opacity: 0.55;"'
+        efet_sub = (
+            '<span style="opacity: 0.8;">consolida após a virada da maciça'
+            '</span>'
+        )
+
+    card_total = (
+        f'<div class="mg-kpi-context" style="flex: 1;">'
+        f'<div class="mg-kpi-ctx-label">📋 Clientes na esteira</div>'
+        f'<div class="mg-kpi-ctx-valor">{total:,}</div>'
+        f'<div class="mg-kpi-ctx-sub">Fim de relacionamento {ref_label}</div>'
+        f'</div>'
+    ).replace(",", ".")
+
+    card_efet = (
+        f'<div class="mg-kpi-context" style="flex: 1;">'
+        f'<div class="mg-kpi-ctx-label">✅ Efetivadas</div>'
+        f'<div class="mg-kpi-ctx-valor"{efet_valor_style}>{efet:,}</div>'
+        f'<div class="mg-kpi-ctx-sub">{efet_sub}</div>'
+        f'</div>'
+    ).replace(",", ".")
+
+    card_prom = (
+        f'<div class="mg-kpi-context" style="flex: 1;">'
+        f'<div class="mg-kpi-ctx-label">⏳ Promessas</div>'
+        f'<div class="mg-kpi-ctx-valor">{prom:,}</div>'
+        f'<div class="mg-kpi-ctx-sub">'
+        f'{pct_prom:.1f}% da base'
+        f'<br><span style="opacity: 0.8;">Se efetivadas: '
+        f'<strong>{taxa_potencial:.1f}%</strong> da base</span>'
+        f'</div>'
+        f'</div>'
+    ).replace(",", ".")
+
+    card_sem = (
+        f'<div class="mg-kpi-context" style="flex: 1;">'
+        f'<div class="mg-kpi-ctx-label">🎯 Sem reconquista</div>'
+        f'<div class="mg-kpi-ctx-valor">{sem:,}</div>'
+        f'<div class="mg-kpi-ctx-sub">{pct_sem:.1f}% · a trabalhar</div>'
+        f'</div>'
+    ).replace(",", ".")
+
+    # Respiro vertical ao redor da fileira (top livra o divisor do summary,
+    # bottom evita colar na borda) e gap um pouco mais generoso entre cards
+    # — mesma cadência de "Onde Agir Agora".
+    cards = (
+        '<div style="display:flex; gap:clamp(12px,1.4vw,22px); '
+        'align-items:stretch; padding:8px 2px 12px;">'
+        + card_total + card_efet + card_prom + card_sem
+        + '</div>'
+    )
+
+    # Respiro entre os cards principais e a prévia (o expander não tem
+    # margin-top próprio no design system, senão cola nos cards acima).
+    st.markdown(
+        "<div style='height: 20px;'></div>", unsafe_allow_html=True
+    )
+
+    # Colapsado por padrão (mesmo padrão de "Onde Agir Agora"): o label
+    # nomeia a prévia e os quadros só aparecem ao expandir.
+    with st.expander(
+        f"🔮 Prévia · Apuração de {apur_label} "
+        f"— fim de relacionamento em {ref_label}"
+    ):
+        st.markdown(cards, unsafe_allow_html=True)
 
 
 def render_kpis_reforma(

@@ -467,30 +467,37 @@ def _fetch_metas(mes: int, ano: int) -> pd.DataFrame:
     if not periodo:
         return pd.DataFrame()
 
-    resp = (
+    query = (
         _sb()
         .table("metas")
         .select(
             "id, produto, escopo, nivel, valor, "
-            "lojas(nome)"
+            "lojas!inner(nome, regioes(nome))"
         )
         .eq("periodo_id", periodo["id"])
         .eq("produto", "GERAL")
         .eq("escopo", "LOJA")
-        .execute()
     )
+    # Mes corrente: conta apenas lojas ativas (loja recem-aberta
+    # entra; loja inativa nao). Historico: preserva todas as lojas
+    # que tinham meta, mesmo que hoje estejam inativas.
+    if _eh_mes_atual(mes, ano):
+        query = query.eq("lojas.ativo", True)
+    resp = query.execute()
 
     if not resp.data:
         return pd.DataFrame(
-            columns=["LOJA", "META_PRATA", "META_OURO"]
+            columns=["LOJA", "REGIAO", "META_PRATA", "META_OURO"]
         )
 
     rows = []
     for m in resp.data:
         loja = m.get("lojas") or {}
+        regiao = (loja.get("regioes") or {}).get("nome", "")
         rows.append(
             {
                 "LOJA": loja.get("nome", ""),
+                "REGIAO": regiao,
                 "nivel": m.get("nivel"),
                 "valor": float(m.get("valor", 0)),
             }
@@ -519,9 +526,18 @@ def _fetch_metas(mes: int, ano: int) -> pd.DataFrame:
             if col not in df_pivot.columns:
                 df_pivot[col] = 0
 
+        # Reanexa REGIAO (perdida no pivot indexado por LOJA) para
+        # permitir filtro RLS por regiao sem depender de contratos.
+        regiao_por_loja = df_geral_loja[
+            ["LOJA", "REGIAO"]
+        ].drop_duplicates("LOJA")
+        df_pivot = df_pivot.merge(regiao_por_loja, on="LOJA", how="left")
+
         return df_pivot
 
-    return pd.DataFrame(columns=["LOJA", "META_PRATA", "META_OURO"])
+    return pd.DataFrame(
+        columns=["LOJA", "REGIAO", "META_PRATA", "META_OURO"]
+    )
 
 
 @st.cache_data(ttl=21600)
@@ -560,15 +576,22 @@ def _fetch_metas_produto(mes: int, ano: int) -> pd.DataFrame:
     if not periodo:
         return pd.DataFrame()
 
-    resp = (
+    query = (
         _sb()
         .table("metas")
-        .select("produto, escopo, nivel, valor, lojas(nome)")
+        .select(
+            "produto, escopo, nivel, valor, "
+            "lojas!inner(nome, regioes(nome))"
+        )
         .eq("periodo_id", periodo["id"])
         .eq("escopo", "LOJA")
         .is_("nivel", "null")
-        .execute()
     )
+    # Mes corrente: apenas lojas ativas. Historico: todas (ver
+    # _fetch_metas).
+    if _eh_mes_atual(mes, ano):
+        query = query.eq("lojas.ativo", True)
+    resp = query.execute()
 
     if not resp.data:
         return pd.DataFrame()
@@ -576,9 +599,11 @@ def _fetch_metas_produto(mes: int, ano: int) -> pd.DataFrame:
     rows = []
     for m in resp.data:
         loja = m.get("lojas") or {}
+        regiao = (loja.get("regioes") or {}).get("nome", "")
         rows.append(
             {
                 "LOJA": loja.get("nome", ""),
+                "REGIAO": regiao,
                 "produto_meta": m["produto"],
                 "valor": float(m.get("valor", 0)),
             }
@@ -601,9 +626,13 @@ def _fetch_metas_produto(mes: int, ano: int) -> pd.DataFrame:
             aggfunc="sum",
             fill_value=0,
         ).reset_index()
+
+        # Reanexa REGIAO para o filtro RLS por regiao.
+        regiao_por_loja = df[["LOJA", "REGIAO"]].drop_duplicates("LOJA")
+        df_pivot = df_pivot.merge(regiao_por_loja, on="LOJA", how="left")
         return df_pivot
 
-    return pd.DataFrame(columns=["LOJA"])
+    return pd.DataFrame(columns=["LOJA", "REGIAO"])
 
 
 @st.cache_data(ttl=21600)
@@ -1220,6 +1249,16 @@ def _mes_apuracao_anterior(mes: int, ano: int) -> Tuple[int, int]:
     return ref_mes, ref_ano
 
 
+def _mes_apuracao_seguinte(mes: int, ano: int) -> Tuple[int, int]:
+    """Apuracao seguinte de (mes, ano) -> mes posterior (rollover dez->jan)."""
+    prox_mes = mes + 1
+    prox_ano = ano
+    if prox_mes == 13:
+        prox_mes = 1
+        prox_ano = ano + 1
+    return prox_mes, prox_ano
+
+
 def _fetch_reconquista(ref_ano: int, ref_mes: int) -> List[dict]:
     """Pagina v_reconquista filtrada pelo periodo de referencia."""
     all_data: List[dict] = []
@@ -1257,6 +1296,10 @@ def _reconquista_cache(mes: int, ano: int) -> dict:
         "ref_ano": ref_ano,
         "clientes": pd.DataFrame(_fetch_reconquista(ref_ano, ref_mes)),
         "clientes_ant": pd.DataFrame(_fetch_reconquista(prev_ano, prev_mes)),
+        # Esteira da PROXIMA apuracao: o proprio mes selecionado e o
+        # ref dela (a apuracao seguinte exibe dt_fim deste mes). Usado
+        # para a previa antecipada das promessas que ja se acumulam.
+        "clientes_prox": pd.DataFrame(_fetch_reconquista(ano, mes)),
     }
 
 
@@ -1292,6 +1335,7 @@ def _filtrar_rls_reconquista(dados: dict) -> dict:
         **dados,
         "clientes": _filtra(dados.get("clientes")),
         "clientes_ant": _filtra(dados.get("clientes_ant")),
+        "clientes_prox": _filtra(dados.get("clientes_prox")),
     }
 
 
@@ -1354,6 +1398,7 @@ def carregar_reconquista(mes: int, ano: int) -> Dict:
             "totais":   dict,        # total/efetivadas/promessas/...
             "por_loja": DataFrame,   # quebra por loja
             "clientes": DataFrame,   # detalhe (1 linha por cliente)
+            "prox":     dict,        # previa da apuracao seguinte (mes+1)
         }
 
     TTL 10min no fetch; KPIs derivados apos a RLS.
@@ -1361,6 +1406,7 @@ def carregar_reconquista(mes: int, ano: int) -> Dict:
     dados = _filtrar_rls_reconquista(_reconquista_cache(mes, ano))
     clientes = dados.get("clientes", pd.DataFrame())
     clientes_ant = dados.get("clientes_ant", pd.DataFrame())
+    clientes_prox = dados.get("clientes_prox", pd.DataFrame())
 
     totais = _totais_reconquista(clientes)
     totais["promessas_anterior"] = (
@@ -1371,6 +1417,19 @@ def carregar_reconquista(mes: int, ano: int) -> Dict:
         else 0
     )
 
+    # Previa da proxima apuracao (mes+1): exibe os clientes cujo
+    # dt_fim caiu no mes selecionado, ja na esteira mas ainda sem a
+    # virada da macica (EFETIVADA tende a 0 ate la). O ref da previa
+    # e o proprio (mes, ano).
+    prox_apur_mes, prox_apur_ano = _mes_apuracao_seguinte(mes, ano)
+    prox = {
+        "ref_mes": mes,
+        "ref_ano": ano,
+        "apuracao_mes": prox_apur_mes,
+        "apuracao_ano": prox_apur_ano,
+        "totais": _totais_reconquista(clientes_prox),
+    }
+
     return {
         "ref_mes": dados.get("ref_mes"),
         "ref_ano": dados.get("ref_ano"),
@@ -1378,4 +1437,5 @@ def carregar_reconquista(mes: int, ano: int) -> Dict:
         "totais": totais,
         "por_loja": _por_loja_reconquista(clientes),
         "clientes": clientes,
+        "prox": prox,
     }

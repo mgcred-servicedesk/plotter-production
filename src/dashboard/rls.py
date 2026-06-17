@@ -82,18 +82,52 @@ def aplicar_rls_metas(
     df_metas: pd.DataFrame,
     df_dados: pd.DataFrame,
     coluna_loja: str = "LOJA",
+    coluna_regiao: str = "REGIAO",
 ) -> pd.DataFrame:
     """
-    Filtra metas para conter apenas lojas presentes nos
-    dados já filtrados por RLS.
+    Filtra metas conforme o perfil/escopo RLS do usuário.
+
+    NÃO usa a presença de contratos como proxy de escopo: uma
+    loja ativa dentro do escopo conta sua meta mesmo sem nenhum
+    contrato no período (ex.: loja recém-aberta). Apenas o perfil
+    ``consultor`` (cujo escopo é por nome) recai sobre as lojas
+    onde o consultor tem contratos.
     """
-    if coluna_loja not in df_metas.columns:
-        return df_metas
-    if coluna_loja not in df_dados.columns:
+    perfil = _obter_perfil_efetivo()
+    if not perfil:
         return df_metas
 
-    lojas_permitidas = df_dados[coluna_loja].unique()
-    return df_metas[df_metas[coluna_loja].isin(lojas_permitidas)].copy()
+    role = perfil["perfil"]
+    escopo = perfil.get("escopo", [])
+
+    if role in ("admin", "gestor"):
+        return df_metas
+
+    if role == "gerente_comercial" and escopo:
+        if coluna_regiao in df_metas.columns:
+            return df_metas[df_metas[coluna_regiao].isin(escopo)].copy()
+        return df_metas
+
+    if role == "supervisor" and escopo:
+        if coluna_loja in df_metas.columns:
+            return df_metas[df_metas[coluna_loja].isin(escopo)].copy()
+        return df_metas
+
+    if role == "consultor" and escopo:
+        # Escopo do consultor é por nome; aproxima o escopo de loja
+        # pelas lojas onde ele tem contratos.
+        tem_loja = (
+            coluna_loja in df_metas.columns
+            and coluna_loja in df_dados.columns
+        )
+        if tem_loja:
+            lojas_permitidas = df_dados[coluna_loja].unique()
+            return df_metas[
+                df_metas[coluna_loja].isin(lojas_permitidas)
+            ].copy()
+        return df_metas
+
+    return df_metas
 
 
 def aplicar_rls_supervisores(

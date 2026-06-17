@@ -238,6 +238,27 @@ def _aplicar_filtros_ui(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+def _filtrar_metas_ui(
+    df_metas: pd.DataFrame, df_f: pd.DataFrame
+) -> pd.DataFrame:
+    """Restringe metas à seleção granular da sidebar (loja/consultor).
+
+    Distinto do RLS de perfil (``aplicar_rls_metas``): aqui o filtro
+    segue a seleção explícita do usuário. Quando ele seleciona lojas,
+    restringe a essas lojas; quando seleciona apenas um consultor,
+    usa as lojas presentes nos dados já filtrados (``df_f``).
+    """
+    if "LOJA" not in df_metas.columns:
+        return df_metas
+    lojas_ui = st.session_state.get("ui_filtro_lojas") or []
+    if lojas_ui:
+        return df_metas[df_metas["LOJA"].isin(lojas_ui)].copy()
+    if "LOJA" in df_f.columns:
+        lojas = df_f["LOJA"].unique()
+        return df_metas[df_metas["LOJA"].isin(lojas)].copy()
+    return df_metas
+
+
 def _render_consultor_subselect(
     df_source: pd.DataFrame,
     df_sup: pd.DataFrame,
@@ -975,8 +996,8 @@ def main():
             df_f = _aplicar_filtros_ui(df_f)
             df_analise_f = _aplicar_filtros_ui(df_analise_f)
             df_cancelados_f = _aplicar_filtros_ui(df_cancelados_f)
-            df_metas_f = aplicar_rls_metas(df_metas_f, df_f)
-            df_metas_prod_f = aplicar_rls_metas(df_metas_prod_f, df_f)
+            df_metas_f = _filtrar_metas_ui(df_metas_f, df_f)
+            df_metas_prod_f = _filtrar_metas_ui(df_metas_prod_f, df_f)
             df_sup_f = aplicar_rls_supervisores(df_sup_f, df_f)
 
         render_status_bar(
@@ -1039,7 +1060,7 @@ def main():
         _consultor_selecionado = bool(st.session_state.get("ui_filtro_consultor"))
         if role == "consultor" or _consultor_selecionado:
             _mpc = carregar_metas_produto_consultor(mes, ano)
-            _mpc = aplicar_rls_metas(_mpc, df_f)
+            _mpc = _filtrar_metas_ui(_mpc, df_f)
             if not _mpc.empty:
                 df_metas_prod_f = _mpc
 
