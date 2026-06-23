@@ -157,3 +157,16 @@ class TestVariantesConsultor:
     def test_consultores_sem_coluna_retorna_vazio(self):
         df = pd.DataFrame({"VALOR": [100.0], "pontos": [1.0]})
         assert calcular_ranking_consultores(df, pd.DataFrame()).empty
+
+
+@pytest.mark.unit
+class TestRankingGuards:
+    """Guardas de coluna ausente (pontos / média DU) → DataFrame vazio."""
+
+    def test_pontos_sem_coluna_retorna_vazio(self):
+        df = pd.DataFrame({"VALOR": [100.0], "pontos": [10.0]})
+        assert calcular_ranking_pontos(df, tipo="loja").empty
+
+    def test_media_du_sem_coluna_retorna_vazio(self):
+        df = pd.DataFrame({"VALOR": [100.0], "pontos": [10.0]})
+        assert calcular_ranking_media_du(df, tipo="loja").empty

@@ -85,6 +85,17 @@ Na aplicação:
 - `carregar_metas_consultor(mes, ano, loja)` em `loaders.py` (com split
   `_atual`/`_historico`) carrega metas `CONSULTOR-sc` da loja.
 
+> **Nota de design (nome × id).** A aplicação agrega/filtra consultor por
+> **nome** (`CONSULTOR`), não por `consultor_id` — **intencional e correto**
+> neste domínio: (1) **não há consultores homônimos**, logo o nome identifica a
+> pessoa; (2) consultores **transferidos de loja** no mês ganham nova linha em
+> `consultores` (novo `consultor_id` por loja, mesmo `nome`), então agregar por
+> nome **soma a produção da pessoa** — por `id` fragmentaria o transferido.
+> Produção de **loja** é por `contratos.loja_id` (por contrato), independente.
+> Supervisores que vendem contam **só para a loja** (`excluir_supervisores` os
+> remove dos rankings de consultor). Contexto:
+> [progress/2026-06-18-consultor-id-vs-nome-riscos.md](progress/2026-06-18-consultor-id-vs-nome-riscos.md).
+
 ### Matriz de permissões de UI
 
 A decisão de **quais abas e cards renderizar** por perfil vive em

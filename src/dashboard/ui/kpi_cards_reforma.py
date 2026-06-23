@@ -42,6 +42,27 @@ def _formatar_valor_moeda_total(valor: float) -> str:
     return f"R$ {valor:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
 
 
+def _card_contexto(
+    label: str,
+    valor: str,
+    sub: str,
+    valor_style: str = "",
+) -> str:
+    """Monta um card no padrao ``mg-kpi-context`` (label / valor / sub).
+
+    ``valor`` ja vem formatado; ``valor_style`` injeta um atributo
+    ``style`` opcional no valor (ex.: cor). O separador de milhar BR
+    (","->".") e aplicado ao card inteiro, como nos cards do Reconquista.
+    """
+    return (
+        f'<div class="mg-kpi-context" style="flex: 1;">'
+        f'<div class="mg-kpi-ctx-label">{label}</div>'
+        f'<div class="mg-kpi-ctx-valor"{valor_style}>{valor}</div>'
+        f'<div class="mg-kpi-ctx-sub">{sub}</div>'
+        f'</div>'
+    ).replace(",", ".")
+
+
 def render_kpis_principais(
     kpis: Dict,
     kpis_analise: Dict,
@@ -746,48 +767,42 @@ def render_cards_reconquista(
     else:
         var_prom_html = '<span style="opacity: 0.8;">— vs período ant.</span>'
 
-    card_total = (
-        f'<div class="mg-kpi-context" style="flex: 1;">'
-        f'<div class="mg-kpi-ctx-label">📋 Clientes do mês</div>'
-        f'<div class="mg-kpi-ctx-valor">{total:,}</div>'
-        f'<div class="mg-kpi-ctx-sub">Fim de relacionamento {ref_label}</div>'
-        f'</div>'
-    ).replace(",", ".")
+    card_total = _card_contexto(
+        "📋 Clientes do mês",
+        f"{total:,}",
+        f"Fim de relacionamento {ref_label}",
+    )
 
-    card_efet = (
-        f'<div class="mg-kpi-context" style="flex: 1;">'
-        f'<div class="mg-kpi-ctx-label">✅ Efetivadas</div>'
-        f'<div class="mg-kpi-ctx-valor" style="color: {cor_taxa};">{efet:,}</div>'
-        f'<div class="mg-kpi-ctx-sub">'
-        f'{pct_efet:.1f}% · meta <strong>{meta:.0f}%</strong> '
-        f'(<strong style="color: {cor_taxa};">{sinal_pp}{delta_pp:.1f} pp</strong>)'
-        f'<br><span style="opacity: 0.8;">{gap_txt}</span>'
-        f'</div>'
-        f'</div>'
-    ).replace(",", ".")
+    card_efet = _card_contexto(
+        "✅ Efetivadas",
+        f"{efet:,}",
+        (
+            f'{pct_efet:.1f}% · meta <strong>{meta:.0f}%</strong> '
+            f'(<strong style="color: {cor_taxa};">'
+            f'{sinal_pp}{delta_pp:.1f} pp</strong>)'
+            f'<br><span style="opacity: 0.8;">{gap_txt}</span>'
+        ),
+        valor_style=f' style="color: {cor_taxa};"',
+    )
 
-    card_prom = (
-        f'<div class="mg-kpi-context" style="flex: 1;">'
-        f'<div class="mg-kpi-ctx-label">⏳ Promessas</div>'
-        f'<div class="mg-kpi-ctx-valor">{prom:,}</div>'
-        f'<div class="mg-kpi-ctx-sub">'
-        f'{pct_prom:.1f}% · {var_prom_html}'
-        f'<br><span style="opacity: 0.8;">Se efetivadas: '
-        f'<strong>{taxa_potencial:.1f}%</strong> da base</span>'
-        f'</div>'
-        f'</div>'
-    ).replace(",", ".")
+    card_prom = _card_contexto(
+        "⏳ Promessas",
+        f"{prom:,}",
+        (
+            f'{pct_prom:.1f}% · {var_prom_html}'
+            f'<br><span style="opacity: 0.8;">Se efetivadas: '
+            f'<strong>{taxa_potencial:.1f}%</strong> da base</span>'
+        ),
+    )
 
-    card_sem = (
-        f'<div class="mg-kpi-context" style="flex: 1;">'
-        f'<div class="mg-kpi-ctx-label">🎯 Sem reconquista</div>'
-        f'<div class="mg-kpi-ctx-valor">{sem:,}</div>'
-        f'<div class="mg-kpi-ctx-sub">'
-        f'{pct_sem:.1f}% · a trabalhar'
-        f'<br><span style="opacity: 0.8;">{estim_txt}</span>'
-        f'</div>'
-        f'</div>'
-    ).replace(",", ".")
+    card_sem = _card_contexto(
+        "🎯 Sem reconquista",
+        f"{sem:,}",
+        (
+            f'{pct_sem:.1f}% · a trabalhar'
+            f'<br><span style="opacity: 0.8;">{estim_txt}</span>'
+        ),
+    )
 
     st.markdown(
         '<div style="display:flex; gap:clamp(10px,1.2vw,20px); align-items:stretch;">'
@@ -841,14 +856,14 @@ def _render_previa_reconquista(prox: Optional[Dict]) -> None:
     efet = int(totais.get("efetivadas", 0))
     prom = int(totais.get("promessas", 0))
     sem = int(totais.get("sem_reconquista", 0))
-    pct_prom = prom / total * 100 if total else 0.0
-    pct_sem = sem / total * 100 if total else 0.0
-    taxa_potencial = (efet + prom) / total * 100 if total else 0.0
+    pct_prom = prom / total * 100
+    pct_sem = sem / total * 100
+    taxa_potencial = (efet + prom) / total * 100
 
     # Efetivadas só ganham percentual quando há consolidação; caso
     # contrário sinaliza que ainda depende da virada da maciça.
     if efet > 0:
-        pct_efet = efet / total * 100 if total else 0.0
+        pct_efet = efet / total * 100
         efet_valor_style = ''
         efet_sub = f'{pct_efet:.1f}% da base'
     else:
@@ -858,41 +873,34 @@ def _render_previa_reconquista(prox: Optional[Dict]) -> None:
             '</span>'
         )
 
-    card_total = (
-        f'<div class="mg-kpi-context" style="flex: 1;">'
-        f'<div class="mg-kpi-ctx-label">📋 Clientes na esteira</div>'
-        f'<div class="mg-kpi-ctx-valor">{total:,}</div>'
-        f'<div class="mg-kpi-ctx-sub">Fim de relacionamento {ref_label}</div>'
-        f'</div>'
-    ).replace(",", ".")
+    card_total = _card_contexto(
+        "📋 Clientes na esteira",
+        f"{total:,}",
+        f"Fim de relacionamento {ref_label}",
+    )
 
-    card_efet = (
-        f'<div class="mg-kpi-context" style="flex: 1;">'
-        f'<div class="mg-kpi-ctx-label">✅ Efetivadas</div>'
-        f'<div class="mg-kpi-ctx-valor"{efet_valor_style}>{efet:,}</div>'
-        f'<div class="mg-kpi-ctx-sub">{efet_sub}</div>'
-        f'</div>'
-    ).replace(",", ".")
+    card_efet = _card_contexto(
+        "✅ Efetivadas",
+        f"{efet:,}",
+        efet_sub,
+        valor_style=efet_valor_style,
+    )
 
-    card_prom = (
-        f'<div class="mg-kpi-context" style="flex: 1;">'
-        f'<div class="mg-kpi-ctx-label">⏳ Promessas</div>'
-        f'<div class="mg-kpi-ctx-valor">{prom:,}</div>'
-        f'<div class="mg-kpi-ctx-sub">'
-        f'{pct_prom:.1f}% da base'
-        f'<br><span style="opacity: 0.8;">Se efetivadas: '
-        f'<strong>{taxa_potencial:.1f}%</strong> da base</span>'
-        f'</div>'
-        f'</div>'
-    ).replace(",", ".")
+    card_prom = _card_contexto(
+        "⏳ Promessas",
+        f"{prom:,}",
+        (
+            f'{pct_prom:.1f}% da base'
+            f'<br><span style="opacity: 0.8;">Se efetivadas: '
+            f'<strong>{taxa_potencial:.1f}%</strong> da base</span>'
+        ),
+    )
 
-    card_sem = (
-        f'<div class="mg-kpi-context" style="flex: 1;">'
-        f'<div class="mg-kpi-ctx-label">🎯 Sem reconquista</div>'
-        f'<div class="mg-kpi-ctx-valor">{sem:,}</div>'
-        f'<div class="mg-kpi-ctx-sub">{pct_sem:.1f}% · a trabalhar</div>'
-        f'</div>'
-    ).replace(",", ".")
+    card_sem = _card_contexto(
+        "🎯 Sem reconquista",
+        f"{sem:,}",
+        f"{pct_sem:.1f}% · a trabalhar",
+    )
 
     # Respiro vertical ao redor da fileira (top livra o divisor do summary,
     # bottom evita colar na borda) e gap um pouco mais generoso entre cards

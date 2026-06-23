@@ -370,7 +370,11 @@ def exibir_tabela(
         else False
     )
 
-    if use_grid and _TEM_AGGRID:
+    # AG Grid nao renderiza highlight_mask; havendo destaque a exibir,
+    # usa st.dataframe para nao perde-lo silenciosamente.
+    tem_highlight = highlight_mask is not None and highlight_mask.any()
+
+    if use_grid and _TEM_AGGRID and not tem_highlight:
         _exibir_aggrid(
             df, h, colunas_moeda, colunas_percentual,
             colunas_numero,

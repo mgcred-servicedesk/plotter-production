@@ -10,9 +10,30 @@ import pandas as pd
 
 from src.dashboard.kpis.gerais import (
     contar_consultores,
-    excluir_supervisores,
 )
 from src.shared.dias_uteis import calcular_dias_uteis
+
+
+def _metas_da_regiao(
+    df_metas: pd.DataFrame,
+    regiao: str,
+    lojas_regiao,
+) -> pd.DataFrame:
+    """Recorta as metas pertencentes a uma regiao.
+
+    Usa a coluna ``REGIAO`` das proprias metas (desacoplado da
+    presenca de contratos): uma loja com meta mas sem contrato no
+    periodo conta na regiao, mantendo o total regional consistente
+    com o total global. Cai para o proxy por lojas-com-contrato
+    apenas quando o DataFrame de metas nao traz ``REGIAO``.
+    """
+    if df_metas.empty:
+        return df_metas
+    if "REGIAO" in df_metas.columns:
+        return df_metas[df_metas["REGIAO"] == regiao]
+    if "LOJA" in df_metas.columns:
+        return df_metas[df_metas["LOJA"].isin(lojas_regiao)]
+    return df_metas
 
 
 def calcular_kpis_por_regiao(
@@ -42,7 +63,7 @@ def calcular_kpis_por_regiao(
         if "META_PRATA" in df_metas.columns:
             lojas_r = df_r["LOJA"].unique()
             meta_prata = (
-                df_metas[df_metas["LOJA"].isin(lojas_r)]["META_PRATA"]
+                _metas_da_regiao(df_metas, regiao, lojas_r)["META_PRATA"]
                 .sum()
             )
 
@@ -109,6 +130,7 @@ def calcular_heatmap_regiao_produto(
     for regiao in regioes:
         df_r = df[df["REGIAO"] == regiao]
         lojas_r = df_r["LOJA"].unique()
+        metas_prod_r = _metas_da_regiao(df_metas_produto, regiao, lojas_r)
         row_ating = {"Região": regiao}
         row_valor = {"Região": regiao}
 
@@ -125,9 +147,7 @@ def calcular_heatmap_regiao_produto(
             ):
                 meta = (
                     pd.to_numeric(
-                        df_metas_produto[
-                            df_metas_produto["LOJA"].isin(lojas_r)
-                        ][meta_key],
+                        metas_prod_r[meta_key],
                         errors="coerce",
                     )
                     .fillna(0)
@@ -206,6 +226,9 @@ def calcular_kpis_por_produto_regiao(
         for regiao in regioes:
             df_r = df_g[df_g["REGIAO"] == regiao]
             lojas_r = df[df["REGIAO"] == regiao]["LOJA"].unique()
+            metas_prod_r = _metas_da_regiao(
+                df_metas_produto, regiao, lojas_r
+            )
 
             valor = df_r["VALOR"].sum()
             qtd = int((df_r["VALOR"] > 0).sum())
@@ -219,9 +242,7 @@ def calcular_kpis_por_produto_regiao(
             ):
                 meta = (
                     pd.to_numeric(
-                        df_metas_produto[
-                            df_metas_produto["LOJA"].isin(lojas_r)
-                        ][meta_key],
+                        metas_prod_r[meta_key],
                         errors="coerce",
                     )
                     .fillna(0)
@@ -257,175 +278,6 @@ def calcular_kpis_por_produto_regiao(
         resultado[grupo] = df_rk
 
     return resultado
-
-
-def calcular_media_producao_regiao(
-    df: pd.DataFrame,
-    df_supervisores: Optional[pd.DataFrame] = None,
-) -> pd.DataFrame:
-    """Media de producao por consultor por regiao."""
-    if "CONSULTOR" not in df.columns or "REGIAO" not in df.columns:
-        return pd.DataFrame()
-
-    df_v = excluir_supervisores(df[df["VALOR"] > 0], df_supervisores)
-
-    por_cons = (
-        df_v.groupby(["REGIAO", "CONSULTOR"])
-        .agg(
-            VALOR=("VALOR", "sum"),
-            pontos=("pontos", "sum"),
-        )
-        .reset_index()
-    )
-
-    stats = (
-        por_cons.groupby("REGIAO")
-        .agg(
-            **{
-                "Valor Médio": ("VALOR", "mean"),
-                "Valor Mediano": ("VALOR", "median"),
-                "Valor Desvio": ("VALOR", "std"),
-                "Valor Mínimo": ("VALOR", "min"),
-                "Valor Máximo": ("VALOR", "max"),
-                "Pontos Médio": ("pontos", "mean"),
-                "Pontos Mediano": ("pontos", "median"),
-                "Pontos Desvio": ("pontos", "std"),
-                "Pontos Mínimo": ("pontos", "min"),
-                "Pontos Máximo": ("pontos", "max"),
-                "Num Consultores": ("CONSULTOR", "count"),
-            }
-        )
-        .reset_index()
-        .rename(columns={"REGIAO": "Região"})
-    )
-
-    return stats.sort_values("Pontos Médio", ascending=False)
-
-
-def calcular_ranking_regioes(
-    df: pd.DataFrame,
-    df_metas: pd.DataFrame,
-    du_decorridos: int = 1,
-) -> Dict[str, pd.DataFrame]:
-    """Todos os rankings de regioes."""
-    df_v = df[df["VALOR"] > 0].copy()
-    if "REGIAO" not in df_v.columns:
-        return {}
-
-    base = (
-        df_v.groupby("REGIAO")
-        .agg(
-            Qtd=("VALOR", "count"),
-            Valor=("VALOR", "sum"),
-            Pontos=("pontos", "sum"),
-        )
-        .reset_index()
-        .rename(columns={"REGIAO": "Região"})
-    )
-
-    du = max(du_decorridos, 1)
-    base["Ticket Médio"] = base.apply(
-        lambda r: r["Valor"] / r["Qtd"] if r["Qtd"] > 0 else 0,
-        axis=1,
-    )
-    base["Média DU"] = base["Valor"] / du
-
-    # Atingimento meta: somar metas das lojas por regiao
-    if (
-        "LOJA" in df_metas.columns
-        and "META_PRATA" in df_metas.columns
-        and "REGIAO" in df.columns
-    ):
-        loja_reg = df[["LOJA", "REGIAO"]].drop_duplicates()
-        metas_reg = (
-            df_metas[["LOJA", "META_PRATA"]]
-            .merge(loja_reg, on="LOJA", how="left")
-            .groupby("REGIAO")["META_PRATA"]
-            .sum()
-        )
-        base["Meta Prata"] = base["Região"].map(metas_reg).fillna(0)
-    else:
-        base["Meta Prata"] = 0
-
-    base["Atingimento %"] = base.apply(
-        lambda r: (
-            r["Pontos"] / r["Meta Prata"] * 100
-            if r["Meta Prata"] > 0
-            else 0
-        ),
-        axis=1,
-    )
-
-    def _add_pos(r):
-        r = r.copy()
-        r.insert(0, "Posição", range(1, len(r) + 1))
-        return r
-
-    # Por Pontos
-    rk_pontos = _add_pos(
-        base[["Região", "Qtd", "Valor", "Pontos", "Ticket Médio"]]
-        .sort_values("Pontos", ascending=False)
-    )
-
-    # Por Ticket Médio
-    rk_ticket = _add_pos(
-        base[["Região", "Qtd", "Valor", "Pontos", "Ticket Médio"]]
-        .sort_values("Ticket Médio", ascending=False)
-    )
-
-    # Por Média DU
-    rk_media = _add_pos(
-        base[
-            ["Região", "Qtd", "Valor", "Pontos",
-             "Ticket Médio", "Média DU"]
-        ]
-        .sort_values("Média DU", ascending=False)
-    )
-
-    # Por Atingimento
-    rk_ating = _add_pos(
-        base[
-            ["Região", "Qtd", "Valor", "Pontos",
-             "Meta Prata", "Atingimento %", "Ticket Médio"]
-        ]
-        .sort_values("Atingimento %", ascending=False)
-    )
-
-    # Por Produto
-    rk_produto = {}
-    grupos = df_v[
-        df_v["grupo_dashboard"].notna()
-    ]["grupo_dashboard"].unique()
-    for grupo in sorted(grupos):
-        df_g = df_v[df_v["grupo_dashboard"] == grupo]
-        if df_g.empty:
-            continue
-        rk = (
-            df_g.groupby("REGIAO")
-            .agg(
-                Qtd=("VALOR", "count"),
-                Valor=("VALOR", "sum"),
-                Pontos=("pontos", "sum"),
-            )
-            .reset_index()
-            .rename(columns={"REGIAO": "Região"})
-        )
-        rk["Ticket Médio"] = rk.apply(
-            lambda r: r["Valor"] / r["Qtd"] if r["Qtd"] > 0 else 0,
-            axis=1,
-        )
-        rk["Média DU"] = rk["Valor"] / du
-        rk = rk.sort_values("Pontos", ascending=False)
-        rk.insert(0, "Posição", range(1, len(rk) + 1))
-        rk_produto[grupo] = rk
-
-    return {
-        "pontos": rk_pontos,
-        "ticket": rk_ticket,
-        "media_du": rk_media,
-        "atingimento": rk_ating,
-        "por_produto": rk_produto,
-    }
 
 
 def calcular_evolucao_media_du(

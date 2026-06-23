@@ -92,6 +92,13 @@ MATRIZ: dict[str, dict[str, bool]] = {
         "supervisor": False,
         "consultor": False,
     },
+    "tab_gestao": {
+        "admin": True,
+        "gestor": True,
+        "gerente_comercial": True,
+        "supervisor": False,
+        "consultor": False,
+    },
     # Grupos de cards
     "cards_gerenciais": {
         "admin": True,

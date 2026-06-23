@@ -11,35 +11,83 @@ from src.config.settings import PRODUTOS_EMISSAO
 from src.dashboard.kpis.gerais import excluir_supervisores
 
 
+# ── Helpers compartilhados ───────────────────────────
+
+def _preparar(
+    df: pd.DataFrame,
+    tipo: str,
+    df_supervisores: Optional[pd.DataFrame] = None,
+) -> pd.DataFrame:
+    """Filtra VALOR > 0; exclui supervisores no escopo consultor."""
+    df_v = df[df["VALOR"] > 0].copy()
+    if tipo == "consultor":
+        df_v = excluir_supervisores(df_v, df_supervisores)
+    return df_v
+
+
+def _agrupar(df_v: pd.DataFrame, tipo: str) -> pd.DataFrame:
+    """Agrega Qtd/Valor/Pontos por loja/consultor.
+
+    No escopo consultor inclui a coluna ``Loja`` (primeira ocorrencia).
+    """
+    coluna = "LOJA" if tipo == "loja" else "CONSULTOR"
+    label = "Loja" if tipo == "loja" else "Consultor"
+    agg_dict = {
+        "Qtd": ("VALOR", "count"),
+        "Valor": ("VALOR", "sum"),
+        "Pontos": ("pontos", "sum"),
+    }
+    if tipo == "consultor":
+        agg_dict["Loja"] = ("LOJA", "first")
+    return (
+        df_v.groupby(coluna)
+        .agg(**agg_dict)
+        .reset_index()
+        .rename(columns={coluna: label})
+    )
+
+
+def _anexar_regiao(rk: pd.DataFrame, df: pd.DataFrame) -> pd.DataFrame:
+    """Anexa REGIAO ao ranking pela chave 'Loja' (origem: contratos)."""
+    df_reg = df[["LOJA", "REGIAO"]].drop_duplicates()
+    return rk.merge(
+        df_reg, left_on="Loja", right_on="LOJA", how="left",
+    ).drop("LOJA", axis=1)
+
+
+def _ticket(rk: pd.DataFrame) -> pd.Series:
+    """Ticket medio vetorizado: Valor / Qtd (0 quando Qtd == 0)."""
+    return (rk["Valor"] / rk["Qtd"].where(rk["Qtd"] > 0)).fillna(0)
+
+
+def _atingimento(pontos: pd.Series, meta: pd.Series) -> pd.Series:
+    """% atingimento vetorizado: pontos / meta * 100 (0 quando meta <= 0)."""
+    return (pontos / meta.where(meta > 0) * 100).fillna(0)
+
+
+def _rankear(rk: pd.DataFrame, sort_col: str, top_n: int) -> pd.DataFrame:
+    """Ordena desc por sort_col, corta top_n e insere 'Posição' (1..n)."""
+    rk = rk.sort_values(sort_col, ascending=False).head(top_n)
+    rk.insert(0, "Posição", range(1, len(rk) + 1))
+    return rk
+
+
+# ── Rankings ─────────────────────────────────────────
+
 def calcular_ranking_lojas(
     df: pd.DataFrame,
     df_metas: pd.DataFrame,
     top_n: int = 10,
 ) -> pd.DataFrame:
     """Ranking de lojas por atingimento de meta prata."""
-    df_v = df[df["VALOR"] > 0].copy()
+    df_v = _preparar(df, "loja")
     if "LOJA" not in df_v.columns:
         return pd.DataFrame()
 
-    ranking = (
-        df_v.groupby("LOJA")
-        .agg(
-            Qtd=("VALOR", "count"),
-            Valor=("VALOR", "sum"),
-            Pontos=("pontos", "sum"),
-        )
-        .reset_index()
-        .rename(columns={"LOJA": "Loja"})
-    )
+    ranking = _agrupar(df_v, "loja")
 
     if "REGIAO" in df.columns:
-        df_reg = df[["LOJA", "REGIAO"]].drop_duplicates()
-        ranking = ranking.merge(
-            df_reg,
-            left_on="Loja",
-            right_on="LOJA",
-            how="left",
-        ).drop("LOJA", axis=1)
+        ranking = _anexar_regiao(ranking, df)
 
     if "LOJA" in df_metas.columns and "META_PRATA" in df_metas.columns:
         ranking = ranking.merge(
@@ -53,17 +101,12 @@ def calcular_ranking_lojas(
     else:
         ranking["Meta Prata"] = 0
 
-    ranking["Atingimento %"] = ranking.apply(
-        lambda r: r["Pontos"] / r["Meta Prata"] * 100 if r["Meta Prata"] > 0 else 0,
-        axis=1,
+    ranking["Atingimento %"] = _atingimento(
+        ranking["Pontos"], ranking["Meta Prata"]
     )
-    ranking["Ticket Médio"] = ranking.apply(
-        lambda r: r["Valor"] / r["Qtd"] if r["Qtd"] > 0 else 0,
-        axis=1,
-    )
+    ranking["Ticket Médio"] = _ticket(ranking)
 
-    ranking = ranking.sort_values("Atingimento %", ascending=False).head(top_n)
-    ranking.insert(0, "Posição", range(1, len(ranking) + 1))
+    ranking = _rankear(ranking, "Atingimento %", top_n)
     return ranking.drop(columns=["Qtd", "Meta Prata"], errors="ignore")
 
 
@@ -74,21 +117,11 @@ def calcular_ranking_consultores(
     df_supervisores: Optional[pd.DataFrame] = None,
 ) -> pd.DataFrame:
     """Ranking de consultores por atingimento."""
-    df_v = excluir_supervisores(df[df["VALOR"] > 0], df_supervisores)
+    df_v = _preparar(df, "consultor", df_supervisores)
     if "CONSULTOR" not in df_v.columns:
         return pd.DataFrame()
 
-    ranking = (
-        df_v.groupby("CONSULTOR")
-        .agg(
-            Qtd=("VALOR", "count"),
-            Valor=("VALOR", "sum"),
-            Pontos=("pontos", "sum"),
-            Loja=("LOJA", "first"),
-        )
-        .reset_index()
-        .rename(columns={"CONSULTOR": "Consultor"})
-    )
+    ranking = _agrupar(df_v, "consultor")
 
     if "LOJA" in df_metas.columns and "META_PRATA" in df_metas.columns:
         metas_loja = df_metas.set_index("LOJA")["META_PRATA"]
@@ -104,17 +137,12 @@ def calcular_ranking_consultores(
     else:
         ranking["Meta Prata"] = 0
 
-    ranking["Atingimento %"] = ranking.apply(
-        lambda r: r["Pontos"] / r["Meta Prata"] * 100 if r["Meta Prata"] > 0 else 0,
-        axis=1,
+    ranking["Atingimento %"] = _atingimento(
+        ranking["Pontos"], ranking["Meta Prata"]
     )
-    ranking["Ticket Médio"] = ranking.apply(
-        lambda r: r["Valor"] / r["Qtd"] if r["Qtd"] > 0 else 0,
-        axis=1,
-    )
+    ranking["Ticket Médio"] = _ticket(ranking)
 
-    ranking = ranking.sort_values("Atingimento %", ascending=False).head(top_n)
-    ranking.insert(0, "Posição", range(1, len(ranking) + 1))
+    ranking = _rankear(ranking, "Atingimento %", top_n)
     return ranking.drop(columns=["Qtd", "Meta Prata"], errors="ignore")
 
 
@@ -125,49 +153,17 @@ def calcular_ranking_ticket_medio(
     df_supervisores: Optional[pd.DataFrame] = None,
 ) -> pd.DataFrame:
     """Ranking por ticket medio (lojas ou consultores)."""
-    df_v = df[df["VALOR"] > 0].copy()
-
-    if tipo == "consultor":
-        df_v = excluir_supervisores(df_v, df_supervisores)
-
+    df_v = _preparar(df, tipo, df_supervisores)
     coluna = "LOJA" if tipo == "loja" else "CONSULTOR"
-    label = "Loja" if tipo == "loja" else "Consultor"
-
     if coluna not in df_v.columns:
         return pd.DataFrame()
 
-    agg_dict = {
-        "Qtd": ("VALOR", "count"),
-        "Valor": ("VALOR", "sum"),
-        "Pontos": ("pontos", "sum"),
-    }
-    if tipo == "consultor":
-        agg_dict["Loja"] = ("LOJA", "first")
-
-    ranking = (
-        df_v.groupby(coluna)
-        .agg(**agg_dict)
-        .reset_index()
-        .rename(columns={coluna: label})
-    )
-
+    ranking = _agrupar(df_v, tipo)
     if "REGIAO" in df.columns and tipo == "loja":
-        df_reg = df[["LOJA", "REGIAO"]].drop_duplicates()
-        ranking = ranking.merge(
-            df_reg,
-            left_on="Loja",
-            right_on="LOJA",
-            how="left",
-        ).drop("LOJA", axis=1)
+        ranking = _anexar_regiao(ranking, df)
 
-    ranking["Ticket Médio"] = ranking.apply(
-        lambda r: r["Valor"] / r["Qtd"] if r["Qtd"] > 0 else 0,
-        axis=1,
-    )
-
-    ranking = ranking.sort_values("Ticket Médio", ascending=False).head(top_n)
-    ranking.insert(0, "Posição", range(1, len(ranking) + 1))
-    return ranking
+    ranking["Ticket Médio"] = _ticket(ranking)
+    return _rankear(ranking, "Ticket Médio", top_n)
 
 
 def calcular_ranking_por_produto(
@@ -177,14 +173,8 @@ def calcular_ranking_por_produto(
     df_supervisores: Optional[pd.DataFrame] = None,
 ) -> Dict[str, pd.DataFrame]:
     """Rankings por grupo_dashboard (lojas ou consultores)."""
-    df_v = df[df["VALOR"] > 0].copy()
-    if tipo == "consultor":
-        df_v = excluir_supervisores(df_v, df_supervisores)
-
+    df_v = _preparar(df, tipo, df_supervisores)
     grupos = df_v[df_v["grupo_dashboard"].notna()]["grupo_dashboard"].unique()
-
-    coluna = "LOJA" if tipo == "loja" else "CONSULTOR"
-    label = "Loja" if tipo == "loja" else "Consultor"
 
     rankings = {}
     for grupo in sorted(grupos):
@@ -193,27 +183,9 @@ def calcular_ranking_por_produto(
             rankings[grupo] = pd.DataFrame()
             continue
 
-        agg_dict = {
-            "Qtd": ("VALOR", "count"),
-            "Valor": ("VALOR", "sum"),
-            "Pontos": ("pontos", "sum"),
-        }
-        if tipo == "consultor":
-            agg_dict["Loja"] = ("LOJA", "first")
-
-        ranking = (
-            df_g.groupby(coluna)
-            .agg(**agg_dict)
-            .reset_index()
-            .rename(columns={coluna: label})
-        )
-        ranking["Ticket Médio"] = ranking.apply(
-            lambda r: r["Valor"] / r["Qtd"] if r["Qtd"] > 0 else 0,
-            axis=1,
-        )
-        ranking = ranking.sort_values("Pontos", ascending=False).head(top_n)
-        ranking.insert(0, "Posição", range(1, len(ranking) + 1))
-        rankings[grupo] = ranking
+        ranking = _agrupar(df_g, tipo)
+        ranking["Ticket Médio"] = _ticket(ranking)
+        rankings[grupo] = _rankear(ranking, "Pontos", top_n)
 
     return rankings
 
@@ -225,50 +197,17 @@ def calcular_ranking_pontos(
     df_supervisores: Optional[pd.DataFrame] = None,
 ) -> pd.DataFrame:
     """Ranking por pontos (lojas ou consultores)."""
-    df_v = df[df["VALOR"] > 0].copy()
-
-    if tipo == "consultor":
-        df_v = excluir_supervisores(df_v, df_supervisores)
-
+    df_v = _preparar(df, tipo, df_supervisores)
     coluna = "LOJA" if tipo == "loja" else "CONSULTOR"
-    label = "Loja" if tipo == "loja" else "Consultor"
-
     if coluna not in df_v.columns:
         return pd.DataFrame()
 
-    agg_dict = {
-        "Qtd": ("VALOR", "count"),
-        "Valor": ("VALOR", "sum"),
-        "Pontos": ("pontos", "sum"),
-    }
-    if tipo == "consultor":
-        agg_dict["Loja"] = ("LOJA", "first")
-
-    ranking = (
-        df_v.groupby(coluna)
-        .agg(**agg_dict)
-        .reset_index()
-        .rename(columns={coluna: label})
-    )
-
+    ranking = _agrupar(df_v, tipo)
     if "REGIAO" in df.columns and tipo == "loja":
-        df_reg = df[["LOJA", "REGIAO"]].drop_duplicates()
-        ranking = ranking.merge(
-            df_reg,
-            left_on="Loja",
-            right_on="LOJA",
-            how="left",
-        ).drop("LOJA", axis=1)
+        ranking = _anexar_regiao(ranking, df)
 
-    ranking["Ticket Médio"] = ranking.apply(
-        lambda r: r["Valor"] / r["Qtd"] if r["Qtd"] > 0 else 0,
-        axis=1,
-    )
-
-    ranking = ranking.sort_values(
-        "Pontos", ascending=False,
-    ).head(top_n)
-    ranking.insert(0, "Posição", range(1, len(ranking) + 1))
+    ranking["Ticket Médio"] = _ticket(ranking)
+    ranking = _rankear(ranking, "Pontos", top_n)
     return ranking.drop(columns=["Qtd"], errors="ignore")
 
 
@@ -280,53 +219,19 @@ def calcular_ranking_media_du(
     df_supervisores: Optional[pd.DataFrame] = None,
 ) -> pd.DataFrame:
     """Ranking por media DU (lojas ou consultores)."""
-    df_v = df[df["VALOR"] > 0].copy()
-
-    if tipo == "consultor":
-        df_v = excluir_supervisores(df_v, df_supervisores)
-
+    df_v = _preparar(df, tipo, df_supervisores)
     coluna = "LOJA" if tipo == "loja" else "CONSULTOR"
-    label = "Loja" if tipo == "loja" else "Consultor"
-
     if coluna not in df_v.columns:
         return pd.DataFrame()
 
-    agg_dict = {
-        "Qtd": ("VALOR", "count"),
-        "Valor": ("VALOR", "sum"),
-        "Pontos": ("pontos", "sum"),
-    }
-    if tipo == "consultor":
-        agg_dict["Loja"] = ("LOJA", "first")
-
-    ranking = (
-        df_v.groupby(coluna)
-        .agg(**agg_dict)
-        .reset_index()
-        .rename(columns={coluna: label})
-    )
-
+    ranking = _agrupar(df_v, tipo)
     if "REGIAO" in df.columns and tipo == "loja":
-        df_reg = df[["LOJA", "REGIAO"]].drop_duplicates()
-        ranking = ranking.merge(
-            df_reg,
-            left_on="Loja",
-            right_on="LOJA",
-            how="left",
-        ).drop("LOJA", axis=1)
+        ranking = _anexar_regiao(ranking, df)
 
     du = max(du_decorridos, 1)
     ranking["Média DU"] = ranking["Valor"] / du
-    ranking["Ticket Médio"] = ranking.apply(
-        lambda r: r["Valor"] / r["Qtd"] if r["Qtd"] > 0 else 0,
-        axis=1,
-    )
-
-    ranking = ranking.sort_values(
-        "Média DU", ascending=False,
-    ).head(top_n)
-    ranking.insert(0, "Posição", range(1, len(ranking) + 1))
-    return ranking
+    ranking["Ticket Médio"] = _ticket(ranking)
+    return _rankear(ranking, "Média DU", top_n)
 
 
 def calcular_ranking_por_acelerador(
@@ -394,13 +299,9 @@ def calcular_ranking_por_acelerador(
             rk["Loja"] = rk[label].map(loja_map)
 
         if tipo == "loja" and "REGIAO" in df_base.columns:
-            df_reg = df_base[["LOJA", "REGIAO"]].drop_duplicates()
-            rk = rk.merge(
-                df_reg, left_on=label, right_on="LOJA", how="left",
-            ).drop("LOJA", axis=1)
+            rk = _anexar_regiao(rk, df_base)
 
-        rk = rk.sort_values("Qtd", ascending=False).head(top_n)
-        rk.insert(0, "Posição", range(1, len(rk) + 1))
+        rk = _rankear(rk, "Qtd", top_n)
         rankings[nome] = rk
 
     return rankings

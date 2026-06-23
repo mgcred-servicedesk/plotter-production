@@ -461,6 +461,18 @@ def carregar_metas(mes: int, ano: int) -> pd.DataFrame:
     return _metas_historico(mes, ano)
 
 
+def _reanexar_regiao(
+    df_pivot: pd.DataFrame, fonte: pd.DataFrame
+) -> pd.DataFrame:
+    """Reanexa a coluna REGIAO (perdida no pivot indexado por LOJA).
+
+    Permite o filtro RLS por regiao sem depender de contratos. `fonte`
+    e o DataFrame nao-pivotado que ainda carrega LOJA + REGIAO.
+    """
+    regiao_por_loja = fonte[["LOJA", "REGIAO"]].drop_duplicates("LOJA")
+    return df_pivot.merge(regiao_por_loja, on="LOJA", how="left")
+
+
 def _fetch_metas(mes: int, ano: int) -> pd.DataFrame:
     """Executa a query de metas GERAL/LOJA sem cache."""
     periodo = carregar_periodo(mes, ano)
@@ -528,10 +540,7 @@ def _fetch_metas(mes: int, ano: int) -> pd.DataFrame:
 
         # Reanexa REGIAO (perdida no pivot indexado por LOJA) para
         # permitir filtro RLS por regiao sem depender de contratos.
-        regiao_por_loja = df_geral_loja[
-            ["LOJA", "REGIAO"]
-        ].drop_duplicates("LOJA")
-        df_pivot = df_pivot.merge(regiao_por_loja, on="LOJA", how="left")
+        df_pivot = _reanexar_regiao(df_pivot, df_geral_loja)
 
         return df_pivot
 
@@ -628,8 +637,7 @@ def _fetch_metas_produto(mes: int, ano: int) -> pd.DataFrame:
         ).reset_index()
 
         # Reanexa REGIAO para o filtro RLS por regiao.
-        regiao_por_loja = df[["LOJA", "REGIAO"]].drop_duplicates("LOJA")
-        df_pivot = df_pivot.merge(regiao_por_loja, on="LOJA", how="left")
+        df_pivot = _reanexar_regiao(df_pivot, df)
         return df_pivot
 
     return pd.DataFrame(columns=["LOJA", "REGIAO"])

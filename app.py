@@ -67,6 +67,7 @@ from src.dashboard.tabs.analiticos import render_tab_analiticos
 from src.dashboard.tabs.detalhes import render_tab_detalhes
 from src.dashboard.tabs.em_analise import render_tab_em_analise
 from src.dashboard.tabs.evolucao import render_tab_evolucao
+from src.dashboard.tabs.gestao_consultores import render_tab_gestao
 from src.dashboard.tabs.pagamentos_online import render_tab_pagamentos_online
 from src.dashboard.tabs.produtos import render_tab_produtos
 from src.dashboard.tabs.rankings import render_tab_rankings
@@ -455,6 +456,89 @@ def _render_sidebar_filtros_perfil(
     elif role == "supervisor":
         _render_consultor_subselect(df, df_sup, key="sel_filtro_cons_sup")
         st.session_state["ui_filtro_lojas"] = []
+
+
+# ══════════════════════════════════════════════════════
+# Helpers de main() — blocos coesos extraidos
+# ══════════════════════════════════════════════════════
+
+
+def _render_aviso_pontuacao_fallback(df_pontos: pd.DataFrame) -> None:
+    """Expander avisando quando ha categorias com pontuacao de fallback."""
+    if df_pontos.empty:
+        return
+    fallbacks = df_pontos[df_pontos["is_fallback"] == True]  # noqa
+    if fallbacks.empty:
+        return
+    with st.expander(
+        "Info: Pontuacao usando dados de periodo anterior (fallback)",
+        expanded=False,
+    ):
+        st.info(
+            "Algumas categorias estao usando pontuacao de um "
+            "periodo anterior pois o periodo atual nao tem dados."
+        )
+        exibir_tabela(
+            fallbacks[
+                ["categoria_codigo", "pontos", "periodo_origem"]
+            ].rename(
+                columns={
+                    "categoria_codigo": "Categoria",
+                    "pontos": "Pontos",
+                    "periodo_origem": "Origem",
+                }
+            )
+        )
+
+
+def _ritmo_organizacao(
+    role: str | None,
+    df_f: pd.DataFrame,
+    df_full: pd.DataFrame,
+    df_sup_full: pd.DataFrame,
+) -> tuple[pd.DataFrame | None, int]:
+    """Base e normalizador do ritmo da organizacao (media DU de referencia).
+
+    Para supervisor/consultor, restringe df_full as regioes presentes em
+    df_f e normaliza por nº de lojas (supervisor) ou consultores
+    não-supervisor (consultor). Outros perfis: (None, 1).
+    """
+    if role not in ("supervisor", "consultor") or df_f.empty:
+        return None, 1
+    if "REGIAO" not in df_f.columns:
+        return None, 1
+    regioes = df_f["REGIAO"].dropna().unique()
+    df_reg = df_full[df_full["REGIAO"].isin(regioes)]
+    if df_reg.empty:
+        return None, 1
+    if role == "supervisor" and "LOJA" in df_reg.columns:
+        return df_reg, max(int(df_reg["LOJA"].nunique()), 1)
+    if role == "consultor" and "CONSULTOR" in df_reg.columns:
+        sups = set(
+            df_sup_full["SUPERVISOR"].dropna()
+            if "SUPERVISOR" in df_sup_full.columns
+            else []
+        )
+        n_cons = int(
+            df_reg[~df_reg["CONSULTOR"].isin(sups)]["CONSULTOR"].nunique()
+        )
+        return df_reg, max(n_cons, 1)
+    return df_reg, 1
+
+
+def _serie_diaria_pago(df_f: pd.DataFrame) -> list | None:
+    """Serie diaria de VALOR pago (>= 2 pontos) p/ sparkline; senao None."""
+    if "DATA" not in df_f.columns or df_f.empty:
+        return None
+    df_com_data = df_f.dropna(subset=["DATA"])
+    if df_com_data.empty:
+        return None
+    serie = (
+        df_com_data.groupby(df_com_data["DATA"].dt.date)["VALOR"]
+        .sum()
+        .sort_index()
+    )
+    return serie.tolist() if len(serie) >= 2 else None
 
 
 # ══════════════════════════════════════════════════════
@@ -1023,36 +1107,7 @@ def main():
             if not df_pontos.empty
             else {}
         )
-        if not df_pontos.empty:
-            fallbacks = df_pontos[
-                df_pontos["is_fallback"] == True  # noqa
-            ]
-            if not fallbacks.empty:
-                with st.expander(
-                    "Info: Pontuacao usando dados de periodo anterior (fallback)",
-                    expanded=False,
-                ):
-                    st.info(
-                        "Algumas categorias estao "
-                        "usando pontuacao de um "
-                        "periodo anterior pois o "
-                        "periodo atual nao tem dados."
-                    )
-                    exibir_tabela(
-                        fallbacks[
-                            [
-                                "categoria_codigo",
-                                "pontos",
-                                "periodo_origem",
-                            ]
-                        ].rename(
-                            columns={
-                                "categoria_codigo": "Categoria",
-                                "pontos": "Pontos",
-                                "periodo_origem": "Origem",
-                            }
-                        )
-                    )
+        _render_aviso_pontuacao_fallback(df_pontos)
 
         # ── Meta MIX por consultor: troca df_metas_prod_f ─
         # Ativa quando o perfil nativo é consultor OU quando outro perfil
@@ -1125,27 +1180,9 @@ def main():
 
             # Média DU de referência: média da região por loja (supervisor)
             # ou por consultor (consultor). Para outros perfis, sem referência.
-            _df_org_ritmo = None
-            _org_norm = 1
-            if role in ("supervisor", "consultor") and not df_f.empty and "REGIAO" in df_f.columns:
-                _regioes = df_f["REGIAO"].dropna().unique()
-                _df_reg = df_full[df_full["REGIAO"].isin(_regioes)]
-                if not _df_reg.empty:
-                    _df_org_ritmo = _df_reg
-                    if role == "supervisor" and "LOJA" in _df_reg.columns:
-                        _org_norm = max(int(_df_reg["LOJA"].nunique()), 1)
-                    elif role == "consultor" and "CONSULTOR" in _df_reg.columns:
-                        _sups = set(
-                            df_sup_full["SUPERVISOR"].dropna()
-                            if "SUPERVISOR" in df_sup_full.columns
-                            else []
-                        )
-                        _n_cons = int(
-                            _df_reg[~_df_reg["CONSULTOR"].isin(_sups)][
-                                "CONSULTOR"
-                            ].nunique()
-                        )
-                        _org_norm = max(_n_cons, 1)
+            _df_org_ritmo, _org_norm = _ritmo_organizacao(
+                role, df_f, df_full, df_sup_full
+            )
             kpis_qtd = calcular_kpis_qtd_produtos(
                 df_f,
                 df_analise_f,
@@ -1174,17 +1211,7 @@ def main():
             )
 
             # Serie diaria de valor pago (para sparkline do card hero).
-            daily_pago = None
-            if "DATA" in df_f.columns and not df_f.empty:
-                df_com_data = df_f.dropna(subset=["DATA"])
-                if not df_com_data.empty:
-                    serie = (
-                        df_com_data.groupby(df_com_data["DATA"].dt.date)["VALOR"]
-                        .sum()
-                        .sort_index()
-                    )
-                    if len(serie) >= 2:
-                        daily_pago = serie.tolist()
+            daily_pago = _serie_diaria_pago(df_f)
 
             st.session_state["_kpis_cache"] = {
                 "kpis": kpis,
@@ -1290,6 +1317,7 @@ def main():
             ("tab_em_analise", "Em Analise", "clock-history"),
             ("tab_detalhes", "Detalhes", "table"),
             ("tab_pagamentos_online", "Pagamentos Online", "lightning-charge-fill"),
+            ("tab_gestao", "Gestao", "funnel-fill"),
         ]
         tab_items = [
             sac.TabsItem(label=rotulo, icon=icone)
@@ -1450,6 +1478,8 @@ def main():
         elif tab == "Pagamentos Online":
             df_pag_online = carregar_pagamentos_online()
             render_tab_pagamentos_online(df_pag_online)
+        elif tab == "Gestao":
+            render_tab_gestao(df_f, df_sup_f)
 
     except Exception:
         logger.exception("Erro inesperado no main()")

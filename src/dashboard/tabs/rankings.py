@@ -30,6 +30,11 @@ from src.dashboard.kpis.rankings import (
 
 _HighlightFn = Callable[[pd.DataFrame], pd.Series]
 
+# top_n "infinito": obtem o ranking completo para que a fixacao do
+# escopo do usuario abaixo do Top N (ver _exibir_ranking_pinned)
+# possa preservar a posicao real das linhas cortadas.
+_SEM_LIMITE = 10**9
+
 
 def _divider(label: str, icon: str, color: str) -> None:
     sac.divider(label=label, icon=icon, align="left", color=color)
@@ -80,6 +85,36 @@ def _make_highlight_fn(
     return _fn
 
 
+def _exibir_ranking(
+    rk: pd.DataFrame,
+    highlight_fn: Optional[_HighlightFn],
+) -> None:
+    """Exibe um ranking, aplicando o highlight do perfil se houver."""
+    mask = highlight_fn(rk) if highlight_fn else None
+    exibir_tabela(rk, highlight_mask=mask)
+
+
+def _exibir_ranking_pinned(
+    rk_full: pd.DataFrame,
+    top_n: int,
+    highlight_fn: Optional[_HighlightFn],
+) -> None:
+    """Exibe o Top N e fixa abaixo as linhas do escopo do usuario.
+
+    Usado nas visoes sem fallback por regiao (Por Produto / Por
+    Aceleradores). `rk_full` deve ser o ranking COMPLETO (sem corte),
+    para que as linhas do escopo cortadas mantenham a posicao real.
+    """
+    top = rk_full.head(top_n)
+    if highlight_fn is not None:
+        fora = rk_full.iloc[top_n:]
+        if not fora.empty:
+            pinned = fora[highlight_fn(fora)]
+            if not pinned.empty:
+                top = pd.concat([top, pinned])
+    _exibir_ranking(top, highlight_fn)
+
+
 def _render_par(
     df: pd.DataFrame,
     df_metas: pd.DataFrame,
@@ -108,8 +143,7 @@ def _render_par(
                 df, df_metas, top_n=top_n, df_supervisores=df_sup,
             )
         if not rk.empty:
-            mask = highlight_fn(rk) if highlight_fn else None
-            exibir_tabela(rk, highlight_mask=mask)
+            _exibir_ranking(rk, highlight_fn)
         else:
             st.info("Sem dados")
 
@@ -120,8 +154,7 @@ def _render_par(
             df_supervisores=(df_sup if tipo == "consultor" else None),
         )
         if not rk.empty:
-            mask = highlight_fn(rk) if highlight_fn else None
-            exibir_tabela(rk, highlight_mask=mask)
+            _exibir_ranking(rk, highlight_fn)
         else:
             st.info("Sem dados")
 
@@ -303,15 +336,14 @@ def render_tab_rankings(
         rankings = calcular_ranking_por_produto(
             df,
             tipo=tipo,
-            top_n=top_n,
+            top_n=_SEM_LIMITE,
             df_supervisores=df_sup,
         )
         if rankings:
             for prod, rk in rankings.items():
                 if not rk.empty:
-                    mask = highlight_fn(rk) if highlight_fn else None
                     with st.expander(prod, expanded=False):
-                        exibir_tabela(rk, highlight_mask=mask)
+                        _exibir_ranking_pinned(rk, top_n, highlight_fn)
         else:
             st.warning("Dados nao disponiveis")
 
@@ -332,14 +364,13 @@ def render_tab_rankings(
         rankings_acel = calcular_ranking_por_acelerador(
             df,
             tipo=tipo,
-            top_n=top_n,
+            top_n=_SEM_LIMITE,
             df_supervisores=df_sup,
         )
         if rankings_acel:
             for acel, rk in rankings_acel.items():
                 if not rk.empty:
-                    mask = highlight_fn(rk) if highlight_fn else None
                     with st.expander(acel, expanded=False):
-                        exibir_tabela(rk, highlight_mask=mask)
+                        _exibir_ranking_pinned(rk, top_n, highlight_fn)
         else:
             st.warning("Dados nao disponiveis")

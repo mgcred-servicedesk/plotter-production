@@ -9,13 +9,39 @@ import pandas as pd
 import pytest
 
 from src.dashboard.kpis.regioes import (
+    _metas_da_regiao,
     calcular_evolucao_media_du,
     calcular_heatmap_regiao_produto,
     calcular_kpis_por_produto_regiao,
     calcular_kpis_por_regiao,
-    calcular_media_producao_regiao,
-    calcular_ranking_regioes,
 )
+
+
+@pytest.mark.unit
+class TestMetasDaRegiao:
+    def test_usa_regiao_propria(self):
+        metas = pd.DataFrame({
+            "LOJA": ["A", "B", "C"],
+            "REGIAO": ["R1", "R2", "R1"],
+            "META_PRATA": [10, 20, 5],
+        })
+        # Filtra pela coluna REGIAO das metas, ignorando lojas_regiao.
+        out = _metas_da_regiao(metas, "R1", lojas_regiao=["A"])
+        assert set(out["LOJA"]) == {"A", "C"}
+
+    def test_fallback_por_loja_quando_sem_regiao(self):
+        metas = pd.DataFrame({"LOJA": ["A", "B"], "META_PRATA": [10, 20]})
+        out = _metas_da_regiao(metas, "R1", lojas_regiao=["A"])
+        assert set(out["LOJA"]) == {"A"}
+
+    def test_sem_regiao_nem_loja_retorna_tudo(self):
+        metas = pd.DataFrame({"META_PRATA": [10, 20]})
+        out = _metas_da_regiao(metas, "R1", lojas_regiao=["A"])
+        assert len(out) == 2
+
+    def test_metas_vazio_retorna_vazio(self):
+        out = _metas_da_regiao(pd.DataFrame(), "R1", lojas_regiao=["A"])
+        assert out.empty
 
 
 @pytest.mark.unit
@@ -42,6 +68,28 @@ class TestCalcularKpisPorRegiao:
         assert calcular_kpis_por_regiao(
             df, pd.DataFrame(), 2026, 3, dia_atual=16
         ).empty
+
+    def test_meta_inclui_loja_sem_contrato_via_regiao(
+        self, df_rank, sem_feriados
+    ):
+        """Metas com REGIAO propria contam lojas sem contrato no periodo.
+
+        Loja C tem meta em R1 mas nenhum contrato (ausente de df_rank);
+        o total de meta da regiao deve inclui-la, igual ao total global.
+        """
+        df_metas = pd.DataFrame({
+            "LOJA": ["A", "B", "C"],
+            "REGIAO": ["R1", "R2", "R1"],
+            "META_PRATA": [1000.0, 2000.0, 500.0],
+        })
+        res = calcular_kpis_por_regiao(
+            df_rank, df_metas, ano=2026, mes=3, dia_atual=16,
+        )
+        by = {r["Região"]: r for _, r in res.iterrows()}
+        # R1 soma A (1000) + C (500), apesar de C nao ter contrato.
+        assert by["R1"]["Meta Prata"] == pytest.approx(1500.0)
+        # % Atingimento usa o denominador maior: 400 / 1500.
+        assert by["R1"]["% Atingimento"] == pytest.approx(400 / 1500 * 100)
 
 
 @pytest.mark.unit
@@ -91,43 +139,6 @@ class TestCalcularKpisPorProdutoRegiao:
         assert calcular_kpis_por_produto_regiao(
             df, pd.DataFrame(), categorias_regioes, 2026, 3, dia_atual=16
         ) == {}
-
-
-@pytest.mark.unit
-class TestCalcularMediaProducaoRegiao:
-    def test_estatisticas_por_regiao(self, df_rank):
-        stats = calcular_media_producao_regiao(df_rank)
-        by = {r["Região"]: r for _, r in stats.iterrows()}
-        # R2: Maria (2000) e Pedro (300) → média 1150
-        assert by["R2"]["Valor Médio"] == pytest.approx(1150.0)
-        assert by["R2"]["Num Consultores"] == 2
-        # R1: só João (1500 = 1000 + 500 agregado por consultor)
-        assert by["R1"]["Num Consultores"] == 1
-
-    def test_sem_colunas_retorna_vazio(self):
-        df = pd.DataFrame({"VALOR": [1.0]})
-        assert calcular_media_producao_regiao(df).empty
-
-
-@pytest.mark.unit
-class TestCalcularRankingRegioes:
-    def test_conjunto_de_rankings(self, df_rank, df_metas_lojas):
-        res = calcular_ranking_regioes(df_rank, df_metas_lojas, du_decorridos=10)
-        assert set(res) == {
-            "pontos", "ticket", "media_du", "atingimento", "por_produto"
-        }
-        # Por pontos: R2 (460) > R1 (400)
-        assert res["pontos"].iloc[0]["Região"] == "R2"
-        # Atingimento: R1 (40%) > R2 (23%)
-        assert res["atingimento"].iloc[0]["Região"] == "R1"
-        # Média DU R2 = 2300/10 = 230
-        media_r2 = res["media_du"].set_index("Região").loc["R2", "Média DU"]
-        assert media_r2 == pytest.approx(230.0)
-        assert set(res["por_produto"]) == {"CNC", "SAQUE"}
-
-    def test_sem_regiao_retorna_vazio(self):
-        df = pd.DataFrame({"VALOR": [1.0], "pontos": [1.0]})
-        assert calcular_ranking_regioes(df, pd.DataFrame()) == {}
 
 
 @pytest.mark.unit

@@ -22,6 +22,14 @@ da respectiva ferramenta.
 | [conventions.md](conventions.md) | Nomenclatura, formatters PT-BR, Width API, chart template, paleta |
 | [ui-components.md](ui-components.md) | streamlit-antd-components, `exibir_tabela`, tab renderer |
 
+### Orquestração e subagentes (coordenação)
+
+| Arquivo | Escopo |
+|---|---|
+| [rpi-workflow.md](rpi-workflow.md) | Protocolo obrigatório Research → Plan → Implement |
+| [orchestrator.md](orchestrator.md) | Decomposição, delegação, handoff e rastreamento de subtarefas |
+| [subagents/README.md](subagents/README.md) | Catálogo de subagentes (slug → harness) e protocolo de ativação |
+
 ### Contribuições de agentes (escrita)
 
 | Pasta | Propósito | Quando escrever |

@@ -228,6 +228,13 @@ Thumbs.db
 # Ruff
 .ruff_cache/
 
+# Claude Code — estado local por máquina (não versionar)
+# settings.local.json já cai no *.json acima; explícito aqui para
+# documentar intenção. As definições em .claude/agents/ ficam
+# versionáveis (config de subagentes compartilhada com o time).
+.claude/settings.local.json
+.claude/agent-memory/
+
 # Streamlit — commitar config.toml mas nao secrets
 .streamlit/secrets.toml
 

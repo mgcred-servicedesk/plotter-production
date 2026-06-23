@@ -16,6 +16,50 @@ negócio, padrões, convenções) mora em [`docs/agents/`](docs/agents/README.md
    - Convenções (naming, formatters, Width API, cores): [`docs/agents/conventions.md`](docs/agents/conventions.md)
    - Componentes de UI (sac, exibir_tabela, tab renderer): [`docs/agents/ui-components.md`](docs/agents/ui-components.md)
 
+Coordenação (quando a tarefa for não trivial):
+   - Orquestração: [`docs/agents/orchestrator.md`](docs/agents/orchestrator.md)
+   - Catálogo de subagentes: [`docs/agents/subagents/README.md`](docs/agents/subagents/README.md)
+   - Protocolo RPI obrigatório: [`docs/agents/rpi-workflow.md`](docs/agents/rpi-workflow.md)
+
+---
+
+## Orquestração e delegação a subagentes
+
+Tarefas **não triviais** podem ser decompostas e delegadas a subagentes
+especializados. Protocolo canônico (tool-neutral) em
+[`docs/agents/orchestrator.md`](docs/agents/orchestrator.md); catálogo e
+ativação em [`docs/agents/subagents/README.md`](docs/agents/subagents/README.md).
+
+**Acione o `task-orchestrator`** (via Agent/Task tool) quando a tarefa atender
+a pelo menos um critério:
+
+- toca **mais de 3 módulos/arquivos**;
+- **cruza domínios** (data layer + regras de negócio + UI, etc.);
+- impacta princípio inegociável (`AGENTS.md`);
+- tem escopo ambíguo, requisitos implícitos ou investigação com múltiplas hipóteses.
+
+O orquestrador **nunca escreve código**: entrega um plano de subtarefas e, após
+sua aprovação, delega cada uma ao subagente do domínio. Tarefa trivial (uma
+linha, ajuste de texto, correção óbvia de domínio único) **não** passa pelo
+orquestrador — vai direto ao subagente ou é feita inline.
+
+**Subagentes especializados** (`subagent_type` no Agent/Task tool):
+
+| Domínio | `subagent_type` |
+|---|---|
+| Testes pytest, fixtures, cobertura | `test-automation-specialist` |
+| Streamlit UI, componentes, estilos | `streamlit-ui-specialist` |
+| Regras de negócio, KPIs, pontuação | `business-rules-kpi-expert` |
+| Supabase access, views, RPCs, cache | `data-layer-supabase` |
+| Migrações Supabase, schema, RLS | `supabase-schema-rls` |
+
+Regras: **um subagente por domínio por subtarefa**; cada um segue o RPI
+([`docs/agents/rpi-workflow.md`](docs/agents/rpi-workflow.md)) e lê os docs do
+seu domínio; ao detectar domínio cruzado, **para** e emite o bloco `BLOQUEIO`
+para reescalar ao orquestrador. As mesmas regras de confirmação dos *tiers de
+decisão* (abaixo) valem para qualquer subagente antes de delegar itens de
+"perguntar primeiro" / "nunca sem instrução".
+
 ---
 
 ## Antes de codar
