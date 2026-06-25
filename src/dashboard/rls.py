@@ -60,22 +60,26 @@ def aplicar_rls(
     role = perfil["perfil"]
     escopo = perfil.get("escopo", [])
 
+    # Admin e gestao: visao global (sem filtro).
     if role in ("admin", "gestor"):
         return df
 
-    if role == "gerente_comercial" and escopo:
-        if coluna_regiao in df.columns:
-            return df[df[coluna_regiao].isin(escopo)].copy()
+    # Demais perfis SEMPRE exigem escopo. Fail-closed: sem escopo,
+    # coluna de escopo ausente ou perfil desconhecido => nao expoe
+    # nada (DataFrame vazio), nunca a base inteira. A obrigatoriedade
+    # de escopo desses perfis e garantida no cadastro
+    # (auth.criar_usuario / editar_usuario); aqui e defesa em
+    # profundidade contra escopo vazio vindo de outras origens.
+    coluna_por_perfil = {
+        "gerente_comercial": coluna_regiao,
+        "supervisor": coluna_loja,
+        "consultor": coluna_consultor,
+    }
+    coluna = coluna_por_perfil.get(role)
+    if not escopo or coluna is None or coluna not in df.columns:
+        return df.iloc[0:0].copy()
 
-    if role == "supervisor" and escopo:
-        if coluna_loja in df.columns:
-            return df[df[coluna_loja].isin(escopo)].copy()
-
-    if role == "consultor" and escopo:
-        if coluna_consultor in df.columns:
-            return df[df[coluna_consultor].isin(escopo)].copy()
-
-    return df
+    return df[df[coluna].isin(escopo)].copy()
 
 
 def aplicar_rls_metas(
@@ -127,7 +131,8 @@ def aplicar_rls_metas(
             ].copy()
         return df_metas
 
-    return df_metas
+    # Fail-closed: perfil sem escopo (ou desconhecido) nao ve metas.
+    return df_metas.iloc[0:0].copy()
 
 
 def aplicar_rls_supervisores(
@@ -169,7 +174,8 @@ def aplicar_rls_supervisores(
                 df_supervisores[coluna_loja].isin(lojas_permitidas)
             ].copy()
 
-    return df_supervisores
+    # Fail-closed: perfil sem escopo (ou desconhecido) nao ve supervisores.
+    return df_supervisores.iloc[0:0].copy()
 
 
 def obter_regioes_permitidas(

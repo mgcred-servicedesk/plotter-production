@@ -90,6 +90,63 @@ deriva "Em Análise" excluindo do conjunto:
 
 Essas três exclusões são **cumulativas**.
 
+## Cancelados — contenção de redigitação
+
+O total de cancelados infla com **redigitações** (a mesma proposta digitada
+várias vezes por erro de averbação do banco ou de operação) e com canceladas
+que foram redigitadas e **pagas** depois. Para informar o churn corretamente,
+a RPC `obter_cancelados_classificados` (migration `032`) classifica cada
+cancelado em uma de três classes — matching **no banco**, pelo nome do cliente
+(`contratos.cliente`, homônimos = risco aceito), em janela de **7 dias** e por
+**`categoria_codigo`** ("mesmo produto"):
+
+| Classe | Critério | Conta? |
+|---|---|---|
+| `redigitada` | existe outro **cancelamento** do mesmo nome+categoria com `data_cadastro` posterior em ≤7d (vale em cadeia: A→B→C com gaps ≤7d mantém só C) | Não |
+| `recuperada` | não-redigitada, mas existe **paga** do mesmo nome+categoria com `data_cadastro` entre o cancelamento e +7d | Não |
+| `liquido` | representante final sem paga em 7d (conta mesmo que o cliente seja pago **depois** dos 7d) | **Sim** |
+
+`nome_norm = upper(trim(regexp_replace(cliente, '\s+', ' ', 'g')))`; nome vazio
+nunca casa. O **nome nunca sai do banco** — só a coluna `classificacao` (por isso
+o matching é SQL, não Python; ver [data-layer.md](data-layer.md)). `valor`/`qtd`/
+churn de cancelados passam a usar apenas `liquido`; redigitadas/recuperadas
+voltam como contexto (`qtd_bruto`, `qtd_redigitadas`, `qtd_recuperadas`).
+
+**RLS:** o dashboard lê em **escopo completo** (cliente Supabase único; sem GUC
+por usuário) e o filtro por perfil é **client-side** via `aplicar_rls(df)`
+([rls.md](rls.md)). Logo a classificação é computada no SQL sobre **toda** a
+base — redigitações/recuperações por qualquer consultor **são detectadas** — e
+só depois as linhas são filtradas ao escopo do usuário. (A RPC é `SECURITY
+INVOKER` e herda esse escopo completo.)
+
+### Oportunidades perdidas (por nível de perfil)
+
+A RPC marca a venda capturada **fora do próprio nível** — representante
+(não-redigitada) que **não** foi recuperado no próprio nível, mas foi pago por
+alguém de fora dele em ≤7 dias:
+
+| Flag | Verdadeiro quando pago por… | Exibido p/ perfil |
+|---|---|---|
+| `recuperada_outro` | **outro consultor** | consultor |
+| `recuperada_outra_loja` | **outra loja** | supervisor |
+| `recuperada_outra_regiao` | **outra região** | gerente_comercial |
+
+A semântica respeita o nível: recaptura **dentro** do próprio nível não é perda
+(ex.: outro consultor da mesma loja não é perda da loja). Como a leitura é
+full-scope, tudo é detectável no SQL; após `aplicar_rls` sobram as canceladas do
+escopo do usuário, e o flag do nível alimenta a seção **"Oportunidades
+perdidas"** (qtd + valor perdido). São subconjunto de `recuperada`: **não**
+alteram a contagem de líquidos. A identidade de quem capturou a venda **não** é
+exposta (só o flag e o valor saem do banco). As três colunas vêm da RPC
+`obter_cancelados_classificados` (migration 033 — ver [data-layer.md](data-layer.md)).
+
+### Assertividade dos consultores
+
+`assertividade = (1 − redigitadas / total_propostas) × 100` por consultor, com
+`total_propostas = pagas + em análise + canceladas (bruto)`. Mede o retrabalho
+operacional (redigitação). Como as fontes têm janelas de carga distintas, o
+denominador é uma aproximação do período.
+
 ## Metas
 
 ### Estrutura

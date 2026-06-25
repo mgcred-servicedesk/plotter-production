@@ -10,6 +10,7 @@ import pandas as pd
 import pytest
 
 from src.dashboard.kpis.gerais import (
+    calcular_assertividade_consultores,
     calcular_kpis_analise,
     calcular_kpis_cancelados,
     calcular_kpis_gerais,
@@ -17,8 +18,10 @@ from src.dashboard.kpis.gerais import (
     calcular_medias_du_por_nivel,
     calcular_medias_organizacao,
     calcular_metas_produto_diarias,
+    calcular_oportunidades_perdidas,
     contar_consultores,
     excluir_supervisores,
+    separar_cancelados_liquidos,
 )
 from src.shared.dias_uteis import calcular_dias_uteis
 
@@ -149,10 +152,40 @@ class TestCalcularKpisAnalise:
 
 
 @pytest.mark.unit
+class TestSepararCanceladosLiquidos:
+    def test_sem_coluna_classificacao(self):
+        # Retrocompat: sem CLASSIFICACAO, tudo é liquido.
+        df = pd.DataFrame({"VALOR": [1.0, 2.0]})
+        liq, n_redig, n_recup = separar_cancelados_liquidos(df)
+        assert len(liq) == 2
+        assert n_redig == 0
+        assert n_recup == 0
+
+    def test_com_classificacao(self):
+        df = pd.DataFrame({
+            "VALOR": [1.0, 2.0, 3.0, 4.0],
+            "CLASSIFICACAO": [
+                "liquido", "redigitada", "recuperada", "liquido",
+            ],
+        })
+        liq, n_redig, n_recup = separar_cancelados_liquidos(df)
+        assert len(liq) == 2
+        assert n_redig == 1
+        assert n_recup == 1
+
+
+@pytest.mark.unit
 class TestCalcularKpisCancelados:
     def test_vazio(self):
         r = calcular_kpis_cancelados(pd.DataFrame(), pd.DataFrame(), pd.DataFrame())
-        assert r == {"valor_cancelados": 0, "qtd_cancelados": 0, "indice_perda": 0}
+        assert r == {
+            "valor_cancelados": 0,
+            "qtd_cancelados": 0,
+            "indice_perda": 0,
+            "qtd_bruto": 0,
+            "qtd_redigitadas": 0,
+            "qtd_recuperadas": 0,
+        }
 
     def test_indice_perda(self):
         df_canc = pd.DataFrame({"VALOR": [500.0]})
@@ -163,6 +196,99 @@ class TestCalcularKpisCancelados:
         assert r["qtd_cancelados"] == 1
         # 1 / (2 + 1 + 1) = 25%
         assert r["indice_perda"] == pytest.approx(25.0)
+        # Sem CLASSIFICACAO: bruto = liquido, sem contexto.
+        assert r["qtd_bruto"] == 1
+        assert r["qtd_redigitadas"] == 0
+        assert r["qtd_recuperadas"] == 0
+
+    def test_liquido_exclui_redigitada_e_recuperada(self):
+        df_canc = pd.DataFrame({
+            "VALOR": [500.0, 300.0, 200.0, 100.0],
+            "CLASSIFICACAO": [
+                "liquido", "redigitada", "recuperada", "liquido",
+            ],
+        })
+        df = pd.DataFrame({"VALOR": [100.0, 200.0]})  # 2 pagos
+        df_analise = pd.DataFrame({"VALOR": [300.0]})  # 1 análise
+        r = calcular_kpis_cancelados(df_canc, df, df_analise)
+        # Só os 2 liquidos contam (500 + 100).
+        assert r["valor_cancelados"] == pytest.approx(600.0)
+        assert r["qtd_cancelados"] == 2
+        assert r["qtd_bruto"] == 4
+        assert r["qtd_redigitadas"] == 1
+        assert r["qtd_recuperadas"] == 1
+        # churn = 2 / (2 + 2 + 1) = 40%
+        assert r["indice_perda"] == pytest.approx(40.0)
+
+
+@pytest.mark.unit
+class TestCalcularAssertividadeConsultores:
+    def test_vazio(self):
+        r = calcular_assertividade_consultores(
+            pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
+        )
+        assert r["assertividade_org"] == 100.0
+        assert r["total_redigitadas"] == 0
+        assert r["por_consultor"].empty
+
+    def test_por_consultor(self):
+        # Pagas: A=2, B=1
+        df = pd.DataFrame({
+            "CONSULTOR": ["A", "A", "B"],
+            "VALOR": [1.0, 1.0, 1.0],
+        })
+        # Em análise: A=1
+        df_analise = pd.DataFrame({"CONSULTOR": ["A"], "VALOR": [1.0]})
+        # Canceladas (bruto): A=2 (1 redigitada), B=1
+        df_canc = pd.DataFrame({
+            "CONSULTOR": ["A", "A", "B"],
+            "VALOR": [1.0, 1.0, 1.0],
+            "CLASSIFICACAO": ["redigitada", "liquido", "liquido"],
+        })
+        r = calcular_assertividade_consultores(df_canc, df, df_analise)
+        por = r["por_consultor"].set_index("CONSULTOR")
+        # A: total = 2 + 1 + 2 = 5; redig = 1 → 80%
+        assert por.loc["A", "total_propostas"] == 5
+        assert por.loc["A", "redigitadas"] == 1
+        assert por.loc["A", "assertividade"] == pytest.approx(80.0)
+        # B: total = 1 + 0 + 1 = 2; redig = 0 → 100%
+        assert por.loc["B", "total_propostas"] == 2
+        assert por.loc["B", "assertividade"] == pytest.approx(100.0)
+        # Org: total = 7, redig = 1
+        assert r["total_propostas"] == 7
+        assert r["total_redigitadas"] == 1
+        assert r["assertividade_org"] == pytest.approx((1 - 1 / 7) * 100)
+
+
+@pytest.mark.unit
+class TestCalcularOportunidadesPerdidas:
+    def test_vazio(self):
+        r = calcular_oportunidades_perdidas(pd.DataFrame())
+        assert r == {"qtd_perdidas": 0, "valor_perdido": 0.0}
+
+    def test_sem_coluna_retorna_zero(self):
+        df = pd.DataFrame({"VALOR": [1000.0]})
+        r = calcular_oportunidades_perdidas(df)
+        assert r == {"qtd_perdidas": 0, "valor_perdido": 0.0}
+
+    def test_conta_apenas_recuperada_outro(self):
+        df = pd.DataFrame({
+            "VALOR": [1000.0, 500.0, 300.0],
+            "RECUPERADA_OUTRO": [True, False, True],
+        })
+        r = calcular_oportunidades_perdidas(df)
+        assert r["qtd_perdidas"] == 2
+        assert r["valor_perdido"] == pytest.approx(1300.0)
+
+    def test_coluna_flag_por_nivel(self):
+        # Supervisor/gerente usam colunas de loja/regiao.
+        df = pd.DataFrame({
+            "VALOR": [100.0, 200.0, 400.0],
+            "RECUPERADA_OUTRA_LOJA": [True, False, True],
+        })
+        r = calcular_oportunidades_perdidas(df, "RECUPERADA_OUTRA_LOJA")
+        assert r["qtd_perdidas"] == 2
+        assert r["valor_perdido"] == pytest.approx(500.0)
 
 
 @pytest.mark.unit

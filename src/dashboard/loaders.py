@@ -320,8 +320,9 @@ def carregar_contratos_cancelados(
     mes: int,
     ano: int,
 ) -> pd.DataFrame:
-    """Carrega contratos cancelados via RPC obter_contratos_cancelados.
+    """Carrega cancelados via RPC obter_cancelados_classificados.
 
+    Traz a coluna ``CLASSIFICACAO`` (redigitada/recuperada/liquido).
     TTL real: 15min para mes corrente, 6h para historico.
     """
     if _eh_mes_atual(mes, ano):
@@ -330,14 +331,19 @@ def carregar_contratos_cancelados(
 
 
 def _fetch_contratos_cancelados(mes: int, ano: int) -> pd.DataFrame:
-    """Executa a RPC de contratos cancelados sem cache."""
+    """Executa a RPC de contratos cancelados sem cache.
+
+    Usa ``obter_cancelados_classificados``, que alem das colunas
+    de cancelados traz ``classificacao`` (redigitada/recuperada/
+    liquido) — matching feito no banco, sem expor o nome do cliente.
+    """
     all_data: List[dict] = []
     offset = 0
     while True:
         resp = (
             _sb()
             .rpc(
-                "obter_contratos_cancelados",
+                "obter_cancelados_classificados",
                 {"p_mes": mes, "p_ano": ano},
             )
             .range(offset, offset + _PAGE_SIZE - 1)
@@ -372,6 +378,18 @@ def _fetch_contratos_cancelados(mes: int, ano: int) -> pd.DataFrame:
                 "SUB_STATUS": c.get("sub_status_banco", ""),
                 "STATUS_PAG": c.get(
                     "status_pagamento_cliente", ""
+                ),
+                "CLASSIFICACAO": c.get(
+                    "classificacao", "liquido"
+                ),
+                "RECUPERADA_OUTRO": bool(
+                    c.get("recuperada_outro", False)
+                ),
+                "RECUPERADA_OUTRA_LOJA": bool(
+                    c.get("recuperada_outra_loja", False)
+                ),
+                "RECUPERADA_OUTRA_REGIAO": bool(
+                    c.get("recuperada_outra_regiao", False)
                 ),
                 "categoria_codigo": c.get(
                     "categoria_codigo", ""

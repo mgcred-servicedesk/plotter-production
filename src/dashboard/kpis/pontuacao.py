@@ -22,6 +22,7 @@ import pandas as pd
 from src.dashboard.kpis.gerais import (
     PRODUTOS_DASHBOARD,
     excluir_supervisores,
+    separar_cancelados_liquidos,
 )
 
 
@@ -104,9 +105,13 @@ def calcular_pontos_cancelados(
             "indice_perda": 0.0,
         }
 
-    pontos = _aplicar_pontos(df_cancelados, mapa_pontos)
+    # Apenas cancelados liquidos contam (redigitadas/recuperadas
+    # saem da contagem) — mesma regra do dashboard de vendas.
+    df_liquidos, _, _ = separar_cancelados_liquidos(df_cancelados)
+
+    pontos = _aplicar_pontos(df_liquidos, mapa_pontos)
     total = float(pontos.sum())
-    qtd_cancelados = len(df_cancelados)
+    qtd_cancelados = len(df_liquidos)
 
     qtd_pagos = len(df)
     qtd_analise = len(df_analise) if not df_analise.empty else 0

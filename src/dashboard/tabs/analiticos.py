@@ -10,7 +10,16 @@ import streamlit_antd_components as sac
 
 from src.config.settings import PRODUTOS_EMISSAO
 from src.dashboard.components.tables import exibir_tabela
-from src.dashboard.formatters import formatar_moeda, formatar_numero
+from src.dashboard.formatters import (
+    formatar_moeda,
+    formatar_numero,
+    formatar_percentual,
+)
+from src.dashboard.kpis.gerais import (
+    calcular_assertividade_consultores,
+    calcular_oportunidades_perdidas,
+    separar_cancelados_liquidos,
+)
 from src.dashboard.kpis.produtos import calcular_distribuicao_produtos
 
 
@@ -223,10 +232,20 @@ def _render_detalhamento_cancelados(df_cancel):
         st.warning("Nenhum contrato cancelado no periodo.")
         return
 
+    df_liq, n_redig, n_recup = separar_cancelados_liquidos(df_cancel)
+    n_bruto = len(df_cancel)
+    n_liq = len(df_liq)
+
     st.markdown(
-        f"**{len(df_cancel):,} contratos cancelados**"
-        .replace(",", ".")
+        f"**{n_liq:,} cancelados liquidos** "
+        f"(de {n_bruto:,} no bruto)".replace(",", ".")
     )
+    if n_redig or n_recup:
+        st.caption(
+            f"Fora da conta: {n_redig} redigitada(s) "
+            f"(superada por redigitacao em 7 dias) e "
+            f"{n_recup} recuperada(s) (paga em 7 dias)."
+        )
 
     # Filtros
     col1, col2, col3 = st.columns(3)
@@ -266,18 +285,25 @@ def _render_detalhamento_cancelados(df_cancel):
     if filt_prod != "Todos" and "grupo_dashboard" in df_d.columns:
         df_d = df_d[df_d["grupo_dashboard"] == filt_prod]
 
-    # KPIs
-    total_valor = df_d["VALOR"].sum()
-    total_trans = len(df_d)
-    tk = total_valor / total_trans if total_trans > 0 else 0
+    # KPIs — cancelados liquidos (exclui redigitadas e recuperadas),
+    # no layout das sub-abas adjacentes (Valor Total / Ticket Medio /
+    # Quantidade). O total geral (bruto) aparece como info secundaria.
+    df_d_liq, _, _ = separar_cancelados_liquidos(df_d)
+    n_liq_d = len(df_d_liq)
+    n_bruto_d = len(df_d)
+    valor_liq_d = df_d_liq["VALOR"].sum()
+    tk = valor_liq_d / n_liq_d if n_liq_d > 0 else 0
 
     col1, col2, col3 = st.columns(3)
     with col1:
-        st.metric("Valor Total", formatar_moeda(total_valor))
+        st.metric("Valor Total", formatar_moeda(valor_liq_d))
     with col2:
         st.metric("Ticket Medio", formatar_moeda(tk))
     with col3:
-        st.metric("Quantidade", formatar_numero(total_trans))
+        st.metric("Quantidade", formatar_numero(n_liq_d))
+    st.caption(
+        f"Total geral: {formatar_numero(n_bruto_d)} no bruto"
+    )
 
     # Tabela detalhada
     df_d = df_d.copy()
@@ -292,7 +318,7 @@ def _render_detalhamento_cancelados(df_cancel):
         cols.append("REGIAO")
     cols += [
         "TIPO_PRODUTO", "TIPO OPER.", "VALOR",
-        "SUB_STATUS", "STATUS_PAG", "BANCO",
+        "SUB_STATUS", "STATUS_PAG", "BANCO", "CLASSIFICACAO",
     ]
 
     cols_disp = [c for c in cols if c in df_d.columns]
@@ -311,11 +337,117 @@ def _render_detalhamento_cancelados(df_cancel):
             "LOJA": "Loja",
             "CONSULTOR": "Consultor",
             "REGIAO": "Regiao",
+            "CLASSIFICACAO": "Classificacao",
         })
     )
     exibir_tabela(df_tabela, colunas_moeda=["Valor"])
     _exportar_csv(
         df_tabela, "contratos_cancelados", "exp_cancel"
+    )
+
+
+# Por perfil: (coluna flag, rotulo "capturada por X", frase "fechou ... X")
+_OPORTUNIDADE_POR_PERFIL = {
+    "consultor": (
+        "RECUPERADA_OUTRO", "outro consultor", "com outro consultor",
+    ),
+    "supervisor": (
+        "RECUPERADA_OUTRA_LOJA", "outra loja", "em outra loja",
+    ),
+    "gerente_comercial": (
+        "RECUPERADA_OUTRA_REGIAO", "outra regiao", "em outra regiao",
+    ),
+}
+
+
+def _render_oportunidades_perdidas(df_cancelados, perfil):
+    """Secao: vendas do cliente capturadas FORA do proprio nivel.
+
+    Exibida para consultor (outro consultor), supervisor (outra loja)
+    e gerente (outra regiao). Identidade de quem capturou nao e
+    exibida (so qtd e valor perdido).
+    """
+    cfg = _OPORTUNIDADE_POR_PERFIL.get(perfil)
+    if cfg is None:
+        return
+    coluna_flag, rotulo, frase = cfg
+
+    res = calcular_oportunidades_perdidas(df_cancelados, coluna_flag)
+    if res["qtd_perdidas"] == 0:
+        return
+
+    sac.divider(
+        label="Oportunidades perdidas",
+        icon="exclamation-triangle",
+        align="left",
+        color="gray",
+    )
+    col1, col2 = st.columns(2)
+    with col1:
+        st.metric(
+            f"Vendas capturadas por {rotulo}",
+            formatar_numero(res["qtd_perdidas"]),
+        )
+    with col2:
+        st.metric(
+            "Valor perdido",
+            formatar_moeda(res["valor_perdido"]),
+        )
+    st.caption(
+        f"Cancelados do seu escopo cujo cliente fechou o mesmo "
+        f"produto {frase} em ate 7 dias. A identidade de quem "
+        f"capturou a venda nao e exibida."
+    )
+
+
+def _render_assertividade_consultores(
+    df, df_analise, df_cancelados, df_sup
+):
+    """Assertividade dos consultores no cenario de redigitacao."""
+    res = calcular_assertividade_consultores(
+        df_cancelados, df, df_analise, df_sup
+    )
+    por_consultor = res["por_consultor"]
+    if por_consultor.empty:
+        return
+
+    sac.divider(
+        label="Assertividade dos Consultores",
+        icon="person-check",
+        align="left",
+        color="gray",
+    )
+
+    col1, col2 = st.columns(2)
+    with col1:
+        st.metric(
+            "Assertividade geral",
+            formatar_percentual(res["assertividade_org"]),
+        )
+    with col2:
+        st.metric(
+            "Redigitacoes no periodo",
+            formatar_numero(res["total_redigitadas"]),
+        )
+
+    st.caption(
+        "Assertividade = 1 - redigitadas / (pagas + em analise + "
+        "canceladas) por consultor. Quanto menor, mais retrabalho "
+        "operacional (redigitacao de proposta)."
+    )
+
+    df_tab = por_consultor.rename(
+        columns={
+            "CONSULTOR": "Consultor",
+            "total_propostas": "Propostas",
+            "redigitadas": "Redigitadas",
+            "assertividade": "Assertividade (%)",
+        }
+    )
+    exibir_tabela(
+        df_tab,
+        colunas_numero=["Propostas", "Redigitadas"],
+        colunas_percentual=["Assertividade (%)"],
     )
 
 
@@ -901,6 +1033,10 @@ def render_tab_analiticos(
 
     elif menu == "Cancelados":
         _render_detalhamento_cancelados(df_cancelados)
+        _render_oportunidades_perdidas(df_cancelados, perfil)
+        _render_assertividade_consultores(
+            df, df_analise, df_cancelados, df_sup
+        )
 
     elif menu == "Aceleradores":
         _render_aceleradores(df, df_analise, df_cancelados)

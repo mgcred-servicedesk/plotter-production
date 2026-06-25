@@ -32,6 +32,15 @@ df_sup   = aplicar_rls_supervisores(df_sup, df)
 | `supervisor` | lojas (`escopo = [loja, …]`) | dados das lojas atribuídas |
 | `consultor` | próprio usuário | apenas contratos do próprio `CONSULTOR` |
 
+**Fail-closed:** `gerente_comercial`, `supervisor` e `consultor` **sempre**
+exigem escopo (garantido no cadastro — `auth.criar_usuario` /
+`auth.editar_usuario`). Em defesa em profundidade, `aplicar_rls` (e
+`aplicar_rls_metas` / `aplicar_rls_supervisores`) retornam **DataFrame vazio**
+quando o perfil não-global está com escopo vazio, com a coluna de escopo
+ausente, ou com perfil desconhecido — nunca a base completa. Só `admin` e
+`gestor` veem tudo sem escopo. Para o `consultor`, o escopo (o próprio nome) é
+exatamente o que o restringe; sem ele, não veria nada (não a base inteira).
+
 ## "Visualizar Como"
 
 `admin` pode simular qualquer combinação perfil × escopo via seletor na

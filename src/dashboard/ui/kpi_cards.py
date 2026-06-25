@@ -244,10 +244,16 @@ def _card_em_analise(kpis_analise: Dict) -> None:
 
 
 def _card_cancelados(kpis_cancel: Dict) -> None:
-    """Card: Cancelados com qtd e churn rate."""
+    """Card: Cancelados liquidos com qtd, churn e contexto.
+
+    Valor/qtd/churn referem-se aos cancelados ``liquido``;
+    redigitadas/recuperadas aparecem como nota (fora da conta).
+    """
     valor = kpis_cancel.get("valor_cancelados", 0)
     qtd = kpis_cancel.get("qtd_cancelados", 0)
     indice = kpis_cancel.get("indice_perda", 0)
+    qtd_redig = kpis_cancel.get("qtd_redigitadas", 0)
+    qtd_recup = kpis_cancel.get("qtd_recuperadas", 0)
 
     def fmt(v: float) -> str:
         return formatar_moeda(v).replace("$", "&#36;")
@@ -266,9 +272,24 @@ def _card_cancelados(kpis_cancel: Dict) -> None:
         nivel = "Alto"
 
     qtd_fmt = f"{qtd:,}".replace(",", ".")
+    # Contexto de contencao: redigitadas/recuperadas sairam da conta.
+    contexto = ""
+    if qtd_redig or qtd_recup:
+        partes = []
+        if qtd_redig:
+            plural = "s" if qtd_redig != 1 else ""
+            partes.append(f"{qtd_redig} redigitada{plural}")
+        if qtd_recup:
+            plural = "s" if qtd_recup != 1 else ""
+            partes.append(f"{qtd_recup} recuperada{plural}")
+        contexto = (
+            f"<br><small>&#8722; {' &#183; '.join(partes)} "
+            f"fora da conta</small>"
+        )
     footer_qtd = (
         f'<span class="mg-prod-footer-meta">'
-        f"&#9888;&#65039; {qtd_fmt} propostas canceladas</span>"
+        f"&#9888;&#65039; {qtd_fmt} propostas canceladas"
+        f"{contexto}</span>"
     )
     footer_churn = (
         f'<span class="mg-prod-footer-media">% Cancelamento: '

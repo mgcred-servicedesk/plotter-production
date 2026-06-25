@@ -15,7 +15,13 @@ def _sb():
 |---|---|---|
 | `v_contratos_dashboard` | view | contratos pagos com joins + flags já resolvidos + `created_at` (rótulo "Atualizado em" no status bar) |
 | `v_contratos_cancelados` | view | contratos cancelados agregados |
+| `obter_cancelados_classificados(p_mes, p_ano)` | RPC | cancelados (30 dias) + coluna `classificacao` (redigitada/recuperada/liquido); matching por nome+categoria no banco (ver [business-rules.md](business-rules.md)) |
 | `obter_pontuacao_periodo(p_mes, p_ano)` | RPC | pontuação final por consultor/loja/região |
+
+> **Depreciado:** `obter_contratos_cancelados(p_mes, p_ano)` (migration 003)
+> foi substituída por `obter_cancelados_classificados`. Mantida no banco por
+> ora; **remover em migration futura** (`DROP FUNCTION`) quando confirmado que
+> nada mais a consome.
 
 Migrações em `database/migrations/` (numeradas sequencialmente a partir de 001). Nunca consultar
 `contratos` diretamente quando uma view cobre o caso — a view já

@@ -203,6 +203,11 @@ def render_resumo_executivo(
     indice_perda = kpis_cancel.get("indice_perda", 0)
     impacto_cancel = (valor_cancelados / meta_mix * 100) if meta_mix > 0 else 0
 
+    # Contencao de redigitacao: contratos cancelados redigitados
+    # (fora da conta de cancelados) e os recuperados (pagos em 7 dias).
+    qtd_redigitadas = kpis_cancel.get("qtd_redigitadas", 0)
+    qtd_recuperadas = kpis_cancel.get("qtd_recuperadas", 0)
+
     # Produtos (FIX: chave correta é "perc_atingido" de calcular_metas_produto_diarias)
     produtos_acima = []
     produtos_abaixo = []
@@ -294,6 +299,16 @@ def render_resumo_executivo(
         pills_html += (
             f'<span class="mg-pill mg-pill-yellow">'
             f'⚠️ Cancelamento {indice_perda:.1f}% · -{impacto_cancel:.1f}% da meta MIX'
+            f'</span>'
+        )
+    if qtd_redigitadas > 0:
+        extra_recup = (
+            f' · {qtd_recuperadas} recuperadas' if qtd_recuperadas else ''
+        )
+        pills_html += (
+            f'<span class="mg-pill mg-pill-yellow">'
+            f'🔁 {qtd_redigitadas} contratos redigitados (fora dos cancelados)'
+            f'{extra_recup}'
             f'</span>'
         )
     if produtos_abaixo:

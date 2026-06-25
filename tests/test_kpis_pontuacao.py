@@ -62,6 +62,23 @@ class TestCalcularPontosCancelados:
         assert r["indice_perda"] == pytest.approx(25.0)
         assert r["pontos_cancelados"] == pytest.approx(1000.0)
 
+    def test_apenas_liquido_conta_pontos(self, mapa_pontos):
+        # Redigitada e recuperada saem do total de pontos/qtd.
+        df_canc = pd.DataFrame({
+            "categoria_codigo": ["CNC", "CNC", "CNC"],
+            "VALOR": [1000.0, 500.0, 300.0],
+            "conta_pontuacao": [True, True, True],
+            "CLASSIFICACAO": ["liquido", "redigitada", "recuperada"],
+        })
+        df_pagos = pd.DataFrame({"categoria_codigo": ["CNC", "SAQUE"]})
+        df_analise = pd.DataFrame({"categoria_codigo": ["CNC"]})
+        r = calcular_pontos_cancelados(df_canc, df_pagos, df_analise, mapa_pontos)
+        # Só o liquido (1000) gera pontos; qtd = 1.
+        assert r["qtd_cancelados"] == 1
+        assert r["pontos_cancelados"] == pytest.approx(1000.0)
+        # churn = 1 / (2 + 1 + 1) = 25%
+        assert r["indice_perda"] == pytest.approx(25.0)
+
 
 @pytest.mark.unit
 class TestCalcularMediasPontosPorNivel:

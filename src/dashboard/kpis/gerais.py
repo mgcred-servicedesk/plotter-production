@@ -255,23 +255,60 @@ def calcular_kpis_analise(
     }
 
 
+def separar_cancelados_liquidos(
+    df_cancelados: pd.DataFrame,
+) -> tuple:
+    """Separa cancelados pela coluna ``CLASSIFICACAO``.
+
+    Retorna ``(df_liquidos, qtd_redigitadas, qtd_recuperadas)``.
+    Cancelados ``liquido`` sao os que contam de fato; ``redigitada``
+    (superada por redigitacao em 7 dias) e ``recuperada`` (paga em
+    7 dias) saem da contagem.
+
+    Retrocompat: sem a coluna ``CLASSIFICACAO`` (RPC antiga), tudo
+    e tratado como liquido.
+    """
+    if df_cancelados.empty or "CLASSIFICACAO" not in df_cancelados.columns:
+        return df_cancelados, 0, 0
+
+    classif = df_cancelados["CLASSIFICACAO"].fillna("liquido")
+    df_liquidos = df_cancelados[classif == "liquido"]
+    qtd_redigitadas = int((classif == "redigitada").sum())
+    qtd_recuperadas = int((classif == "recuperada").sum())
+    return df_liquidos, qtd_redigitadas, qtd_recuperadas
+
+
 def calcular_kpis_cancelados(
     df_cancelados: pd.DataFrame,
     df: pd.DataFrame,
     df_analise: pd.DataFrame,
 ) -> Dict:
-    """Calcula KPIs relacionados a contratos cancelados."""
+    """Calcula KPIs relacionados a contratos cancelados.
+
+    Conta apenas os cancelados ``liquido`` (ver
+    ``separar_cancelados_liquidos``); redigitadas e recuperadas
+    saem do valor/qtd/churn e voltam como contexto no dict.
+    """
     if df_cancelados.empty:
         return {
             "valor_cancelados": 0,
             "qtd_cancelados": 0,
             "indice_perda": 0,
+            "qtd_bruto": 0,
+            "qtd_redigitadas": 0,
+            "qtd_recuperadas": 0,
         }
 
-    valor_cancelados = df_cancelados["VALOR"].sum()
-    qtd_cancelados = len(df_cancelados)
+    qtd_bruto = len(df_cancelados)
+    df_liquidos, qtd_redigitadas, qtd_recuperadas = (
+        separar_cancelados_liquidos(df_cancelados)
+    )
 
-    # Indice de perda (churn) = Cancelados / (Pagos + Cancelados + Em Analise)
+    valor_cancelados = df_liquidos["VALOR"].sum()
+    qtd_cancelados = len(df_liquidos)
+
+    # Indice de perda (churn) = Cancelados liquidos /
+    # (Pagos + Cancelados liquidos + Em Analise)
     qtd_pagos = len(df)
     qtd_analise = len(df_analise) if not df_analise.empty else 0
     total_propostas = qtd_pagos + qtd_cancelados + qtd_analise
@@ -286,6 +323,146 @@ def calcular_kpis_cancelados(
         "valor_cancelados": valor_cancelados,
         "qtd_cancelados": qtd_cancelados,
         "indice_perda": indice_perda,
+        "qtd_bruto": qtd_bruto,
+        "qtd_redigitadas": qtd_redigitadas,
+        "qtd_recuperadas": qtd_recuperadas,
+    }
+
+
+def calcular_assertividade_consultores(
+    df_cancelados: pd.DataFrame,
+    df: pd.DataFrame,
+    df_analise: pd.DataFrame,
+    df_supervisores: Optional[pd.DataFrame] = None,
+) -> Dict:
+    """Assertividade dos consultores no cenario de redigitacao.
+
+    ``assertividade = (1 - redigitadas / total_propostas) * 100``,
+    onde ``redigitadas`` sao cancelados ``CLASSIFICACAO=='redigitada''``
+    e ``total_propostas`` = pagas + em analise + canceladas (bruto)
+    do consultor no periodo. Supervisores sao excluidos.
+
+    Retorna metricas org-level + DataFrame por consultor (ordenado
+    da menor assertividade para a maior, para evidenciar onde agir).
+
+    Nota: as fontes (pagas/analise/cancelados) usam janelas de carga
+    distintas, entao ``total_propostas`` e uma aproximacao do periodo.
+    """
+    def _qtd_por_consultor(frame: Optional[pd.DataFrame]) -> pd.Series:
+        if (
+            frame is None
+            or frame.empty
+            or "CONSULTOR" not in frame.columns
+        ):
+            return pd.Series(dtype="int64")
+        limpo = excluir_supervisores(frame, df_supervisores)
+        if limpo.empty:
+            return pd.Series(dtype="int64")
+        return limpo.groupby("CONSULTOR").size()
+
+    pagos_c = _qtd_por_consultor(df)
+    analise_c = _qtd_por_consultor(df_analise)
+    cancel_c = _qtd_por_consultor(df_cancelados)
+
+    # Redigitadas atribuidas ao consultor que as digitou.
+    if (
+        not df_cancelados.empty
+        and "CONSULTOR" in df_cancelados.columns
+        and "CLASSIFICACAO" in df_cancelados.columns
+    ):
+        df_redig = df_cancelados[
+            df_cancelados["CLASSIFICACAO"] == "redigitada"
+        ]
+        redig_c = _qtd_por_consultor(df_redig)
+    else:
+        redig_c = pd.Series(dtype="int64")
+
+    total_c = (
+        pagos_c.add(analise_c, fill_value=0)
+        .add(cancel_c, fill_value=0)
+    )
+
+    vazio = pd.DataFrame(
+        columns=[
+            "CONSULTOR",
+            "total_propostas",
+            "redigitadas",
+            "assertividade",
+        ]
+    )
+    if total_c.empty:
+        return {
+            "assertividade_org": 100.0,
+            "total_redigitadas": 0,
+            "total_propostas": 0,
+            "por_consultor": vazio,
+        }
+
+    por_consultor = pd.DataFrame(
+        {
+            "CONSULTOR": total_c.index,
+            "total_propostas": total_c.values.astype(int),
+        }
+    )
+    por_consultor["redigitadas"] = (
+        por_consultor["CONSULTOR"].map(redig_c).fillna(0).astype(int)
+    )
+    por_consultor["assertividade"] = (
+        1 - por_consultor["redigitadas"] / por_consultor["total_propostas"]
+    ) * 100
+    por_consultor = por_consultor.sort_values(
+        "assertividade"
+    ).reset_index(drop=True)
+
+    total_propostas = int(total_c.sum())
+    total_redigitadas = int(redig_c.sum()) if not redig_c.empty else 0
+    assertividade_org = (
+        (1 - total_redigitadas / total_propostas) * 100
+        if total_propostas > 0
+        else 100.0
+    )
+
+    return {
+        "assertividade_org": assertividade_org,
+        "total_redigitadas": total_redigitadas,
+        "total_propostas": total_propostas,
+        "por_consultor": por_consultor,
+    }
+
+
+def calcular_oportunidades_perdidas(
+    df_cancelados: pd.DataFrame,
+    coluna_flag: str = "RECUPERADA_OUTRO",
+) -> Dict:
+    """Oportunidades perdidas (venda capturada em outro nivel).
+
+    Cancelados cuja venda (mesmo cliente+categoria em 7 dias) foi
+    capturada fora do proprio nivel — venda perdida do ponto de vista
+    de quem cancelou. ``coluna_flag`` seleciona o nivel:
+    ``RECUPERADA_OUTRO`` (outro consultor), ``RECUPERADA_OUTRA_LOJA``
+    (outra loja) ou ``RECUPERADA_OUTRA_REGIAO`` (outra regiao). A
+    identidade de quem capturou NAO e exposta: so qtd e valor.
+
+    Deve ser chamada APOS o RLS client-side (``aplicar_rls``), para
+    refletir o escopo do usuario.
+    """
+    if (
+        df_cancelados.empty
+        or coluna_flag not in df_cancelados.columns
+    ):
+        return {"qtd_perdidas": 0, "valor_perdido": 0.0}
+
+    perdidas = df_cancelados[
+        df_cancelados[coluna_flag] == True  # noqa: E712
+    ]
+    valor = (
+        float(perdidas["VALOR"].sum())
+        if "VALOR" in perdidas.columns
+        else 0.0
+    )
+    return {
+        "qtd_perdidas": int(len(perdidas)),
+        "valor_perdido": valor,
     }
 
 
