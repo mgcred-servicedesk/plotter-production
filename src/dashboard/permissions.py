@@ -18,6 +18,9 @@ Elementos (keys):
     tab_pagamentos_online Estimativa horaria do extrator DNA
     cards_gerenciais      Cards agregados (num consultores,
                           ticket medio/consultor etc.)
+    cards_drilldown       Botoes de detalhe (drill-down) dos
+                          cards de contexto (Em Analise,
+                          Cancelados, Medias)
     visualizar_como       Seletor 'Visualizar Como'
     gestao_usuarios       Pagina de gestao de usuarios
 """
@@ -106,6 +109,20 @@ MATRIZ: dict[str, dict[str, bool]] = {
         "gerente_comercial": True,
         "supervisor": True,
         "consultor": True,
+    },
+    "cards_medias_consultor_loja": {
+        "admin": True,
+        "gestor": True,
+        "gerente_comercial": True,
+        "supervisor": False,
+        "consultor": False,
+    },
+    "cards_drilldown": {
+        "admin": True,
+        "gestor": True,
+        "gerente_comercial": True,
+        "supervisor": False,
+        "consultor": False,
     },
     # Ferramentas
     "visualizar_como": {

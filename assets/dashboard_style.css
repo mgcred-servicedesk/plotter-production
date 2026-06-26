@@ -1866,6 +1866,25 @@ div[data-testid="column"]:nth-child(4) [data-testid="stMetric"] {
     box-shadow: var(--mg-shadow-md);
 }
 
+/* Card de contexto clicavel: envolve o .mg-kpi-context num <a> sem
+   alterar a aparencia (sem sublinhado, herda cor) e adiciona
+   affordance sutil de clique. */
+.mg-card-link {
+    text-decoration: none;
+    color: inherit;
+    cursor: pointer;
+    display: flex;
+    flex: 1;
+}
+
+.mg-card-link:hover {
+    text-decoration: none;
+}
+
+.mg-card-link:hover .mg-kpi-context {
+    border-color: var(--mg-primary, #2563eb);
+}
+
 .mg-kpi-ctx-label {
     font-size: clamp(11px, 0.85vw, 13px);
     font-weight: 500;

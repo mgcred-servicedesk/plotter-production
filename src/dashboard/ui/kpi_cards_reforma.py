@@ -19,6 +19,7 @@ from src.dashboard.formatters import (
     formatar_moeda_compacta,
     formatar_percentual,
 )
+from src.dashboard.permissions import pode_ver
 from src.dashboard.ui.colors import (
     get_status_color,
     get_status_full,
@@ -181,18 +182,26 @@ def render_kpis_contexto(
     kpis_analise: Dict,
     kpis_cancel: Dict,
     medias: Dict,
+    perfil: Optional[str] = None,
 ) -> None:
     """
     Renderiza KPIs de contexto em linha secundária.
 
     Layout:
-        | Em Análise | Cancelados | Ticket Médio |
+        | Em Análise | Cancelados | Média por Consultor | Média por Loja |
+
+    Os cards de Média por Consultor e Média por Loja são exibidos apenas
+    para admin, gestor e gerente_comercial. Supervisor e consultor não
+    veem esses cards. Os dados já vêm filtrados por RLS, então o
+    gerente_comercial vê apenas as lojas/consultores das regiões do
+    seu escopo.
 
     Args:
         kpis: KPIs gerais
         kpis_analise: KPIs de contratos em análise
         kpis_cancel: KPIs de cancelados
         medias: Médias DU
+        perfil: Perfil efetivo do usuario logado.
     """
     valor_analise = kpis_analise.get("valor_analise", 0)
     qtd_analise = kpis_analise.get("qtd_analise", 0)
@@ -201,6 +210,7 @@ def render_kpis_contexto(
 
     # Médias por consultor (em valor)
     total_vendas = kpis.get("total_vendas", 0)
+    du_total = kpis.get("du_total", 0)
     num_consultores = medias.get("num_consultores", 0) or kpis.get(
         "num_consultores", 0
     )
@@ -208,6 +218,7 @@ def render_kpis_contexto(
         total_vendas / num_consultores if num_consultores > 0 else 0
     )
     media_du_consultor = medias.get("media_du_consultor", 0)
+    projecao_consultor = media_du_consultor * du_total
 
     # Médias por loja (em valor)
     num_lojas = kpis.get("num_lojas", 1)
@@ -217,6 +228,7 @@ def render_kpis_contexto(
         media_du_loja = total_vendas / num_lojas / du_dec
     else:
         media_du_loja = media_loja
+    projecao_loja = media_du_loja * du_total
 
     # Calcular potencial e impacto
     taxa_conv = 0.35
@@ -226,6 +238,7 @@ def render_kpis_contexto(
 
     # Linha de contexto — flex container único para altura uniforme
     cor_churn, emoji_churn, nivel_churn = get_churn_status(indice_perda)
+    mostrar_medias = pode_ver("cards_medias_consultor_loja", perfil)
 
     card_analise = f"""
         <div class="mg-kpi-context" style="flex: 1;">
@@ -252,34 +265,74 @@ def render_kpis_contexto(
             </div>
         </div>"""
 
-    card_consultor = f"""
+    cards_html = f"{card_analise}{card_cancel}"
+    botoes = [
+        ("em_analise", "⏳ Em Análise"),
+        ("cancelados", "⚠️ Cancelados"),
+    ]
+
+    if mostrar_medias:
+        card_consultor = f"""
         <div class="mg-kpi-context" style="flex: 1;">
             <div class="mg-kpi-ctx-label">👤 Média por Consultor</div>
             <div class="mg-kpi-ctx-valor">{_formatar_valor_moeda(media_consultor)}</div>
             <div class="mg-kpi-ctx-sub">
                 <span style="font-size:12px;">{formatar_moeda(media_consultor)}</span><br>
                 Acumulado entre {num_consultores:,} consultores<br>
-                Média DU/consultor: <strong>{_formatar_valor_moeda(media_du_consultor)}</strong>
+                Média DU/consultor:
+                <strong>{_formatar_valor_moeda(media_du_consultor)}</strong><br>
+                Projeção fim do mês:
+                <strong>{_formatar_valor_moeda(projecao_consultor)}</strong>
             </div>
         </div>"""
 
-    card_loja = f"""
+        card_loja = f"""
         <div class="mg-kpi-context" style="flex: 1;">
             <div class="mg-kpi-ctx-label">🏪 Média por Loja</div>
             <div class="mg-kpi-ctx-valor">{_formatar_valor_moeda(media_loja)}</div>
             <div class="mg-kpi-ctx-sub">
                 <span style="font-size:12px;">{formatar_moeda(media_loja)}</span><br>
                 Acumulado entre {num_lojas:,} lojas<br>
-                Média DU/loja: <strong>{_formatar_valor_moeda(media_du_loja)}</strong>
+                Média DU/loja:
+                <strong>{_formatar_valor_moeda(media_du_loja)}</strong><br>
+                Projeção fim do mês:
+                <strong>{_formatar_valor_moeda(projecao_loja)}</strong>
             </div>
         </div>"""
 
+        cards_html += f"{card_consultor}{card_loja}"
+        botoes.extend([
+            ("media_consultor", "👤 Média / Consultor"),
+            ("media_loja", "🏪 Média / Loja"),
+        ])
+
     st.markdown(
         f'<div style="display:flex; gap:clamp(10px,1.2vw,20px); align-items:stretch;">'
-        f"{card_analise}{card_cancel}{card_consultor}{card_loja}"
+        f"{cards_html}"
         f"</div>",
         unsafe_allow_html=True,
     )
+
+    # Navegacao para as paginas de detalhe via botao (soft-rerun).
+    # NAO usar <a href>: ele recarrega a pagina inteira -> nova sessao
+    # Streamlit -> st.session_state zera -> usuario deslogado. O botao
+    # so seta card_page e chama st.rerun(), preservando o login.
+    #
+    # Supervisor e consultor nao acessam o drill-down dos cards: os
+    # botoes sao ocultados (e o roteamento em app.py tambem e fechado
+    # para esses perfis, como defesa em profundidade).
+    if not pode_ver("cards_drilldown", perfil):
+        return
+    _btn_cols = st.columns(len(botoes), gap="small")
+    for _col, (_chave, _rotulo) in zip(_btn_cols, botoes):
+        with _col:
+            if st.button(
+                f"🔍 {_rotulo}",
+                key=f"mgbtn_{_chave}",
+                width="stretch",
+            ):
+                st.session_state["card_page"] = _chave
+                st.rerun()
 
 
 def render_bloco_media_projecao(kpis: Dict) -> None:
@@ -959,7 +1012,9 @@ def render_kpis_reforma(
     st.markdown("<div style='height: 20px;'></div>", unsafe_allow_html=True)
 
     # 2. KPIs de Contexto
-    render_kpis_contexto(kpis, kpis_analise, kpis_cancel, medias)
+    render_kpis_contexto(
+        kpis, kpis_analise, kpis_cancel, medias, perfil=perfil
+    )
 
     # 3. Cards por produto MIX
     render_cards_produto_mix(

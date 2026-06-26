@@ -43,11 +43,19 @@ from src.dashboard.kpis.gerais import (
 from src.dashboard.pages.dashboard_pontuacao import (
     render_dashboard_pontuacao,
 )
+from src.dashboard.pages.detalhes_cards import (
+    render_detalhe_cancelados,
+    render_detalhe_em_analise,
+    render_detalhe_media_consultor,
+    render_detalhe_media_loja,
+)
 from src.dashboard.loaders import (
     carregar_categorias,
     carregar_consultores_cadastro,
     carregar_contratos_cancelados,
     carregar_contratos_em_analise,
+    carregar_digitacao_diaria,
+    carregar_digitacao_diaria_detalhe,
     carregar_lojas_regioes,
     carregar_metas_produto,
     carregar_metas_produto_consultor,
@@ -1031,6 +1039,25 @@ def main():
         perfil_efetivo = _obter_perfil_efetivo()
         role = perfil_efetivo["perfil"] if perfil_efetivo else None
 
+        # ── Drill-down dos cards de contexto (fail-closed) ──
+        # Le o query param `?card=<key>` UMA vez por navegacao e o
+        # consome (clear). So promove a `card_page` se o perfil pode ver
+        # o drill-down dos cards E a key e uma das quatro validas; param
+        # forjado por perfil sem acesso (supervisor/consultor) e ignorado
+        # (nao deixa estado pendurado). O roteamento em si ocorre adiante,
+        # ja com os dados carregados.
+        _CARDS_VALIDOS = {
+            "em_analise",
+            "cancelados",
+            "media_consultor",
+            "media_loja",
+        }
+        _card_param = st.query_params.get("card")
+        if _card_param is not None:
+            if pode_ver("cards_drilldown", role) and _card_param in _CARDS_VALIDOS:
+                st.session_state["card_page"] = _card_param
+            st.query_params.clear()
+
         # ── RLS: filtrar dados por perfil ─────────
         df = aplicar_rls(df)
         df_metas = aplicar_rls_metas(df_metas, df)
@@ -1266,6 +1293,58 @@ def main():
         # Consultor nao ve cards gerenciais; sua aba
         # renderiza os cards pessoais
         if pode_ver("cards_gerenciais", role):
+            # ── Drill-down: pagina de detalhe de um card ──────
+            # Quando `card_page` esta setado (promovido pelo read
+            # fail-closed acima), renderiza so o botao de voltar + a
+            # pagina correspondente e encerra (pula cards e tabs),
+            # espelhando o padrao do modo Config.
+            _card_page = st.session_state.get("card_page")
+            if _card_page:
+                if st.button("← Voltar ao Dashboard"):
+                    st.session_state["card_page"] = None
+                    st.rerun()
+
+                _du_total = kpis.get("du_total", 0)
+                if _card_page == "em_analise":
+                    # Aplica RLS server-side local no detalhe (o Supabase
+                    # ja filtra, mas admin/gestor visualizando como gerente
+                    # precisa restringir ao escopo simulado).
+                    df_digitacao_detalhe = aplicar_rls(
+                        carregar_digitacao_diaria_detalhe(mes, ano)
+                    )
+                    render_detalhe_em_analise(
+                        df_analise=df_analise_f,
+                        df_digitacao=carregar_digitacao_diaria(mes, ano),
+                        df_digitacao_detalhe=df_digitacao_detalhe,
+                        du_decorridos=du_decorridos,
+                        du_total=_du_total,
+                        perfil=role,
+                    )
+                elif _card_page == "cancelados":
+                    render_detalhe_cancelados(
+                        df_cancelados=df_cancelados_f,
+                        du_decorridos=du_decorridos,
+                        du_total=_du_total,
+                        perfil=role,
+                    )
+                elif _card_page == "media_consultor":
+                    render_detalhe_media_consultor(
+                        df=df_f,
+                        du_decorridos=du_decorridos,
+                        du_total=_du_total,
+                        df_sup=df_sup_f,
+                        perfil=role,
+                    )
+                elif _card_page == "media_loja":
+                    render_detalhe_media_loja(
+                        df=df_f,
+                        du_decorridos=du_decorridos,
+                        du_total=_du_total,
+                        df_sup=df_sup_f,
+                        perfil=role,
+                    )
+                return
+
             # KPIs Principais Reformulados
             # (3 principais + contexto + MIX + Aceleradores
             # + Reconquista + Média/Projeção)

@@ -5,6 +5,7 @@ Utiliza st-aggrid para tabelas interativas com ordenação,
 filtros e formatação automática. Fallback para st.dataframe
 nativo quando AG Grid não está disponível.
 """
+import re
 from typing import Dict, List, Optional
 
 import pandas as pd
@@ -251,6 +252,35 @@ def _formatar_numero_br(valor):
     return f"{valor:,.0f}".replace(",", ".")
 
 
+# Datas que chegam como texto ISO (yyyy-mm-dd, com hora/UTC opcional)
+# nao tem dtype datetime64 e escapariam da formatacao. Detectamos por
+# VALOR (nao por nome de coluna) para nao confundir com codigos.
+_ISO_DATA_RE = re.compile(r"^\d{4}-\d{2}-\d{2}([ T]\d{2}:\d{2}|$)")
+
+
+def _coluna_texto_e_data(serie: pd.Series) -> bool:
+    """True se uma coluna textual contiver apenas datas ISO validas.
+
+    Nao restringe por dtype (strings podem vir como ``object`` ou ``str``
+    conforme a versao do pandas); o ``isinstance(v, str)`` abaixo filtra
+    colunas numericas/booleanas. Dois filtros evitam falso-positivo:
+    (1) todos os valores casam o padrao textual ISO; (2) todos convertem
+    para data valida (descarta codigos como '1234-56-78', que casam o
+    padrao mas nao sao data).
+    """
+    naonulos = serie.dropna()
+    if naonulos.empty:
+        return False
+    amostra = naonulos.head(200)
+    if not all(
+        isinstance(v, str) and _ISO_DATA_RE.match(v) is not None
+        for v in amostra
+    ):
+        return False
+    convertido = pd.to_datetime(amostra, errors="coerce")
+    return bool(convertido.notna().all())
+
+
 def _formatar_dataframe_br(
     df: pd.DataFrame,
     colunas_moeda: Optional[List[str]],
@@ -260,13 +290,19 @@ def _formatar_dataframe_br(
     """
     Retorna cópia do DataFrame com colunas monetárias,
     numéricas e de data formatadas no padrão brasileiro.
-    Datas (datetime64) são convertidas automaticamente para dd/mm/aaaa.
+    Datas (datetime64 ou texto ISO/UTC) viram dd/mm/aaaa.
     """
     df_fmt = df.copy()
     for col in df.columns:
         if pd.api.types.is_datetime64_any_dtype(df[col]):
             df_fmt[col] = df[col].dt.strftime("%d/%m/%Y").where(
                 df[col].notna(), other=""
+            )
+            continue
+        if _coluna_texto_e_data(df[col]):
+            convertido = pd.to_datetime(df[col], errors="coerce")
+            df_fmt[col] = convertido.dt.strftime("%d/%m/%Y").where(
+                convertido.notna(), other=""
             )
             continue
         tipo = _classificar_coluna(

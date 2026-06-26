@@ -204,6 +204,14 @@ def _fetch_contratos_pagos(mes: int, ano: int) -> pd.DataFrame:
     if "DATA" in df.columns:
         df["DATA"] = pd.to_datetime(df["DATA"], errors="coerce")
 
+    # DATA_CADASTRO chega como texto ISO ('yyyy-mm-dd'); normaliza para
+    # datetime64 como nos loaders de em_analise/cancelados (consistencia
+    # e exibicao dd/mm/aaaa).
+    if "DATA_CADASTRO" in df.columns:
+        df["DATA_CADASTRO"] = pd.to_datetime(
+            df["DATA_CADASTRO"], errors="coerce"
+        )
+
     if "CREATED_AT" in df.columns:
         df["CREATED_AT"] = pd.to_datetime(
             df["CREATED_AT"], errors="coerce", utc=True
@@ -309,6 +317,172 @@ def _contratos_em_analise_atual(mes: int, ano: int) -> pd.DataFrame:
 def _contratos_em_analise_historico(mes: int, ano: int) -> pd.DataFrame:
     """Contratos em analise — historico. TTL 6h."""
     return _fetch_contratos_em_analise(mes, ano)
+
+
+# ══════════════════════════════════════════════════════
+# Digitacao diaria (todos os status)
+# ══════════════════════════════════════════════════════
+
+
+def carregar_digitacao_diaria(mes: int, ano: int) -> pd.DataFrame:
+    """Carrega a digitacao diaria via RPC obter_digitacao_diaria.
+
+    Conta todos os contratos cadastrados por dia (qualquer status,
+    inclusive cancelados e em analise) no mes/ano. O RPC e SECURITY
+    INVOKER e a RLS server-side (pol_contratos_select) ja restringe
+    o agregado ao escopo do perfil logado — nao precisa aplicar_rls.
+
+    TTL real: 15min para mes corrente, 6h para historico.
+
+    Colunas: data_cadastro (datetime), qtd_digitada (int),
+    valor_digitado (float). Minusculas e sem renomear — consumidas
+    por kpis.detalhes_cards.detalhe_digitacao_diaria.
+    """
+    if _eh_mes_atual(mes, ano):
+        return _digitacao_diaria_atual(mes, ano)
+    return _digitacao_diaria_historico(mes, ano)
+
+
+def _fetch_digitacao_diaria(mes: int, ano: int) -> pd.DataFrame:
+    """Executa a RPC de digitacao diaria sem cache.
+
+    Resultado e um agregado por dia (<= 31 linhas), entao nao ha
+    paginacao como nas RPCs de nivel-contrato.
+    """
+    resp = (
+        _sb()
+        .rpc(
+            "obter_digitacao_diaria",
+            {"p_mes": mes, "p_ano": ano},
+        )
+        .execute()
+    )
+    data = resp.data or []
+    if not data:
+        return pd.DataFrame(
+            columns=["data_cadastro", "qtd_digitada", "valor_digitado"]
+        )
+
+    df = pd.DataFrame(
+        [
+            {
+                "data_cadastro": r.get("data_cadastro"),
+                "qtd_digitada": int(r.get("qtd_digitada", 0) or 0),
+                "valor_digitado": float(r.get("valor_digitado", 0) or 0),
+            }
+            for r in data
+        ]
+    )
+    df["data_cadastro"] = pd.to_datetime(
+        df["data_cadastro"], errors="coerce"
+    )
+    return df
+
+
+@st.cache_data(ttl=900)
+def _digitacao_diaria_atual(mes: int, ano: int) -> pd.DataFrame:
+    """Digitacao diaria — mes corrente. TTL 15min."""
+    return _fetch_digitacao_diaria(mes, ano)
+
+
+@st.cache_data(ttl=21600)
+def _digitacao_diaria_historico(mes: int, ano: int) -> pd.DataFrame:
+    """Digitacao diaria — historico. TTL 6h."""
+    return _fetch_digitacao_diaria(mes, ano)
+
+
+# ══════════════════════════════════════════════════════
+# Digitacao diaria detalhada (por regiao x produto)
+# ══════════════════════════════════════════════════════
+
+
+def carregar_digitacao_diaria_detalhe(mes: int, ano: int) -> pd.DataFrame:
+    """Carrega a digitacao diaria detalhada (RPC
+    obter_digitacao_diaria_detalhe).
+
+    Mesma base do agregado ``carregar_digitacao_diaria`` (contratos
+    direto, TODOS os status, janela mes-calendario), mas quebrada por
+    dia x regiao x grupo_dashboard — alimenta o pivot do "Ultimo Dia
+    Apurado". A soma do detalhe bate com o agregado do mesmo dia.
+
+    TTL real: 15min para mes corrente, 6h para historico.
+
+    Colunas mapeadas para reuso direto pelas funcoes de pivot/ultimo
+    dia: ``DATA_CADASTRO`` (datetime), ``REGIAO``, ``LOJA``,
+    ``grupo_dashboard``, ``VALOR`` (bruto, = valor_digitado),
+    ``qtd_digitada``. SEM ``conta_valor`` — digitacao e volume bruto.
+    """
+    if _eh_mes_atual(mes, ano):
+        return _digitacao_detalhe_atual(mes, ano)
+    return _digitacao_detalhe_historico(mes, ano)
+
+
+def _fetch_digitacao_diaria_detalhe(mes: int, ano: int) -> pd.DataFrame:
+    """Executa a RPC de digitacao detalhada sem cache.
+
+    Resultado e agregado por (dia, regiao, loja, grupo_dashboard). Ao
+    contrario do agregado diario (<= 31 linhas), a granularidade dia x
+    regiao x loja x produto pode passar de 1000 linhas no mes — o limite
+    default do PostgREST. Sem paginacao, a resposta era truncada e, como
+    a RPC ordena por data ascendente, os dias mais recentes (e regioes)
+    sumiam. Paginamos com ``.range`` como em ``_fetch_contratos_cancelados``.
+    """
+    cols = [
+        "DATA_CADASTRO",
+        "REGIAO",
+        "LOJA",
+        "grupo_dashboard",
+        "VALOR",
+        "qtd_digitada",
+    ]
+    all_data: List[dict] = []
+    offset = 0
+    while True:
+        resp = (
+            _sb()
+            .rpc(
+                "obter_digitacao_diaria_detalhe",
+                {"p_mes": mes, "p_ano": ano},
+            )
+            .range(offset, offset + _PAGE_SIZE - 1)
+            .execute()
+        )
+        batch = resp.data or []
+        all_data.extend(batch)
+        if len(batch) < _PAGE_SIZE:
+            break
+        offset += _PAGE_SIZE
+
+    if not all_data:
+        return pd.DataFrame(columns=cols)
+
+    df = pd.DataFrame(
+        [
+            {
+                "DATA_CADASTRO": r.get("data_cadastro"),
+                "REGIAO": r.get("regiao", "") or "",
+                "LOJA": r.get("loja", "") or "",
+                "grupo_dashboard": r.get("grupo_dashboard"),
+                "VALOR": float(r.get("valor_digitado", 0) or 0),
+                "qtd_digitada": int(r.get("qtd_digitada", 0) or 0),
+            }
+            for r in all_data
+        ]
+    )
+    df["DATA_CADASTRO"] = pd.to_datetime(df["DATA_CADASTRO"], errors="coerce")
+    return df
+
+
+@st.cache_data(ttl=900)
+def _digitacao_detalhe_atual(mes: int, ano: int) -> pd.DataFrame:
+    """Digitacao detalhada — mes corrente. TTL 15min."""
+    return _fetch_digitacao_diaria_detalhe(mes, ano)
+
+
+@st.cache_data(ttl=21600)
+def _digitacao_detalhe_historico(mes: int, ano: int) -> pd.DataFrame:
+    """Digitacao detalhada — historico. TTL 6h."""
+    return _fetch_digitacao_diaria_detalhe(mes, ano)
 
 
 # ══════════════════════════════════════════════════════
