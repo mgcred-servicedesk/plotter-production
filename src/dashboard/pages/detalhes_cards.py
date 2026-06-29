@@ -30,6 +30,8 @@ from src.dashboard.formatters import (
     formatar_numero,
 )
 from src.dashboard.kpis.detalhes_cards import (
+    COL_PRODUTO_DETALHADO,
+    adicionar_produto_detalhado,
     detalhe_analise_pivot,
     detalhe_analise_por_regiao,
     detalhe_cancelados_pivot,
@@ -39,6 +41,7 @@ from src.dashboard.kpis.detalhes_cards import (
     detalhe_medias_por_regiao,
     detalhe_reaproveitamento,
     filtrar_ultimo_dia,
+    ocultar_colunas_zeradas,
 )
 from src.dashboard.ui.kpi_cards_reforma import _calcular_indicador_media
 
@@ -259,8 +262,10 @@ def _exibir_pivot(pivot: pd.DataFrame, linha: str) -> None:
     """Exibe um pivot ja montado (colunas numericas em moeda).
 
     ``linha`` e a coluna-dimensao (ex.: ``REGIAO``); todas as demais sao
-    valores monetarios. Pivot vazio → mensagem de "sem dados".
+    valores monetarios. Colunas de valor inteiramente zeradas (ex.:
+    ``OUTROS``) sao ocultadas. Pivot vazio → mensagem de "sem dados".
     """
+    pivot = ocultar_colunas_zeradas(pivot, linha)
     if pivot.empty or pivot.shape[1] <= 1:
         st.info("Nenhum dado disponível para exibição.")
         return
@@ -313,7 +318,6 @@ def _agregar_digitacao_diaria(
 def render_detalhe_em_analise(
     *,
     df_analise: pd.DataFrame,
-    df_digitacao: pd.DataFrame,
     df_digitacao_detalhe: pd.DataFrame,
     du_decorridos: int,
     du_total: int,
@@ -330,6 +334,12 @@ def render_detalhe_em_analise(
     3. Ultimos 7 dias de digitacao — serie diaria (sem projecao).
     4. Analise por Produto — pivot dimensao × Produto (em análise).
     5. Analise por Banco — pivot dimensao × Banco (em análise).
+
+    Os quadros 2 e 3 derivam do MESMO ``df_digitacao_detalhe`` (ja
+    recortado por RLS client-side em ``app.py``): a série de 7 dias é
+    reconstruída via ``_agregar_digitacao_diaria`` para usar exatamente o
+    escopo do usuário — não o agregado global, que vazaria digitação de
+    fora do escopo para perfis não-admin.
 
     Admin/gestor usam ``REGIAO``; gerente_comercial usa ``LOJA``.
     """
@@ -358,14 +368,20 @@ def render_detalhe_em_analise(
             "calendar-check",
         )
         _exibir_pivot(
-            detalhe_analise_pivot(df_ultimo, dim, "grupo_dashboard"),
+            detalhe_analise_pivot(
+                adicionar_produto_detalhado(df_ultimo),
+                dim,
+                COL_PRODUTO_DETALHADO,
+            ),
             dim,
         )
 
     with col_serie:
         _divider_quadro("Digitação — Últimos 7 Dias", "calendar-week")
+        # Reconstrói o agregado diário a partir do detalhe JÁ recortado
+        # por RLS — mesmo escopo do pivot "Último Dia" ao lado.
         df_dig = detalhe_digitacao_diaria(
-            df_digitacao,
+            _agregar_digitacao_diaria(df_digitacao_detalhe),
             du_decorridos,
             du_total,
             ultimos_dias=7,
@@ -391,10 +407,14 @@ def render_detalhe_em_analise(
                 colunas_percentual=_PERC_DIGITACAO,
             )
 
-    # 4. Analise por Produto (pivot dimensao × Produto)
+    # 4. Analise por Produto (pivot dimensao × Produto, PACK desmembrado)
     _divider_quadro("Análise por Produto", "tags-fill")
     _exibir_pivot(
-        detalhe_analise_pivot(df_analise, dim, "grupo_dashboard"),
+        detalhe_analise_pivot(
+            adicionar_produto_detalhado(df_analise),
+            dim,
+            COL_PRODUTO_DETALHADO,
+        ),
         dim,
     )
 
@@ -448,10 +468,15 @@ def render_detalhe_cancelados(
         maior_e_melhor=False,
     )
 
-    # 2. Cancelados por Produto (pivot dimensao × Produto, liquidos)
+    # 2. Cancelados por Produto (pivot dimensao × Produto, liquidos,
+    #    PACK desmembrado)
     _divider_quadro("Cancelados por Produto", "tags-fill")
     _exibir_pivot(
-        detalhe_cancelados_pivot(df_cancelados, dim, "grupo_dashboard"),
+        detalhe_cancelados_pivot(
+            adicionar_produto_detalhado(df_cancelados),
+            dim,
+            COL_PRODUTO_DETALHADO,
+        ),
         dim,
     )
 

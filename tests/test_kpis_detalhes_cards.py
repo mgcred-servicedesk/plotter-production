@@ -11,8 +11,10 @@ import pandas as pd
 import pytest
 
 from src.dashboard.kpis.detalhes_cards import (
+    COL_PRODUTO_DETALHADO,
     _aplicar_conta_valor,
     _projetar,
+    adicionar_produto_detalhado,
     detalhe_analise_pivot,
     detalhe_analise_por_produto,
     detalhe_analise_por_regiao,
@@ -24,6 +26,7 @@ from src.dashboard.kpis.detalhes_cards import (
     detalhe_medias_por_regiao,
     detalhe_reaproveitamento,
     filtrar_ultimo_dia,
+    ocultar_colunas_zeradas,
 )
 
 
@@ -806,3 +809,158 @@ class TestDetalheCanceladosPivot:
         l1 = res[res["LOJA"] == "L1"].iloc[0]
         assert l1["CNC"] == pytest.approx(1000.0)
         assert l1["Total"] == pytest.approx(1000.0)
+
+
+# ──────────────────────────────────────────────────────────────────
+# Desmembramento do PACK (adicionar_produto_detalhado)
+# ──────────────────────────────────────────────────────────────────
+
+
+@pytest.mark.unit
+class TestAdicionarProdutoDetalhado:
+    def test_explode_pack_em_categorias_granulares(self):
+        df = pd.DataFrame(
+            {
+                "grupo_dashboard": ["PACK", "PACK", "PACK", "CNC"],
+                "categoria_codigo": ["FGTS", "ANT_BENEF", "CNC_13", "CNC"],
+                "VALOR": [100.0, 200.0, 300.0, 400.0],
+            }
+        )
+        out = adicionar_produto_detalhado(df)
+        assert out[COL_PRODUTO_DETALHADO].tolist() == [
+            "FGTS", "Antecipação", "13o", "CNC",
+        ]
+        # nao muta a entrada
+        assert "PRODUTO_DETALHADO" not in df.columns
+
+    def test_nao_pack_mantem_grupo_dashboard(self):
+        df = pd.DataFrame(
+            {
+                "grupo_dashboard": ["CNC", "SAQUE", "CONSIGNADO"],
+                "categoria_codigo": ["CNC", "SAQUE", "CONSIG_BMG"],
+                "VALOR": [1.0, 2.0, 3.0],
+            }
+        )
+        out = adicionar_produto_detalhado(df)
+        assert out[COL_PRODUTO_DETALHADO].tolist() == [
+            "CNC", "SAQUE", "CONSIGNADO",
+        ]
+
+    def test_pack_ja_renomeado_sem_categoria_cai_no_label(self):
+        # df_analise/df_cancelados passam por NOMES_DISPLAY_PRODUTO; se um
+        # 'PACK' residual nao tiver categoria mapeada, mantem o label.
+        df = pd.DataFrame(
+            {
+                "grupo_dashboard": ["FGTS/Ant. Ben./CNC 13o", "CNC"],
+                "categoria_codigo": ["", "CNC"],
+                "VALOR": [10.0, 20.0],
+            }
+        )
+        out = adicionar_produto_detalhado(df)
+        assert out[COL_PRODUTO_DETALHADO].tolist() == [
+            "FGTS/Ant. Ben./CNC 13o", "CNC",
+        ]
+
+    def test_pack_cru_sem_categoria_usa_nomes_display(self):
+        # Rede de seguranca: 'PACK' cru (digitacao detalhe pre-migration)
+        # sem categoria_codigo cai no label amigavel via NOMES_DISPLAY.
+        df = pd.DataFrame(
+            {
+                "grupo_dashboard": ["PACK"],
+                "VALOR": [10.0],
+            }
+        )
+        out = adicionar_produto_detalhado(df)
+        assert out[COL_PRODUTO_DETALHADO].tolist() == ["FGTS/Ant. Ben./CNC 13o"]
+
+    def test_sem_grupo_dashboard_inalterado(self):
+        df = pd.DataFrame({"VALOR": [1.0]})
+        out = adicionar_produto_detalhado(df)
+        assert COL_PRODUTO_DETALHADO not in out.columns
+
+    def test_df_vazio_inalterado(self):
+        df = pd.DataFrame(columns=["grupo_dashboard", "categoria_codigo"])
+        out = adicionar_produto_detalhado(df)
+        assert out.empty
+
+    def test_pivot_separa_colunas_do_pack(self):
+        # Integracao: alimenta o pivot com a dimensao desmembrada.
+        df = pd.DataFrame(
+            {
+                "REGIAO": ["R1", "R1", "R1", "R1"],
+                "grupo_dashboard": ["PACK", "PACK", "PACK", "CNC"],
+                "categoria_codigo": ["FGTS", "ANT_BENEF", "CNC_13", "CNC"],
+                "VALOR": [100.0, 200.0, 300.0, 400.0],
+                "conta_valor": [True, True, True, True],
+            }
+        )
+        pivot = detalhe_analise_pivot(
+            adicionar_produto_detalhado(df), "REGIAO", COL_PRODUTO_DETALHADO
+        )
+        # uma coluna por produto granular, sem 'PACK'
+        assert "PACK" not in pivot.columns
+        for col in ("FGTS", "Antecipação", "13o", "CNC"):
+            assert col in pivot.columns
+        r1 = pivot[pivot["REGIAO"] == "R1"].iloc[0]
+        assert r1["FGTS"] == pytest.approx(100.0)
+        assert r1["Antecipação"] == pytest.approx(200.0)
+        assert r1["13o"] == pytest.approx(300.0)
+        assert r1["Total"] == pytest.approx(1000.0)
+
+
+# ──────────────────────────────────────────────────────────────────
+# Ocultar colunas de valor zeradas (ocultar_colunas_zeradas)
+# ──────────────────────────────────────────────────────────────────
+
+
+@pytest.mark.unit
+class TestOcultarColunasZeradas:
+    def test_remove_coluna_outros_zerada(self):
+        pivot = pd.DataFrame(
+            {
+                "REGIAO": ["R1", "R2", "Total"],
+                "CNC": [100.0, 200.0, 300.0],
+                "OUTROS": [0.0, 0.0, 0.0],
+                "Total": [100.0, 200.0, 300.0],
+            }
+        )
+        out = ocultar_colunas_zeradas(pivot, "REGIAO")
+        assert list(out.columns) == ["REGIAO", "CNC", "Total"]
+        # totais por linha intactos
+        assert out["Total"].tolist() == [100.0, 200.0, 300.0]
+
+    def test_mantem_colunas_com_qualquer_valor(self):
+        pivot = pd.DataFrame(
+            {
+                "REGIAO": ["R1", "Total"],
+                "CNC": [0.0, 0.0],
+                "SAQUE": [0.0, 0.0],
+                "FGTS": [50.0, 50.0],
+                "Total": [50.0, 50.0],
+            }
+        )
+        out = ocultar_colunas_zeradas(pivot, "REGIAO")
+        # CNC e SAQUE (todas-zero) saem; FGTS fica
+        assert list(out.columns) == ["REGIAO", "FGTS", "Total"]
+
+    def test_total_nunca_e_removido(self):
+        # pivot degenerado: todas as colunas de valor zeradas
+        pivot = pd.DataFrame(
+            {
+                "REGIAO": ["R1", "Total"],
+                "OUTROS": [0.0, 0.0],
+                "Total": [0.0, 0.0],
+            }
+        )
+        out = ocultar_colunas_zeradas(pivot, "REGIAO")
+        assert list(out.columns) == ["REGIAO", "Total"]
+
+    def test_pivot_vazio_inalterado(self):
+        pivot = pd.DataFrame(columns=["REGIAO"])
+        out = ocultar_colunas_zeradas(pivot, "REGIAO")
+        assert list(out.columns) == ["REGIAO"]
+
+    def test_so_dimensao_inalterado(self):
+        pivot = pd.DataFrame({"REGIAO": ["R1", "Total"]})
+        out = ocultar_colunas_zeradas(pivot, "REGIAO")
+        assert list(out.columns) == ["REGIAO"]

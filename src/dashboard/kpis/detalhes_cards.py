@@ -33,10 +33,50 @@ from typing import Optional
 
 import pandas as pd
 
+from src.config.settings import NOMES_DISPLAY_PRODUTO
 from src.dashboard.kpis.gerais import (
     excluir_supervisores,
     separar_cancelados_liquidos,
 )
+
+# Desmembramento do grupo 'PACK' (grupo_dashboard) nas suas categorias
+# granulares para os pivots de detalhe. A chave e o ``categoria_codigo``
+# (verdade dos contratos / RPC); o valor e o rotulo exibido. Linhas fora
+# deste mapa mantem o ``grupo_dashboard``. Espelha a composicao do PACK
+# em ``PRODUTOS_DASHBOARD['FGTS_ANT_BEN_CNC13']`` (gerais.py).
+PACK_SPLIT_LABELS = {
+    "FGTS": "FGTS",
+    "ANT_BENEF": "Antecipação",
+    "CNC_13": "13o",
+}
+
+# Nome da coluna derivada que substitui ``grupo_dashboard`` nos pivots
+# de detalhe quando o PACK e desmembrado.
+COL_PRODUTO_DETALHADO = "PRODUTO_DETALHADO"
+
+
+def adicionar_produto_detalhado(df: pd.DataFrame) -> pd.DataFrame:
+    """Acrescenta ``PRODUTO_DETALHADO`` desmembrando o grupo 'PACK'.
+
+    Para cada linha: se ``categoria_codigo`` pertence ao PACK
+    (``PACK_SPLIT_LABELS``), usa o rotulo granular (FGTS / Antecipação /
+    13o); caso contrario mantem o ``grupo_dashboard`` (aplicando
+    ``NOMES_DISPLAY_PRODUTO`` como rede de seguranca para qualquer 'PACK'
+    residual que nao tenha caido no split). Copia defensiva.
+
+    Se faltar ``grupo_dashboard``, devolve o df inalterado (os pivots
+    fazem fallback para ``grupo_dashboard`` quando a coluna nao existe).
+    """
+    if df.empty or "grupo_dashboard" not in df.columns:
+        return df
+    out = df.copy()
+    base = out["grupo_dashboard"].replace(NOMES_DISPLAY_PRODUTO)
+    if "categoria_codigo" in out.columns:
+        granular = out["categoria_codigo"].map(PACK_SPLIT_LABELS)
+        out[COL_PRODUTO_DETALHADO] = granular.fillna(base)
+    else:
+        out[COL_PRODUTO_DETALHADO] = base
+    return out
 
 
 # ──────────────────────────────────────────────────────────────────
@@ -267,6 +307,27 @@ def detalhe_analise_pivot(
 
     pivot.index.name = linha
     return pivot.reset_index()
+
+
+def ocultar_colunas_zeradas(pivot: pd.DataFrame, linha: str) -> pd.DataFrame:
+    """Remove do pivot as colunas de valor inteiramente zeradas.
+
+    Mantem sempre ``linha`` (dimensao) e ``Total``. Uma coluna de
+    produto/banco cujo VALOR e zero em TODAS as linhas — caso tipico do
+    bucket ``OUTROS`` (emissoes/seguros com ``conta_valor=False``) ou de
+    produtos sem digitacao no dia — apenas ocupa espaco; e descartada.
+    Como as colunas removidas sao todas-zero, os ``Total`` por linha NAO
+    mudam. Pivot vazio / so com ``linha`` → inalterado.
+    """
+    if pivot.empty or pivot.shape[1] <= 1:
+        return pivot
+    manter = [
+        col
+        for col in pivot.columns
+        if col in (linha, "Total")
+        or (pd.to_numeric(pivot[col], errors="coerce").fillna(0.0) != 0).any()
+    ]
+    return pivot[manter]
 
 
 # ──────────────────────────────────────────────────────────────────

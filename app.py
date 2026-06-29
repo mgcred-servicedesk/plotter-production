@@ -3,7 +3,7 @@ Dashboard interativo de vendas — MGCred.
 
 Entrypoint principal para deploy no Streamlit Cloud.
 Consome dados diretamente do banco Supabase (PostgreSQL),
-usando categorias_produto, v_pontuacao_efetiva e views.
+via views v_* e RPCs (ex.: obter_pontuacao_periodo).
 Autocontido: nao depende dos modulos de KPI antigos
 (kpi_dashboard.py, kpi_analiticos.py) nem dos loaders
 de planilha (column_mapper.py, pontuacao_loader.py).
@@ -54,7 +54,6 @@ from src.dashboard.loaders import (
     carregar_consultores_cadastro,
     carregar_contratos_cancelados,
     carregar_contratos_em_analise,
-    carregar_digitacao_diaria,
     carregar_digitacao_diaria_detalhe,
     carregar_lojas_regioes,
     carregar_metas_produto,
@@ -1314,7 +1313,6 @@ def main():
                     )
                     render_detalhe_em_analise(
                         df_analise=df_analise_f,
-                        df_digitacao=carregar_digitacao_diaria(mes, ano),
                         df_digitacao_detalhe=df_digitacao_detalhe,
                         du_decorridos=du_decorridos,
                         du_total=_du_total,

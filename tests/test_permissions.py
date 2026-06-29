@@ -72,3 +72,27 @@ class TestAgregarDigitacaoDiaria:
         assert list(res.columns) == [
             "data_cadastro", "qtd_digitada", "valor_digitado",
         ]
+
+    def test_serie_reflete_apenas_o_escopo_recebido(self):
+        # Regressao do vazamento: a serie "Ultimos 7 Dias" deriva do
+        # detalhe JA recortado por RLS. Se alimentada com o subconjunto de
+        # uma regiao, os totais diarios refletem SO essa regiao — nunca o
+        # agregado global.
+        detalhe_global = pd.DataFrame(
+            {
+                "DATA_CADASTRO": pd.to_datetime(
+                    ["2026-06-01", "2026-06-01"]
+                ),
+                "REGIAO": ["R1", "R2"],
+                "LOJA": ["L1", "L2"],
+                "grupo_dashboard": ["CNC", "CNC"],
+                "VALOR": [1000.0, 4000.0],
+                "qtd_digitada": [10, 40],
+            }
+        )
+        escopo_r1 = detalhe_global[detalhe_global["REGIAO"] == "R1"]
+        res = _agregar_digitacao_diaria(escopo_r1)
+        dia = res.iloc[0]
+        # So R1 (1000 / 10) — NAO o global (5000 / 50).
+        assert dia["valor_digitado"] == pytest.approx(1000.0)
+        assert dia["qtd_digitada"] == 10

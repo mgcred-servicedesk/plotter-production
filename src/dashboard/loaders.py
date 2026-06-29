@@ -28,6 +28,44 @@ from src.dashboard.rls import _obter_perfil_efetivo
 
 _PAGE_SIZE = 1000
 
+# Janela (dias de calendario) do detalhe de digitacao. Os quadros que o
+# consomem — "Ultimo Dia" e "Ultimos 7 Dias" (este, apos o recorte RLS
+# client-side) — so precisam da semana recente. 14 cobre com folga os 7
+# dias-com-dado exibidos + 1 dia-base da Var. % incluindo fins de semana,
+# sem trazer o mes inteiro (RPC migration 042). Tunavel: menor = menos
+# payload, porem maior risco de escopo pouco ativo ficar curto.
+_DIGITACAO_DETALHE_DIAS_RECENTES = 14
+
+
+# Colunas de v_contratos_dashboard consumidas pelo dashboard, mapeadas
+# para os nomes canonicos do DataFrame. Usado no select explicito de
+# _fetch_contratos_pagos (evita "*" e reduz o payload do PostgREST).
+_COLS_CONTRATOS_PAGOS = {
+    "contrato_id": "CONTRATO_ID",
+    "num_proposta": "NUM_PROPOSTA",
+    "data_status_pagamento": "DATA",
+    "data_cadastro": "DATA_CADASTRO",
+    "loja": "LOJA",
+    "regiao": "REGIAO",
+    "consultor": "CONSULTOR",
+    "produto": "PRODUTO",
+    "tipo_produto": "TIPO_PRODUTO",
+    "subtipo": "SUBTIPO",
+    "tipo_operacao": "TIPO OPER.",
+    "valor": "VALOR",
+    "prazo": "PRAZO",
+    "valor_parcela": "VALOR_PARCELA",
+    "banco": "BANCO",
+    "convenio": "CONVENIO",
+    "sub_status_banco": "SUB_STATUS",
+    "categoria_codigo": "categoria_codigo",
+    "grupo_dashboard": "grupo_dashboard",
+    "grupo_meta": "grupo_meta",
+    "conta_valor": "conta_valor",
+    "conta_pontuacao": "conta_pontuacao",
+    "created_at": "CREATED_AT",
+}
+
 
 # Portabilidade herda os pontos do CONSIG do banco origem.
 # Chaves normalizadas (strip + upper). CONSIG_PRIV nao entra:
@@ -147,13 +185,17 @@ def _fetch_contratos_pagos(mes: int, ano: int) -> pd.DataFrame:
     if not periodo:
         return pd.DataFrame()
 
+    # select explicito (em vez de "*"): so as colunas consumidas pelo
+    # dashboard trafegam do PostgREST. "id" entra apenas para o order
+    # estavel da paginacao (nao e mapeado para o DataFrame).
+    colunas = "id," + ",".join(_COLS_CONTRATOS_PAGOS)
     all_data: List[dict] = []
     offset = 0
     while True:
         resp = (
             _sb()
             .from_("v_contratos_dashboard")
-            .select("*")
+            .select(colunas)
             .eq("periodo_id", periodo["id"])
             .order("id")
             .limit(_PAGE_SIZE)
@@ -169,53 +211,32 @@ def _fetch_contratos_pagos(mes: int, ano: int) -> pd.DataFrame:
     if not all_data:
         return pd.DataFrame()
 
-    rows = []
-    for c in all_data:
-        rows.append(
-            {
-                "CONTRATO_ID": c.get("contrato_id"),
-                "NUM_PROPOSTA": c.get("num_proposta", ""),
-                "DATA": c.get("data_status_pagamento"),
-                "DATA_CADASTRO": c.get("data_cadastro"),
-                "LOJA": c.get("loja", ""),
-                "REGIAO": c.get("regiao", ""),
-                "CONSULTOR": c.get("consultor", ""),
-                "PRODUTO": c.get("produto", ""),
-                "TIPO_PRODUTO": c.get("tipo_produto", ""),
-                "SUBTIPO": c.get("subtipo", ""),
-                "TIPO OPER.": c.get("tipo_operacao", ""),
-                "VALOR": float(c.get("valor", 0)),
-                "PRAZO": c.get("prazo", ""),
-                "VALOR_PARCELA": float(c.get("valor_parcela") or 0),
-                "BANCO": c.get("banco", ""),
-                "CONVENIO": c.get("convenio", ""),
-                "SUB_STATUS": c.get("sub_status_banco", ""),
-                "categoria_codigo": c.get("categoria_codigo", ""),
-                "grupo_dashboard": c.get("grupo_dashboard"),
-                "grupo_meta": c.get("grupo_meta"),
-                "conta_valor": c.get("conta_valor", True),
-                "conta_pontuacao": c.get("conta_pontuacao", True),
-                "CREATED_AT": c.get("created_at"),
-            }
-        )
+    # Monta o DataFrame direto da resposta (sem loop linha-a-linha).
+    # reindex garante a presenca/ordem das colunas-fonte mesmo que o
+    # PostgREST omita alguma chave; rename aplica os nomes canonicos.
+    df = (
+        pd.DataFrame(all_data)
+        .reindex(columns=list(_COLS_CONTRATOS_PAGOS))
+        .rename(columns=_COLS_CONTRATOS_PAGOS)
+    )
 
-    df = pd.DataFrame(rows)
+    # Numericos: VALOR_PARCELA nulo -> 0 (espelha o antigo `or 0`).
+    # Colunas de texto e flags (conta_valor/conta_pontuacao) ficam
+    # como vieram — None de LEFT JOIN preservado, como antes.
+    df["VALOR"] = pd.to_numeric(df["VALOR"], errors="coerce").fillna(0.0)
+    df["VALOR_PARCELA"] = pd.to_numeric(
+        df["VALOR_PARCELA"], errors="coerce"
+    ).fillna(0.0)
 
-    if "DATA" in df.columns:
-        df["DATA"] = pd.to_datetime(df["DATA"], errors="coerce")
-
-    # DATA_CADASTRO chega como texto ISO ('yyyy-mm-dd'); normaliza para
-    # datetime64 como nos loaders de em_analise/cancelados (consistencia
-    # e exibicao dd/mm/aaaa).
-    if "DATA_CADASTRO" in df.columns:
-        df["DATA_CADASTRO"] = pd.to_datetime(
-            df["DATA_CADASTRO"], errors="coerce"
-        )
-
-    if "CREATED_AT" in df.columns:
-        df["CREATED_AT"] = pd.to_datetime(
-            df["CREATED_AT"], errors="coerce", utc=True
-        )
+    # Datas: DATA_CADASTRO chega como texto ISO ('yyyy-mm-dd'); normaliza
+    # para datetime64 como nos loaders de em_analise/cancelados.
+    df["DATA"] = pd.to_datetime(df["DATA"], errors="coerce")
+    df["DATA_CADASTRO"] = pd.to_datetime(
+        df["DATA_CADASTRO"], errors="coerce"
+    )
+    df["CREATED_AT"] = pd.to_datetime(
+        df["CREATED_AT"], errors="coerce", utc=True
+    )
 
     return df
 
@@ -396,54 +417,77 @@ def _digitacao_diaria_historico(mes: int, ano: int) -> pd.DataFrame:
 # ══════════════════════════════════════════════════════
 
 
-def carregar_digitacao_diaria_detalhe(mes: int, ano: int) -> pd.DataFrame:
+def carregar_digitacao_diaria_detalhe(
+    mes: int,
+    ano: int,
+    dias_recentes: Optional[int] = _DIGITACAO_DETALHE_DIAS_RECENTES,
+) -> pd.DataFrame:
     """Carrega a digitacao diaria detalhada (RPC
     obter_digitacao_diaria_detalhe).
 
     Mesma base do agregado ``carregar_digitacao_diaria`` (contratos
-    direto, TODOS os status, janela mes-calendario), mas quebrada por
-    dia x regiao x grupo_dashboard — alimenta o pivot do "Ultimo Dia
-    Apurado". A soma do detalhe bate com o agregado do mesmo dia.
+    direto, TODOS os status), quebrada por dia x regiao x loja x
+    grupo_dashboard x categoria_codigo — alimenta o pivot do "Ultimo Dia
+    Apurado" E, apos o recorte RLS client-side, a serie "Ultimos 7 Dias".
+    A soma do detalhe bate com o agregado do mesmo dia.
+
+    ``dias_recentes`` (default ``_DIGITACAO_DETALHE_DIAS_RECENTES``)
+    limita a JANELA aos ultimos N dias de calendario (RPC migration 042),
+    evitando trazer o mes inteiro — ambos os consumidores so usam a
+    semana recente. ``None`` traz o mes inteiro (retrocompativel). Entra
+    na chave de cache.
 
     TTL real: 15min para mes corrente, 6h para historico.
 
     Colunas mapeadas para reuso direto pelas funcoes de pivot/ultimo
     dia: ``DATA_CADASTRO`` (datetime), ``REGIAO``, ``LOJA``,
-    ``grupo_dashboard``, ``VALOR`` (bruto, = valor_digitado),
-    ``qtd_digitada``. SEM ``conta_valor`` — digitacao e volume bruto.
+    ``grupo_dashboard``, ``categoria_codigo``, ``VALOR`` (bruto, =
+    valor_digitado), ``qtd_digitada``. SEM ``conta_valor`` — digitacao e
+    volume bruto. ``categoria_codigo`` permite desmembrar o grupo 'PACK'
+    em colunas granulares no pivot (RPC migration 041).
     """
     if _eh_mes_atual(mes, ano):
-        return _digitacao_detalhe_atual(mes, ano)
-    return _digitacao_detalhe_historico(mes, ano)
+        return _digitacao_detalhe_atual(mes, ano, dias_recentes)
+    return _digitacao_detalhe_historico(mes, ano, dias_recentes)
 
 
-def _fetch_digitacao_diaria_detalhe(mes: int, ano: int) -> pd.DataFrame:
+def _fetch_digitacao_diaria_detalhe(
+    mes: int,
+    ano: int,
+    dias_recentes: Optional[int] = None,
+) -> pd.DataFrame:
     """Executa a RPC de digitacao detalhada sem cache.
 
-    Resultado e agregado por (dia, regiao, loja, grupo_dashboard). Ao
-    contrario do agregado diario (<= 31 linhas), a granularidade dia x
-    regiao x loja x produto pode passar de 1000 linhas no mes — o limite
-    default do PostgREST. Sem paginacao, a resposta era truncada e, como
-    a RPC ordena por data ascendente, os dias mais recentes (e regioes)
-    sumiam. Paginamos com ``.range`` como em ``_fetch_contratos_cancelados``.
+    Resultado e agregado por (dia, regiao, loja, grupo_dashboard,
+    categoria_codigo). Ao contrario do agregado diario (<= 31 linhas), a
+    granularidade dia x regiao x loja x produto pode passar de 1000
+    linhas — o limite default do PostgREST. Sem paginacao, a resposta era
+    truncada e, como a RPC ordena por data ascendente, os dias mais
+    recentes (e regioes) sumiam. Paginamos com ``.range`` como em
+    ``_fetch_contratos_cancelados``.
+
+    ``dias_recentes`` (None = mes inteiro) e repassado a RPC como
+    ``p_dias_recentes`` (migration 042); omitido quando None para usar o
+    DEFAULT NULL da funcao.
     """
     cols = [
         "DATA_CADASTRO",
         "REGIAO",
         "LOJA",
         "grupo_dashboard",
+        "categoria_codigo",
         "VALOR",
         "qtd_digitada",
     ]
+    params: Dict[str, int] = {"p_mes": mes, "p_ano": ano}
+    if dias_recentes is not None:
+        params["p_dias_recentes"] = dias_recentes
     all_data: List[dict] = []
     offset = 0
     while True:
         resp = (
             _sb()
-            .rpc(
-                "obter_digitacao_diaria_detalhe",
-                {"p_mes": mes, "p_ano": ano},
-            )
+            .rpc("obter_digitacao_diaria_detalhe", params)
             .range(offset, offset + _PAGE_SIZE - 1)
             .execute()
         )
@@ -463,6 +507,9 @@ def _fetch_digitacao_diaria_detalhe(mes: int, ano: int) -> pd.DataFrame:
                 "REGIAO": r.get("regiao", "") or "",
                 "LOJA": r.get("loja", "") or "",
                 "grupo_dashboard": r.get("grupo_dashboard"),
+                # None enquanto a migration 041 nao roda → o helper de
+                # split cai no fallback grupo_dashboard (sem quebrar).
+                "categoria_codigo": r.get("categoria_codigo"),
                 "VALOR": float(r.get("valor_digitado", 0) or 0),
                 "qtd_digitada": int(r.get("qtd_digitada", 0) or 0),
             }
@@ -474,15 +521,19 @@ def _fetch_digitacao_diaria_detalhe(mes: int, ano: int) -> pd.DataFrame:
 
 
 @st.cache_data(ttl=900)
-def _digitacao_detalhe_atual(mes: int, ano: int) -> pd.DataFrame:
+def _digitacao_detalhe_atual(
+    mes: int, ano: int, dias_recentes: Optional[int] = None
+) -> pd.DataFrame:
     """Digitacao detalhada — mes corrente. TTL 15min."""
-    return _fetch_digitacao_diaria_detalhe(mes, ano)
+    return _fetch_digitacao_diaria_detalhe(mes, ano, dias_recentes)
 
 
 @st.cache_data(ttl=21600)
-def _digitacao_detalhe_historico(mes: int, ano: int) -> pd.DataFrame:
+def _digitacao_detalhe_historico(
+    mes: int, ano: int, dias_recentes: Optional[int] = None
+) -> pd.DataFrame:
     """Digitacao detalhada — historico. TTL 6h."""
-    return _fetch_digitacao_diaria_detalhe(mes, ano)
+    return _fetch_digitacao_diaria_detalhe(mes, ano, dias_recentes)
 
 
 # ══════════════════════════════════════════════════════
