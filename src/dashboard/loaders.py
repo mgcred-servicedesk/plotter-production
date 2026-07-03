@@ -47,6 +47,7 @@ _COLS_CONTRATOS_PAGOS = {
     "data_cadastro": "DATA_CADASTRO",
     "loja": "LOJA",
     "regiao": "REGIAO",
+    "regiao_atual": "REGIAO_ATUAL",
     "consultor": "CONSULTOR",
     "produto": "PRODUTO",
     "tipo_produto": "TIPO_PRODUTO",
@@ -303,6 +304,7 @@ def _fetch_contratos_em_analise(mes: int, ano: int) -> pd.DataFrame:
                 "DATA_CADASTRO": c.get("data_cadastro"),
                 "LOJA": c.get("loja", ""),
                 "REGIAO": c.get("regiao", ""),
+                "REGIAO_ATUAL": c.get("regiao_atual", ""),
                 "CONSULTOR": c.get("consultor", ""),
                 "PRODUTO": c.get("produto", ""),
                 "TIPO_PRODUTO": c.get("tipo_produto", ""),
@@ -473,6 +475,7 @@ def _fetch_digitacao_diaria_detalhe(
     cols = [
         "DATA_CADASTRO",
         "REGIAO",
+        "REGIAO_ATUAL",
         "LOJA",
         "grupo_dashboard",
         "categoria_codigo",
@@ -505,6 +508,7 @@ def _fetch_digitacao_diaria_detalhe(
             {
                 "DATA_CADASTRO": r.get("data_cadastro"),
                 "REGIAO": r.get("regiao", "") or "",
+                "REGIAO_ATUAL": r.get("regiao_atual", "") or "",
                 "LOJA": r.get("loja", "") or "",
                 "grupo_dashboard": r.get("grupo_dashboard"),
                 # None enquanto a migration 041 nao roda → o helper de
@@ -592,6 +596,7 @@ def _fetch_contratos_cancelados(mes: int, ano: int) -> pd.DataFrame:
                 "DATA_CADASTRO": c.get("data_cadastro"),
                 "LOJA": c.get("loja", ""),
                 "REGIAO": c.get("regiao", ""),
+                "REGIAO_ATUAL": c.get("regiao_atual", ""),
                 "CONSULTOR": c.get("consultor", ""),
                 "PRODUTO": c.get("produto", ""),
                 "TIPO_PRODUTO": c.get("tipo_produto", ""),
@@ -707,52 +712,56 @@ def carregar_metas(mes: int, ano: int) -> pd.DataFrame:
 def _reanexar_regiao(
     df_pivot: pd.DataFrame, fonte: pd.DataFrame
 ) -> pd.DataFrame:
-    """Reanexa a coluna REGIAO (perdida no pivot indexado por LOJA).
+    """Reanexa REGIAO (e REGIAO_ATUAL quando presente) perdidas no pivot
+    indexado por LOJA.
 
     Permite o filtro RLS por regiao sem depender de contratos. `fonte`
-    e o DataFrame nao-pivotado que ainda carrega LOJA + REGIAO.
+    e o DataFrame nao-pivotado que ainda carrega LOJA + REGIAO (e,
+    quando disponivel, REGIAO_ATUAL). REGIAO_ATUAL so e reanexada se a
+    fonte a tiver, para o recorte RLS do gerente pelo organograma atual.
     """
-    regiao_por_loja = fonte[["LOJA", "REGIAO"]].drop_duplicates("LOJA")
+    cols = ["LOJA", "REGIAO"]
+    if "REGIAO_ATUAL" in fonte.columns:
+        cols.append("REGIAO_ATUAL")
+    regiao_por_loja = fonte[cols].drop_duplicates("LOJA")
     return df_pivot.merge(regiao_por_loja, on="LOJA", how="left")
 
 
 def _fetch_metas(mes: int, ano: int) -> pd.DataFrame:
-    """Executa a query de metas GERAL/LOJA sem cache."""
-    periodo = carregar_periodo(mes, ano)
-    if not periodo:
-        return pd.DataFrame()
+    """Executa a query de metas GERAL/LOJA sem cache.
 
-    query = (
+    Usa a RPC obter_metas_geral_loja (migration 045), que resolve a
+    REGIAO vigente na COMPETENCIA da meta (point-in-time via
+    loja_regiao_vigencia) e devolve REGIAO_ATUAL (organograma atual,
+    p/ o recorte RLS do gerente) e loja_ativa. Requer a 045 aplicada.
+    """
+    colunas_vazio = [
+        "LOJA", "REGIAO", "REGIAO_ATUAL", "META_PRATA", "META_OURO"
+    ]
+
+    resp = (
         _sb()
-        .table("metas")
-        .select(
-            "id, produto, escopo, nivel, valor, "
-            "lojas!inner(nome, regioes(nome))"
-        )
-        .eq("periodo_id", periodo["id"])
-        .eq("produto", "GERAL")
-        .eq("escopo", "LOJA")
+        .rpc("obter_metas_geral_loja", {"p_mes": mes, "p_ano": ano})
+        .execute()
     )
-    # Mes corrente: conta apenas lojas ativas (loja recem-aberta
-    # entra; loja inativa nao). Historico: preserva todas as lojas
-    # que tinham meta, mesmo que hoje estejam inativas.
-    if _eh_mes_atual(mes, ano):
-        query = query.eq("lojas.ativo", True)
-    resp = query.execute()
 
     if not resp.data:
-        return pd.DataFrame(
-            columns=["LOJA", "REGIAO", "META_PRATA", "META_OURO"]
-        )
+        return pd.DataFrame(columns=colunas_vazio)
+
+    # Mes corrente: conta apenas lojas ativas (loja recem-aberta entra;
+    # loja inativa nao). Historico: preserva todas as lojas que tinham
+    # meta, mesmo que hoje estejam inativas.
+    filtrar_ativas = _eh_mes_atual(mes, ano)
 
     rows = []
     for m in resp.data:
-        loja = m.get("lojas") or {}
-        regiao = (loja.get("regioes") or {}).get("nome", "")
+        if filtrar_ativas and not m.get("loja_ativa", True):
+            continue
         rows.append(
             {
-                "LOJA": loja.get("nome", ""),
-                "REGIAO": regiao,
+                "LOJA": m.get("loja", ""),
+                "REGIAO": m.get("regiao", "") or "",
+                "REGIAO_ATUAL": m.get("regiao_atual", "") or "",
                 "nivel": m.get("nivel"),
                 "valor": float(m.get("valor", 0)),
             }
@@ -787,9 +796,7 @@ def _fetch_metas(mes: int, ano: int) -> pd.DataFrame:
 
         return df_pivot
 
-    return pd.DataFrame(
-        columns=["LOJA", "REGIAO", "META_PRATA", "META_OURO"]
-    )
+    return pd.DataFrame(columns=colunas_vazio)
 
 
 @st.cache_data(ttl=21600)

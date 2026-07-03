@@ -348,9 +348,17 @@ def _render_sidebar_visualizar_como(df_full):
         st.session_state.pop("visualizar_como", None)
 
     elif sel == "Gerente Comercial":
+        # Lista as regioes ATUAIS (organograma): o escopo simulado e
+        # casado contra REGIAO_ATUAL no aplicar_rls. Fallback para
+        # REGIAO quando a df ainda nao carrega REGIAO_ATUAL.
+        _col_reg = (
+            "REGIAO_ATUAL"
+            if "REGIAO_ATUAL" in df_full.columns
+            else "REGIAO"
+        )
         regioes = (
-            sorted(df_full["REGIAO"].dropna().unique().tolist())
-            if "REGIAO" in df_full.columns
+            sorted(df_full[_col_reg].dropna().unique().tolist())
+            if _col_reg in df_full.columns
             else []
         )
         escopo = st.multiselect(

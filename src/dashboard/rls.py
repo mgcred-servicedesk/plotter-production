@@ -40,6 +40,7 @@ def aplicar_rls(
     coluna_regiao: str = "REGIAO",
     coluna_loja: str = "LOJA",
     coluna_consultor: str = "CONSULTOR",
+    coluna_regiao_atual: str = "REGIAO_ATUAL",
 ) -> pd.DataFrame:
     """
     Aplica filtro de segurança por linha no DataFrame.
@@ -70,8 +71,18 @@ def aplicar_rls(
     # de escopo desses perfis e garantida no cadastro
     # (auth.criar_usuario / editar_usuario); aqui e defesa em
     # profundidade contra escopo vazio vindo de outras origens.
+    # Gerente comercial: recorte pela regiao ATUAL da loja (organograma
+    # vigente), nao pela regiao point-in-time. Assim enxerga o historico
+    # completo das lojas que sao dele HOJE. Fallback para coluna_regiao
+    # quando a df ainda nao carrega REGIAO_ATUAL (equivale ao estado
+    # pre-remanejamento, em que regiao == regiao atual).
+    col_gerente = (
+        coluna_regiao_atual
+        if coluna_regiao_atual in df.columns
+        else coluna_regiao
+    )
     coluna_por_perfil = {
-        "gerente_comercial": coluna_regiao,
+        "gerente_comercial": col_gerente,
         "supervisor": coluna_loja,
         "consultor": coluna_consultor,
     }
@@ -87,6 +98,7 @@ def aplicar_rls_metas(
     df_dados: pd.DataFrame,
     coluna_loja: str = "LOJA",
     coluna_regiao: str = "REGIAO",
+    coluna_regiao_atual: str = "REGIAO_ATUAL",
 ) -> pd.DataFrame:
     """
     Filtra metas conforme o perfil/escopo RLS do usuário.
@@ -108,8 +120,15 @@ def aplicar_rls_metas(
         return df_metas
 
     if role == "gerente_comercial" and escopo:
-        if coluna_regiao in df_metas.columns:
-            return df_metas[df_metas[coluna_regiao].isin(escopo)].copy()
+        # Recorte pela regiao ATUAL (lojas do gerente hoje); fallback
+        # para REGIAO quando a df ainda nao carrega REGIAO_ATUAL.
+        col = (
+            coluna_regiao_atual
+            if coluna_regiao_atual in df_metas.columns
+            else coluna_regiao
+        )
+        if col in df_metas.columns:
+            return df_metas[df_metas[col].isin(escopo)].copy()
         return df_metas
 
     if role == "supervisor" and escopo:
