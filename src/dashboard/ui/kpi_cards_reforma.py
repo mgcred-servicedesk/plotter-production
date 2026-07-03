@@ -9,7 +9,6 @@ Novo layout: 3 KPIs principais dominantes + KPIs de contexto.
 Cores semânticas: Verde (>100%), Amarelo (60-99%), Vermelho (<60%)
 """
 
-import math
 from typing import Dict, List, Optional, Sequence
 
 import streamlit as st
@@ -21,7 +20,6 @@ from src.dashboard.formatters import (
 )
 from src.dashboard.permissions import pode_ver
 from src.dashboard.ui.colors import (
-    get_status_color,
     get_status_full,
     get_churn_status,
     get_ritmo_status,
@@ -745,7 +743,8 @@ def render_cards_reconquista(
         return
 
     totais = dados.get("totais") or {}
-    total = int(totais.get("total", 0))
+    total = int(totais.get("total", 0))            # elegiveis (base)
+    total_geral = int(totais.get("total_geral", total))
 
     ref_mes = dados.get("ref_mes")
     ref_ano = dados.get("ref_ano")
@@ -761,45 +760,31 @@ def render_cards_reconquista(
     )
 
     if total == 0:
-        st.info(
+        msg = (
             f"Sem contratos com fim de relacionamento em {ref_label}."
+            if total_geral == 0
+            else f"Sem clientes elegíveis em {ref_label} "
+            f"({total_geral} não elegíveis)."
         )
+        st.info(msg)
         return
 
     efet = int(totais.get("efetivadas", 0))
     prom = int(totais.get("promessas", 0))
     sem = int(totais.get("sem_reconquista", 0))
-    taxa = float(totais.get("taxa", 0.0))
-    meta = float(totais.get("meta", 0.0))
+    conversao = float(totais.get("conversao", 0.0))
+    faixa = totais.get("faixa") or {}
+    cor_faixa = faixa.get("cor", "var(--mg-text)")
+    faixa_rotulo = faixa.get("rotulo", "—")
+
+    nao_elegivel = int(totais.get("nao_elegivel", 0))
 
     pct_efet = efet / total * 100 if total else 0.0
     pct_prom = prom / total * 100 if total else 0.0
     pct_sem = sem / total * 100 if total else 0.0
 
-    cor_taxa = get_status_color(taxa / meta * 100 if meta > 0 else 0)
-    delta_pp = taxa - meta
-    sinal_pp = "+" if delta_pp >= 0 else ""
-
-    # Quantas efetivações ainda faltam para atingir a meta no mês.
-    alvo_meta = math.ceil(total * meta / 100) if meta > 0 else 0
-    gap_meta = max(0, alvo_meta - efet)
-    gap_txt = (
-        f"Faltam <strong>{gap_meta}</strong> p/ meta"
-        if gap_meta > 0
-        else "✓ meta atingida"
-    )
-
     # Taxa que a base alcançaria se todas as promessas virassem efetivadas.
     taxa_potencial = (efet + prom) / total * 100 if total else 0.0
-
-    # Quantos clientes "sem reconquista" precisam virar promessa para que
-    # a projeção (efetivadas + promessas) alcance a meta.
-    estimular = max(0, alvo_meta - efet - prom)
-    if estimular > 0:
-        _cli = "cliente" if estimular == 1 else "clientes"
-        estim_txt = f"Estimule <strong>{estimular}</strong> {_cli} a dar o aceite"
-    else:
-        estim_txt = "✓ aceites suficientes p/ meta"
 
     # Variação das promessas vs o período de apuração anterior.
     prom_ant = int(totais.get("promessas_anterior", 0))
@@ -820,22 +805,28 @@ def render_cards_reconquista(
     else:
         var_prom_html = '<span style="opacity: 0.8;">— vs período ant.</span>'
 
+    _nao_eleg_txt = (
+        f' · {nao_elegivel} não elegíveis' if nao_elegivel else ''
+    )
     card_total = _card_contexto(
-        "📋 Clientes do mês",
+        "📋 Elegíveis do mês",
         f"{total:,}",
-        f"Fim de relacionamento {ref_label}",
+        (
+            f'Base da conversão · {total_geral} no total{_nao_eleg_txt}'
+            f'<br><span style="opacity: 0.8;">Fim de relacionamento '
+            f'{ref_label}</span>'
+        ),
     )
 
     card_efet = _card_contexto(
         "✅ Efetivadas",
         f"{efet:,}",
         (
-            f'{pct_efet:.1f}% · meta <strong>{meta:.0f}%</strong> '
-            f'(<strong style="color: {cor_taxa};">'
-            f'{sinal_pp}{delta_pp:.1f} pp</strong>)'
-            f'<br><span style="opacity: 0.8;">{gap_txt}</span>'
+            f'<strong style="color: {cor_faixa};">{pct_efet:.1f}%</strong> '
+            f'de conversão'
+            f'<br><span style="opacity: 0.8;">sobre {total} elegíveis</span>'
         ),
-        valor_style=f' style="color: {cor_taxa};"',
+        valor_style=f' style="color: {cor_faixa};"',
     )
 
     card_prom = _card_contexto(
@@ -851,10 +842,27 @@ def render_cards_reconquista(
     card_sem = _card_contexto(
         "🎯 Sem reconquista",
         f"{sem:,}",
-        (
-            f'{pct_sem:.1f}% · a trabalhar'
-            f'<br><span style="opacity: 0.8;">{estim_txt}</span>'
-        ),
+        f'{pct_sem:.1f}% · a trabalhar',
+    )
+
+    # Objetivo: % de conversão (elegíveis) e a faixa de prêmio/deflator.
+    st.markdown(
+        '<div style="display:flex; align-items:center; gap:16px; '
+        'flex-wrap:wrap; margin:4px 2px 12px; padding:12px 18px; '
+        'background: var(--mg-surface); border: 1px solid var(--mg-border); '
+        f'border-left: 4px solid {cor_faixa}; '
+        'border-radius: var(--mg-radius-md);">'
+        '<div><div style="font-size:12px; color:var(--mg-text-muted);">'
+        '🎯 Conversão (elegíveis)</div>'
+        f'<div style="font-size:26px; font-weight:700; color:{cor_faixa};">'
+        f'{conversao:.1f}%</div></div>'
+        '<div style="flex:1; min-width:180px;">'
+        '<div style="font-size:12px; color:var(--mg-text-muted);">'
+        'Faixa de prêmio</div>'
+        f'<div style="font-size:16px; font-weight:600; color:{cor_faixa};">'
+        f'{faixa_rotulo}</div></div>'
+        '</div>',
+        unsafe_allow_html=True,
     )
 
     st.markdown(

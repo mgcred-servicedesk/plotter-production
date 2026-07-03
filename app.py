@@ -55,6 +55,7 @@ from src.dashboard.loaders import (
     carregar_contratos_cancelados,
     carregar_contratos_em_analise,
     carregar_digitacao_diaria_detalhe,
+    carregar_lojas_ativas,
     carregar_lojas_regioes,
     carregar_metas_produto,
     carregar_metas_produto_consultor,
@@ -348,19 +349,22 @@ def _render_sidebar_visualizar_como(df_full):
         st.session_state.pop("visualizar_como", None)
 
     elif sel == "Gerente Comercial":
-        # Lista as regioes ATUAIS (organograma): o escopo simulado e
-        # casado contra REGIAO_ATUAL no aplicar_rls. Fallback para
-        # REGIAO quando a df ainda nao carrega REGIAO_ATUAL.
+        # Regioes ATUAIS (organograma) a partir das lojas ativas —
+        # inclui regioes sem producao no periodo. O escopo simulado e
+        # casado contra REGIAO_ATUAL no aplicar_rls. Uniao com df_full
+        # como fallback.
+        _regs: set[str] = set()
+        _df_ativas = carregar_lojas_ativas()
+        if "REGIAO_ATUAL" in _df_ativas.columns:
+            _regs |= set(_df_ativas["REGIAO_ATUAL"].dropna())
         _col_reg = (
             "REGIAO_ATUAL"
             if "REGIAO_ATUAL" in df_full.columns
             else "REGIAO"
         )
-        regioes = (
-            sorted(df_full[_col_reg].dropna().unique().tolist())
-            if _col_reg in df_full.columns
-            else []
-        )
+        if _col_reg in df_full.columns:
+            _regs |= set(df_full[_col_reg].dropna())
+        regioes = sorted(r for r in _regs if r)
         escopo = st.multiselect(
             "Regioes",
             regioes,
@@ -375,11 +379,15 @@ def _render_sidebar_visualizar_como(df_full):
             st.session_state.pop("visualizar_como", None)
 
     elif sel == "Supervisor":
-        lojas = (
-            sorted(df_full["LOJA"].dropna().unique().tolist())
-            if "LOJA" in df_full.columns
-            else []
-        )
+        # Lojas ATIVAS (todas) uniao com as que tem producao no periodo,
+        # p/ simular supervisor mesmo de loja zerada.
+        _lojas: set[str] = set()
+        _df_ativas = carregar_lojas_ativas()
+        if "LOJA" in _df_ativas.columns:
+            _lojas |= set(_df_ativas["LOJA"].dropna())
+        if "LOJA" in df_full.columns:
+            _lojas |= set(df_full["LOJA"].dropna())
+        lojas = sorted(lj for lj in _lojas if lj)
         escopo = st.multiselect(
             "Lojas",
             lojas,
@@ -441,11 +449,17 @@ def _render_sidebar_filtros_perfil(
     )
 
     if role == "gerente_comercial":
-        lojas_disp = (
-            sorted(df["LOJA"].dropna().unique().tolist())
-            if "LOJA" in df.columns
-            else []
-        )
+        # Lojas ATIVAS da regiao do gerente (mesmo zeradas na producao):
+        # tabela lojas -> RLS por REGIAO_ATUAL -> uniao com as que tem
+        # producao no periodo. Assim o gerente enxerga/seleciona toda a
+        # sua carteira, nao apenas quem vendeu.
+        lojas_scope: set[str] = set()
+        _df_ativas = aplicar_rls(carregar_lojas_ativas())
+        if "LOJA" in _df_ativas.columns:
+            lojas_scope |= set(_df_ativas["LOJA"].dropna())
+        if "LOJA" in df.columns:
+            lojas_scope |= set(df["LOJA"].dropna())
+        lojas_disp = sorted(lj for lj in lojas_scope if lj)
         if not lojas_disp:
             return
 

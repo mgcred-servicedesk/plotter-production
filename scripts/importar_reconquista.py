@@ -105,6 +105,11 @@ def montar_rows(df: pd.DataFrame) -> list[dict]:
             "tipo_pagamento": _str(r.de_tipo_pagamento),
             "qt_fim_relacionamento": _int(r.qt_fim_relacionamento),
             "link_aceite": _str(r.de_link_aceite),
+            # Coluna nova (opcional): ELEGIVEL / NAO ELEGIVEL. Ausente
+            # em arquivos antigos -> None (o dashboard trata como ELEGIVEL).
+            "flag_elegibilidade": _str(
+                getattr(r, "flag_elegibilidade", None)
+            ),
         })
     return rows
 

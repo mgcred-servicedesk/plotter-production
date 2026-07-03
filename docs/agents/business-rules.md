@@ -222,10 +222,31 @@ EFETIVADA "zerada" no mês mais recente é **esperado**: depende de
 `dt_macica > dt_fim`; quando a maciça desses contratos virar (novo
 `dt_macica` no próximo export), eles migram para EFETIVADA.
 
-### KPI
+### Elegibilidade (coluna `flag_elegibilidade`)
 
-- **Meta = 30%**; taxa de reconquista = `EFETIVADA / total` do mês de
-  referência. PROMESSA é pipeline; SEM RECONQUISTA é a trabalhar.
+O arquivo traz `flag_elegibilidade` (`ELEGIVEL` / `NAO ELEGIVEL`). **Só
+ELEGIVEL entram na apuração/conversão** (numerador e denominador); os
+`NAO ELEGIVEL` continuam visíveis nos analíticos (detalhe por cliente),
+apenas fora da conta. **NULL / sem flag ⇒ ELEGIVEL** (interim, até o
+arquivo com a flag ser importado). Helper: `_mask_elegivel` (loaders).
+
+### KPI — conversão e faixa de prêmio (substitui a meta fixa)
+
+Sem meta de 30%. O objetivo é o **% de conversão** sobre a base elegível
+= `EFETIVADA / total ELEGIVEL` do mês de referência, mapeado numa faixa
+de prêmio/deflator sobre o prêmio CNC (indicador — não calcula R$):
+
+| % Conversão | Ajuste sobre prêmio CNC |
+|---|---|
+| 0 a 10% | −20% |
+| 10,1 a 20% | −10% |
+| 20,1 a 29,99% | 0 |
+| 30 a 39,99% | +10% |
+| ≥ 40% | +20% |
+
+Fronteiras contínuas (limite superior inclusivo nas negativas):
+`_faixa_premio_conversao` (loaders). PROMESSA é pipeline; SEM RECONQUISTA
+é a trabalhar.
 
 > **LGPD:** `nu_matricula` **não** é armazenada. `co_adesao` identifica o
 > contrato, não a pessoa.

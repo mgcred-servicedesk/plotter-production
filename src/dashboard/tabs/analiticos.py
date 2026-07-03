@@ -837,17 +837,19 @@ def _render_reconquista_por_loja(por_loja: pd.DataFrame) -> None:
         return
     cols = [
         "loja", "regiao", "total_clientes", "efetivadas", "promessas",
-        "sem_reconquista", "taxa_pct", "saldo_medio", "dias_atraso_medio",
+        "sem_reconquista", "conversao_pct", "faixa",
+        "saldo_medio", "dias_atraso_medio",
     ]
     df_view = por_loja[[c for c in cols if c in por_loja.columns]].rename(
         columns={
             "loja": "Loja",
             "regiao": "Regiao",
-            "total_clientes": "Clientes",
+            "total_clientes": "Elegíveis",
             "efetivadas": "Efetivadas",
             "promessas": "Promessas",
             "sem_reconquista": "Sem Reconquista",
-            "taxa_pct": "Taxa Efet. %",
+            "conversao_pct": "Conversão %",
+            "faixa": "Faixa Prêmio",
             "saldo_medio": "Saldo Medio",
             "dias_atraso_medio": "Dias Atraso Medio",
         }
@@ -856,7 +858,7 @@ def _render_reconquista_por_loja(por_loja: pd.DataFrame) -> None:
         df_view,
         colunas_moeda=["Saldo Medio"],
         colunas_numero=[
-            "Clientes", "Efetivadas", "Promessas",
+            "Elegíveis", "Efetivadas", "Promessas",
             "Sem Reconquista", "Dias Atraso Medio",
         ],
     )
@@ -870,7 +872,7 @@ def _render_reconquista_detalhamento(clientes: pd.DataFrame) -> None:
         return
 
     # Filtros locais
-    c1, c2, c3 = st.columns(3)
+    c1, c2, c3, c4 = st.columns(4)
 
     with c1:
         status_opts = ["Todos"] + (
@@ -896,6 +898,15 @@ def _render_reconquista_detalhamento(clientes: pd.DataFrame) -> None:
         )
         filt_cons = st.selectbox("Consultor", cons_opts, key="rec_det_cons")
 
+    with c4:
+        eleg_opts = ["Todos"] + (
+            sorted(clientes["flag_elegibilidade"].dropna().unique().tolist())
+            if "flag_elegibilidade" in clientes.columns else []
+        )
+        filt_eleg = st.selectbox(
+            "Elegibilidade", eleg_opts, key="rec_det_eleg"
+        )
+
     df_f = clientes.copy()
     if filt_status != "Todos" and "status" in df_f.columns:
         df_f = df_f[df_f["status"] == filt_status]
@@ -903,6 +914,8 @@ def _render_reconquista_detalhamento(clientes: pd.DataFrame) -> None:
         df_f = df_f[df_f["loja"].isin(filt_lojas)]
     if filt_cons != "Todos" and "consultor" in df_f.columns:
         df_f = df_f[df_f["consultor"] == filt_cons]
+    if filt_eleg != "Todos" and "flag_elegibilidade" in df_f.columns:
+        df_f = df_f[df_f["flag_elegibilidade"] == filt_eleg]
 
     st.caption(
         f"{len(df_f):,} de {len(clientes):,} clientes (após filtros)."
@@ -910,7 +923,8 @@ def _render_reconquista_detalhamento(clientes: pd.DataFrame) -> None:
     )
 
     cols = [
-        "co_adesao", "status", "loja", "regiao", "consultor", "subproduto",
+        "co_adesao", "status", "flag_elegibilidade", "loja", "regiao",
+        "consultor", "subproduto",
         "dt_fim_relacionamento", "dt_macica", "dt_dna",
         "banco_origem", "banco_destino", "saldo_contabil", "dias_atraso",
         "faixa_atraso", "tipo_pagamento", "link_aceite",
@@ -919,6 +933,7 @@ def _render_reconquista_detalhamento(clientes: pd.DataFrame) -> None:
         columns={
             "co_adesao": "Cod ADE",
             "status": "Status",
+            "flag_elegibilidade": "Elegível",
             "loja": "Loja",
             "regiao": "Regiao",
             "consultor": "Consultor",
@@ -961,9 +976,14 @@ def _render_reconquista(reconquista: dict | None):
     clientes = reconquista.get("clientes", pd.DataFrame())
 
     ref_label = f"{ref_mes:02d}/{ref_ano}" if ref_mes else "—"
+    _faixa = (totais.get("faixa") or {}).get("rotulo", "—")
+    _nao_eleg = int(totais.get("nao_elegivel", 0))
+    _nao_eleg_txt = f" ({_nao_eleg} não elegíveis)" if _nao_eleg else ""
     st.caption(
         f"Apuração com defasagem de 1 mês · fim de relacionamento em "
-        f"**{ref_label}** · {totais.get('total', 0)} clientes · "
+        f"**{ref_label}** · {totais.get('total', 0)} elegíveis"
+        f"{_nao_eleg_txt} · "
+        f"Conversão: **{totais.get('conversao', 0.0):.1f}%** ({_faixa}) · "
         f"Efetivadas: {totais.get('efetivadas', 0)} · "
         f"Promessas: {totais.get('promessas', 0)} · "
         f"Sem reconquista: {totais.get('sem_reconquista', 0)}"

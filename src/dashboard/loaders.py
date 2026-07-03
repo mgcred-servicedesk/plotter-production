@@ -1010,6 +1010,36 @@ def carregar_lojas_regioes() -> tuple[list[str], list[str]]:
     return sorted(lojas), sorted(regioes_set)
 
 
+@st.cache_data(ttl=86400)
+def carregar_lojas_ativas() -> pd.DataFrame:
+    """Lojas ATIVAS com a regiao atual, para filtros por escopo.
+
+    Retorna DataFrame [LOJA, REGIAO_ATUAL] das lojas com ativo=true
+    (regiao atual via regioes(nome)). Permite listar as lojas da regiao
+    do gerente mesmo SEM producao ou meta no periodo. Carrega global; o
+    recorte por perfil e client-side (aplicar_rls por REGIAO_ATUAL).
+    TTL 24h.
+    """
+    resp = (
+        _sb()
+        .table("lojas")
+        .select("nome, regioes(nome)")
+        .eq("ativo", True)
+        .order("nome")
+        .execute()
+    )
+    rows = []
+    for row in resp.data or []:
+        rows.append(
+            {
+                "LOJA": row.get("nome", "") or "",
+                "REGIAO_ATUAL": (row.get("regioes") or {}).get("nome", "")
+                or "",
+            }
+        )
+    return pd.DataFrame(rows, columns=["LOJA", "REGIAO_ATUAL"])
+
+
 # ══════════════════════════════════════════════════════
 # Metas individuais por consultor
 # ══════════════════════════════════════════════════════
@@ -1494,7 +1524,55 @@ def _fetch_pagamentos_online() -> pd.DataFrame:
 # docs/agents/business-rules.md.
 # ══════════════════════════════════════════════════════
 
-_RECONQUISTA_META = 30.0  # meta de reconquista (% de EFETIVADA)
+def _faixa_premio_conversao(pct: float) -> Dict:
+    """Mapeia % de conversao -> faixa de premio/deflator sobre premio CNC.
+
+    Substitui a meta fixa: o percentual alcancado sobre a base ELEGIVEL
+    define o ajuste (indicador — nao calcula R$). Faixas (tabela de
+    negocio, limite superior inclusivo nas negativas):
+        0 a 10%      -> -20%
+        10,1 a 20%   -> -10%
+        20,1 a 29,99 ->   0
+        30 a 39,99   -> +10%
+        >= 40        -> +20%
+    Retorna {ajuste_pct, rotulo, cor}.
+    """
+    if pct <= 10:
+        ajuste = -20
+    elif pct <= 20:
+        ajuste = -10
+    elif pct < 30:
+        ajuste = 0
+    elif pct < 40:
+        ajuste = 10
+    else:
+        ajuste = 20
+
+    if ajuste < 0:
+        cor = "#E5484D" if ajuste <= -20 else "#E5844D"
+        rotulo = f"{ajuste}% sobre prêmio CNC"
+    elif ajuste == 0:
+        cor = "var(--mg-text-muted)"
+        rotulo = "0 (neutro)"
+    else:
+        cor = "#10A37F" if ajuste >= 20 else "#3E9B4F"
+        rotulo = f"+{ajuste}% sobre prêmio CNC"
+    return {"ajuste_pct": ajuste, "rotulo": rotulo, "cor": cor}
+
+
+def _mask_elegivel(clientes: pd.DataFrame) -> pd.Series:
+    """Mascara ELEGIVEL. Sem coluna ou valor ausente/NULL => ELEGIVEL
+    (decisao: interim conta como elegivel). NAO ELEGIVEL (com/sem
+    acento) sai da apuracao."""
+    if clientes is None or clientes.empty:
+        return pd.Series([], dtype=bool)
+    if "flag_elegibilidade" not in clientes.columns:
+        return pd.Series(True, index=clientes.index)
+    norm = (
+        clientes["flag_elegibilidade"].fillna("").astype(str)
+        .str.upper().str.strip()
+    )
+    return ~norm.str.startswith(("NAO", "NÃO"))
 
 
 def _mes_apuracao_anterior(mes: int, ano: int) -> Tuple[int, int]:
@@ -1598,31 +1676,50 @@ def _filtrar_rls_reconquista(dados: dict) -> dict:
 
 
 def _totais_reconquista(clientes: pd.DataFrame) -> Dict:
-    """KPIs do mes: contagem por estado + taxa de EFETIVADA."""
-    total = len(clientes)
-    if total == 0 or "status" not in clientes.columns:
-        return {
-            "total": 0, "efetivadas": 0, "promessas": 0,
-            "sem_reconquista": 0, "taxa": 0.0, "meta": _RECONQUISTA_META,
-        }
-    vc = clientes["status"].value_counts()
+    """KPIs do mes sobre a base ELEGIVEL: contagem por estado +
+    conversao (= EFETIVADA / elegiveis) + faixa de premio/deflator.
+
+    Somente ELEGIVEL contam na conversao (NULL/sem flag => ELEGIVEL);
+    os NAO ELEGIVEL seguem visiveis nos analiticos, so fora da conta.
+    """
+    vazio = {
+        "total": 0, "total_geral": 0, "nao_elegivel": 0,
+        "efetivadas": 0, "promessas": 0, "sem_reconquista": 0,
+        "conversao": 0.0, "faixa": _faixa_premio_conversao(0.0),
+    }
+    if clientes is None or clientes.empty or "status" not in clientes.columns:
+        return vazio
+
+    total_geral = len(clientes)
+    eleg = clientes[_mask_elegivel(clientes)]
+    total = len(eleg)
+    if total == 0:
+        return {**vazio, "total_geral": total_geral, "nao_elegivel": total_geral}
+
+    vc = eleg["status"].value_counts()
     efetivadas = int(vc.get("EFETIVADA", 0))
+    conversao = efetivadas / total * 100
     return {
-        "total": total,
+        "total": total,                    # base elegivel (denominador)
+        "total_geral": total_geral,        # todos (contexto)
+        "nao_elegivel": total_geral - total,
         "efetivadas": efetivadas,
         "promessas": int(vc.get("PROMESSA", 0)),
         "sem_reconquista": int(vc.get("SEM RECONQUISTA", 0)),
-        "taxa": efetivadas / total * 100 if total else 0.0,
-        "meta": _RECONQUISTA_META,
+        "conversao": conversao,
+        "faixa": _faixa_premio_conversao(conversao),
     }
 
 
 def _por_loja_reconquista(clientes: pd.DataFrame) -> pd.DataFrame:
-    """Quebra por loja/regiao: 3 estados + taxa de efetivadas."""
-    if clientes.empty or "loja" not in clientes.columns:
+    """Quebra por loja/regiao sobre a base ELEGIVEL: 3 estados +
+    conversao (EFETIVADA / elegiveis da loja) + faixa."""
+    if clientes is None or clientes.empty or "loja" not in clientes.columns:
         return pd.DataFrame()
 
-    df = clientes.copy()
+    df = clientes[_mask_elegivel(clientes)].copy()  # so elegiveis na apuracao
+    if df.empty:
+        return pd.DataFrame()
     df["_efet"] = (df["status"] == "EFETIVADA").astype(int)
     df["_prom"] = (df["status"] == "PROMESSA").astype(int)
     df["_sem"] = (df["status"] == "SEM RECONQUISTA").astype(int)
@@ -1639,10 +1736,13 @@ def _por_loja_reconquista(clientes: pd.DataFrame) -> pd.DataFrame:
         )
         .reset_index()
     )
-    g["taxa_pct"] = (
+    g["conversao_pct"] = (
         g["efetivadas"] * 100.0
         / g["total_clientes"].where(g["total_clientes"] > 0)
     ).round(1)
+    g["faixa"] = g["conversao_pct"].fillna(0.0).map(
+        lambda p: _faixa_premio_conversao(p)["rotulo"]
+    )
     return g.sort_values("efetivadas", ascending=False)
 
 
@@ -1652,13 +1752,14 @@ def carregar_reconquista(mes: int, ano: int) -> Dict:
     Aplica a defasagem de 1 mes (exibe dt_fim_relacionamento do
     mes anterior) e RLS por perfil. Estrutura:
         {
-            "ref_mes": int, "ref_ano": int, "meta": float,
-            "totais":   dict,        # total/efetivadas/promessas/...
-            "por_loja": DataFrame,   # quebra por loja
-            "clientes": DataFrame,   # detalhe (1 linha por cliente)
+            "ref_mes": int, "ref_ano": int,
+            "totais":   dict,        # elegiveis/efetivadas/conversao/faixa
+            "por_loja": DataFrame,   # quebra por loja (elegiveis)
+            "clientes": DataFrame,   # detalhe (TODOS os clientes + flag)
             "prox":     dict,        # previa da apuracao seguinte (mes+1)
         }
 
+    Conversao/apuracao contam so ELEGIVEL; `clientes` mantem todos.
     TTL 10min no fetch; KPIs derivados apos a RLS.
     """
     dados = _filtrar_rls_reconquista(_reconquista_cache(mes, ano))
@@ -1667,13 +1768,18 @@ def carregar_reconquista(mes: int, ano: int) -> Dict:
     clientes_prox = dados.get("clientes_prox", pd.DataFrame())
 
     totais = _totais_reconquista(clientes)
-    totais["promessas_anterior"] = (
-        int((clientes_ant["status"] == "PROMESSA").sum())
-        if clientes_ant is not None
+    # Promessas do periodo anterior (so elegiveis) p/ a variacao.
+    if (
+        clientes_ant is not None
         and not clientes_ant.empty
         and "status" in clientes_ant.columns
-        else 0
-    )
+    ):
+        _ant_eleg = clientes_ant[_mask_elegivel(clientes_ant)]
+        totais["promessas_anterior"] = int(
+            (_ant_eleg["status"] == "PROMESSA").sum()
+        )
+    else:
+        totais["promessas_anterior"] = 0
 
     # Previa da proxima apuracao (mes+1): exibe os clientes cujo
     # dt_fim caiu no mes selecionado, ja na esteira mas ainda sem a
@@ -1691,7 +1797,6 @@ def carregar_reconquista(mes: int, ano: int) -> Dict:
     return {
         "ref_mes": dados.get("ref_mes"),
         "ref_ano": dados.get("ref_ano"),
-        "meta": _RECONQUISTA_META,
         "totais": totais,
         "por_loja": _por_loja_reconquista(clientes),
         "clientes": clientes,

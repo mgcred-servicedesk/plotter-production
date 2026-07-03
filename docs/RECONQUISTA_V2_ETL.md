@@ -56,6 +56,7 @@ ETL recorrente no **angry-man**.
 | `de_tipo_pagamento`     | `tipo_pagamento`        | |
 | `qt_fim_relacionamento` | `qt_fim_relacionamento` | INT |
 | `de_link_aceite`        | `link_aceite`           | uso analítico |
+| `flag_elegibilidade`    | `flag_elegibilidade`    | ELEGIVEL / NAO ELEGIVEL; opcional (ausente → NULL = ELEGIVEL no dashboard) |
 | `nu_matricula`          | — (descartar)           | **LGPD: não armazenar** |
 
 ## Referência de implementação
