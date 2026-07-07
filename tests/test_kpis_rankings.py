@@ -16,7 +16,27 @@ from src.dashboard.kpis.rankings import (
     calcular_ranking_por_acelerador,
     calcular_ranking_por_produto,
     calcular_ranking_ticket_medio,
+    listar_sem_producao,
 )
+
+
+@pytest.fixture
+def univ_lojas():
+    """Universo de lojas ativas: A e B produzem (df_rank); C é zerada."""
+    return pd.DataFrame({
+        "LOJA": ["A", "B", "C"],
+        "REGIAO": ["R1", "R2", "R3"],
+    })
+
+
+@pytest.fixture
+def univ_consultores():
+    """Universo de consultores ativos: Ana e Carlos sem produção."""
+    return pd.DataFrame({
+        "CONSULTOR": ["João", "Maria", "Pedro", "Ana", "Carlos"],
+        "LOJA": ["A", "B", "B", "C", "C"],
+        "REGIAO": ["R1", "R2", "R2", "R3", "R3"],
+    })
 
 
 @pytest.mark.unit
@@ -157,6 +177,157 @@ class TestVariantesConsultor:
     def test_consultores_sem_coluna_retorna_vazio(self):
         df = pd.DataFrame({"VALOR": [100.0], "pontos": [1.0]})
         assert calcular_ranking_consultores(df, pd.DataFrame()).empty
+
+
+@pytest.mark.unit
+class TestUniversoSemProducao:
+    """df_universo: entidades ativas sem produção entram zeradas no fim."""
+
+    def test_loja_zerada_entra_no_fim_com_zeros(
+        self, df_rank, df_metas_lojas, univ_lojas,
+    ):
+        rk = calcular_ranking_lojas(
+            df_rank, df_metas_lojas, df_universo=univ_lojas,
+        )
+        assert len(rk) == 3
+        ultimo = rk.iloc[-1]
+        assert ultimo["Loja"] == "C"
+        assert ultimo["Posição"] == 3
+        assert ultimo["Pontos"] == pytest.approx(0.0)
+        assert ultimo["Atingimento %"] == pytest.approx(0.0)
+        assert ultimo["Ticket Médio"] == pytest.approx(0.0)
+        assert ultimo["REGIAO"] == "R3"
+
+    def test_match_normalizado_nao_duplica(self, df_rank, df_metas_lojas):
+        # Universo com caixa/espaços divergentes → não duplica A e B.
+        univ = pd.DataFrame({
+            "LOJA": ["  a ", "b"], "REGIAO": ["R1", "R2"],
+        })
+        rk = calcular_ranking_lojas(df_rank, df_metas_lojas, df_universo=univ)
+        assert len(rk) == 2
+
+    def test_universo_none_preserva_comportamento(
+        self, df_rank, df_metas_lojas,
+    ):
+        rk = calcular_ranking_lojas(df_rank, df_metas_lojas)
+        assert len(rk) == 2
+
+    def test_top_n_corta_zeradas(self, df_rank, df_metas_lojas, univ_lojas):
+        # Zeradas ficam no fim → o corte do Top N as esconde (por isso
+        # a UI usa bloco "Sem produção" separado nas visões globais).
+        rk = calcular_ranking_lojas(
+            df_rank, df_metas_lojas, top_n=2, df_universo=univ_lojas,
+        )
+        assert "C" not in rk["Loja"].values
+
+    def test_consultor_zerado_e_supervisor_excluido(
+        self, df_rank, df_metas_lojas, univ_consultores,
+    ):
+        sup = pd.DataFrame({"SUPERVISOR": ["Carlos"]})
+        rk = calcular_ranking_consultores(
+            df_rank, df_metas_lojas,
+            df_supervisores=sup, df_universo=univ_consultores,
+        )
+        assert "Ana" in rk["Consultor"].values
+        assert "Carlos" not in rk["Consultor"].values
+        ana = rk[rk["Consultor"] == "Ana"].iloc[0]
+        assert ana["Loja"] == "C"
+        assert ana["Pontos"] == pytest.approx(0.0)
+        assert ana["Atingimento %"] == pytest.approx(0.0)
+
+    def test_pontos_com_universo_loja(self, df_rank, univ_lojas):
+        rk = calcular_ranking_pontos(
+            df_rank, tipo="loja", df_universo=univ_lojas,
+        )
+        assert rk.iloc[-1]["Loja"] == "C"
+        assert rk.iloc[-1]["Pontos"] == pytest.approx(0.0)
+
+    def test_regiao_toda_zerada(self, df_metas_lojas, univ_lojas):
+        # Nenhum produtor (ex.: recorte de região sem produção) →
+        # ranking vira só o universo zerado.
+        df_vazio = pd.DataFrame({
+            "LOJA": pd.Series(dtype=str),
+            "REGIAO": pd.Series(dtype=str),
+            "VALOR": pd.Series(dtype=float),
+            "pontos": pd.Series(dtype=float),
+        })
+        rk = calcular_ranking_lojas(
+            df_vazio, df_metas_lojas, df_universo=univ_lojas,
+        )
+        assert list(rk["Loja"]) == ["A", "B", "C"]
+        assert (rk["Pontos"] == 0).all()
+
+
+@pytest.mark.unit
+class TestListarSemProducao:
+    """Lista de controle: universo ativo sem contrato VALOR > 0."""
+
+    def test_lojas_zeradas(self, df_rank, univ_lojas):
+        tab = listar_sem_producao(df_rank, univ_lojas, tipo="loja")
+        assert list(tab["Loja"]) == ["C"]
+        assert list(tab["REGIAO"]) == ["R3"]
+
+    def test_valor_zero_conta_como_sem_producao(self, df_rank, univ_lojas):
+        # Loja C só tem contrato de emissão (VALOR zerado) → segue
+        # listada, espelhando o critério VALOR > 0 dos rankings.
+        linha_c = pd.DataFrame({
+            "LOJA": ["C"], "REGIAO": ["R3"], "CONSULTOR": ["Ana"],
+            "grupo_dashboard": ["CNC"], "categoria_codigo": ["CNC"],
+            "VALOR": [0.0], "pontos": [0.0],
+            "TIPO_PRODUTO": ["CNC"], "SUBTIPO": [""],
+            "is_bmg_med": [False], "is_seguro_vida": [False],
+        })
+        df = pd.concat([df_rank, linha_c], ignore_index=True)
+        tab = listar_sem_producao(df, univ_lojas, tipo="loja")
+        assert "C" in tab["Loja"].values
+
+    def test_consultores_exclui_supervisores(
+        self, df_rank, univ_consultores,
+    ):
+        sup = pd.DataFrame({"SUPERVISOR": ["Carlos"]})
+        tab = listar_sem_producao(
+            df_rank, univ_consultores, tipo="consultor",
+            df_supervisores=sup,
+        )
+        assert list(tab["Consultor"]) == ["Ana"]
+        assert list(tab["Loja"]) == ["C"]
+        assert list(tab["REGIAO"]) == ["R3"]
+
+    def test_match_normalizado(self, univ_lojas):
+        # Produção com caixa/espaços divergentes ainda casa com o
+        # cadastro → loja não aparece como zerada.
+        df = pd.DataFrame({"LOJA": ["  a  ", "B "], "VALOR": [10.0, 5.0]})
+        tab = listar_sem_producao(df, univ_lojas, tipo="loja")
+        assert list(tab["Loja"]) == ["C"]
+
+    def test_universo_none_ou_vazio(self, df_rank):
+        assert listar_sem_producao(df_rank, None, tipo="loja").empty
+        assert listar_sem_producao(
+            df_rank, pd.DataFrame(), tipo="loja",
+        ).empty
+
+    def test_df_sem_colunas_lista_universo_inteiro(self, univ_lojas):
+        tab = listar_sem_producao(pd.DataFrame(), univ_lojas, tipo="loja")
+        assert list(tab["Loja"]) == ["A", "B", "C"]
+
+    def test_recorte_por_produto(self, df_rank, univ_lojas):
+        # Sub-aba Por Produto: df recortado pelo grupo → quem não
+        # vendeu AQUELE produto aparece zerado (SAQUE: só A vendeu).
+        df_saque = df_rank[df_rank["grupo_dashboard"] == "SAQUE"]
+        tab = listar_sem_producao(df_saque, univ_lojas, tipo="loja")
+        assert list(tab["Loja"]) == ["B", "C"]
+
+    def test_recorte_por_produto_consultores(
+        self, df_rank, univ_consultores,
+    ):
+        # CNC: João, Maria e Pedro venderam → só Ana e Carlos zerados;
+        # com Carlos supervisor, resta Ana.
+        sup = pd.DataFrame({"SUPERVISOR": ["Carlos"]})
+        df_cnc = df_rank[df_rank["grupo_dashboard"] == "CNC"]
+        tab = listar_sem_producao(
+            df_cnc, univ_consultores, tipo="consultor", df_supervisores=sup,
+        )
+        assert list(tab["Consultor"]) == ["Ana"]
 
 
 @pytest.mark.unit

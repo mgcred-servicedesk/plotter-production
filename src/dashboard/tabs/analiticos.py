@@ -9,7 +9,10 @@ import streamlit as st
 import streamlit_antd_components as sac
 
 from src.config.settings import PRODUTOS_EMISSAO
-from src.dashboard.components.tables import exibir_tabela
+from src.dashboard.components.tables import (
+    botao_exportar_csv,
+    exibir_tabela,
+)
 from src.dashboard.formatters import (
     formatar_moeda,
     formatar_numero,
@@ -23,17 +26,9 @@ from src.dashboard.kpis.gerais import (
 from src.dashboard.kpis.produtos import calcular_distribuicao_produtos
 
 
-def _exportar_csv(df: pd.DataFrame, nome: str, key: str):
-    """Botao de download CSV para uma tabela."""
-    csv = df.to_csv(index=False, sep=";", decimal=",")
-    st.download_button(
-        label=f"Exportar {nome}",
-        data=csv,
-        file_name=f"{nome}.csv",
-        mime="text/csv",
-        key=key,
-        icon=":material/download:",
-    )
+# Compat: alias local mantido — implementação canônica em
+# components/tables.py (CSV sob demanda via callable).
+_exportar_csv = botao_exportar_csv
 
 
 def _render_detalhamento_pagos(df, df_sup):
@@ -121,7 +116,12 @@ def _render_detalhamento_pagos(df, df_sup):
             "REGIAO": "Regiao",
         })
     )
-    exibir_tabela(df_tabela, colunas_moeda=["Valor"])
+    exibir_tabela(
+        df_tabela,
+        colunas_moeda=["Valor"],
+        paginacao=100,
+        key="tab_det_pagos",
+    )
     _exportar_csv(df_tabela, "contratos_pagos", "exp_pagos")
 
 
@@ -220,7 +220,12 @@ def _render_detalhamento_em_analise(df_analise):
             "REGIAO": "Regiao",
         })
     )
-    exibir_tabela(df_tabela, colunas_moeda=["Valor"])
+    exibir_tabela(
+        df_tabela,
+        colunas_moeda=["Valor"],
+        paginacao=100,
+        key="tab_det_analise",
+    )
     _exportar_csv(
         df_tabela, "contratos_em_analise", "exp_analise"
     )
@@ -340,7 +345,12 @@ def _render_detalhamento_cancelados(df_cancel):
             "CLASSIFICACAO": "Classificacao",
         })
     )
-    exibir_tabela(df_tabela, colunas_moeda=["Valor"])
+    exibir_tabela(
+        df_tabela,
+        colunas_moeda=["Valor"],
+        paginacao=100,
+        key="tab_det_cancel",
+    )
     _exportar_csv(
         df_tabela, "contratos_cancelados", "exp_cancel"
     )

@@ -1040,6 +1040,32 @@ def carregar_lojas_ativas() -> pd.DataFrame:
     return pd.DataFrame(rows, columns=["LOJA", "REGIAO_ATUAL"])
 
 
+def carregar_universo_lojas(mes: int, ano: int) -> pd.DataFrame:
+    """Universo de lojas do periodo p/ visoes de controle (sem producao).
+
+    Mes corrente: lojas ATIVAS (organograma de hoje; REGIAO := regiao
+    atual). Historico: lojas com meta no periodo — mesmo proxy
+    point-in-time ja aceito em _fetch_metas (preserva lojas que tinham
+    meta, mesmo inativas hoje). Retorna [LOJA, REGIAO, REGIAO_ATUAL];
+    carrega global, recorte por perfil client-side (aplicar_rls).
+    Reusa loaders cacheados — sem fetch adicional.
+    """
+    cols = ["LOJA", "REGIAO", "REGIAO_ATUAL"]
+    if _eh_mes_atual(mes, ano):
+        df_ativas = carregar_lojas_ativas()
+        if df_ativas.empty:
+            return pd.DataFrame(columns=cols)
+        df_u = df_ativas.copy()
+        df_u["REGIAO"] = df_u["REGIAO_ATUAL"]
+        return df_u[cols]
+
+    df_metas = carregar_metas(mes, ano)
+    if df_metas.empty or "LOJA" not in df_metas.columns:
+        return pd.DataFrame(columns=cols)
+    df_u = df_metas.reindex(columns=cols, fill_value="")
+    return df_u.drop_duplicates(subset=["LOJA"]).reset_index(drop=True)
+
+
 # ══════════════════════════════════════════════════════
 # Metas individuais por consultor
 # ══════════════════════════════════════════════════════
@@ -1136,6 +1162,54 @@ def carregar_consultores_cadastro() -> list[str]:
         if nome:
             nomes.append(nome)
     return sorted(set(nomes))
+
+
+@st.cache_data(ttl=86400)
+def carregar_consultores_ativos() -> pd.DataFrame:
+    """Consultores ATIVOS com loja-base e regiao atual.
+
+    Retorna DataFrame [CONSULTOR, LOJA, REGIAO, REGIAO_ATUAL] dos
+    consultores com status ativo e loja-base ativa (mesmo criterio de
+    status de carregar_consultores_cadastro). Universo p/ visoes de
+    controle (consultor sem producao no periodo). REGIAO := regiao
+    ATUAL da loja-base — o cadastro de consultores nao tem vigencia
+    temporal, entao meses historicos refletem o organograma de hoje.
+    Nomes duplicados (mesmo consultor em 2 lojas) colapsam na primeira
+    ocorrencia — os rankings agregam por nome. Carrega global; recorte
+    por perfil client-side (aplicar_rls). TTL 24h.
+    """
+    cols = ["CONSULTOR", "LOJA", "REGIAO", "REGIAO_ATUAL"]
+    resp = (
+        _sb()
+        .table("consultores")
+        .select("nome, status, lojas(nome, ativo, regioes(nome))")
+        .order("nome")
+        .execute()
+    )
+    rows = []
+    for row in resp.data or []:
+        status = (row.get("status") or "").lower()
+        if status and "ativo" not in status:
+            continue
+        nome = (row.get("nome") or "").strip()
+        if not nome:
+            continue
+        loja = row.get("lojas") or {}
+        if not loja.get("ativo", True):
+            continue
+        regiao = (loja.get("regioes") or {}).get("nome", "") or ""
+        rows.append(
+            {
+                "CONSULTOR": nome,
+                "LOJA": loja.get("nome", "") or "",
+                "REGIAO": regiao,
+                "REGIAO_ATUAL": regiao,
+            }
+        )
+    df = pd.DataFrame(rows, columns=cols)
+    if not df.empty:
+        df = df.drop_duplicates(subset=["CONSULTOR"]).reset_index(drop=True)
+    return df
 
 
 # ══════════════════════════════════════════════════════

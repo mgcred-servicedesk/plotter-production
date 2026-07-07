@@ -2,9 +2,25 @@
 # base = "light" fixado para impedir que o Streamlit detecte o tema
 # do sistema operacional e aplique dark mode nativo — o controle
 # visual de light/dark e feito inteiramente pelo CSS customizado (--mg-*).
+#
+# Paleta OKLCH aproximada em hex — Streamlit native nao suporta oklch().
+# Cores da marca aplicadas aos widgets nativos no modo light; o modo
+# dark segue controlado pelo CSS customizado (--mg-*).
+#
+# ATENCAO: NAO definir uma secao [theme.dark] aqui. Desde o Streamlit
+# 1.46+, a presenca de [theme.dark] ativa o tema dual nativo: o
+# frontend passa a seguir prefers-color-scheme do SO e widgets nativos
+# (botoes, pills, componentes custom) escurecem sozinhos enquanto o
+# CSS customizado continua no light — visual quebrado (bug 2026-07-07).
+# A paleta dark para futura migracao ao tema nativo dual esta
+# preservada em src/dashboard/ui/theme.py (_NATIVE_THEME["dark"]).
 
 [theme]
 base = "light"
+primaryColor = "#3366E6"
+backgroundColor = "#FAFAF9"
+secondaryBackgroundColor = "#FFFFFF"
+textColor = "#1F2937"
 
 [server]
 headless = true

@@ -66,6 +66,24 @@ _ACELERADORES = [
     },
 ]
 
+# Nomes de exibição das chaves de PRODUTOS_DASHBOARD (produto_display).
+# Mesma convenção de _NOMES_MIX em prioridades_pontuacao /
+# kpi_cards_pontuacao / kpi_cards_reforma. Aplicar SOMENTE na
+# renderização: os dicts de dados mantêm a chave canônica (usada no
+# casamento com analise_map / PRODUTOS_DASHBOARD).
+_NOMES_MIX = {
+    "CNC": "CNC",
+    "CLT": "CLT",
+    "SAQUE": "Saque",
+    "CONSIGNADO": "Consignado",
+    "FGTS_ANT_BEN_CNC13": "FGTS/Ant.Ben./13º",
+}
+
+
+def _nome_produto(codigo: str) -> str:
+    """Rótulo amigável de um produto_display (fallback: o próprio código)."""
+    return _NOMES_MIX.get(codigo, codigo)
+
 
 def calcular_prioridades_produto(
     metas_produto: List[Dict],
@@ -1038,7 +1056,7 @@ def _render_planejamento_consultor_coluna(planejamento: Dict) -> None:
                 f"padding:8px 12px; margin-bottom:6px;\">"
                 f'<div style="display:flex; justify-content:space-between; align-items:center;">'
                 f'<span style="font-size:12px; font-weight:600; color:var(--mg-text);">'
-                f'{item["produto"]}</span>'
+                f'{_nome_produto(item["produto"])}</span>'
                 f'<span style="font-size:12px; font-weight:700; color:#6366F1;">'
                 f"{formatar_moeda(item['valor'])}</span>"
                 f"</div>"
@@ -1261,7 +1279,7 @@ def _html_card_produto(i: int, prio: Dict) -> str:
         f'<div class="mg-prioridade-card" style="border-left-color: {cor};">'
         f'<div style="display: flex; align-items: center;">'
         f'<span class="mg-prioridade-numero" style="background: {cor};">{i}</span>'
-        f'<span class="mg-prioridade-titulo">{prio["produto"]}'
+        f'<span class="mg-prioridade-titulo">{_nome_produto(prio["produto"])}'
         f'<span class="mg-prioridade-badge" style="background: {bg_cor}; color: {cor};">'
         f"{formatar_percentual(perc)} · {label}</span></span></div>"
         f'<div class="mg-prioridade-detalhe">Falta: {formatar_moeda(prio["gap_valor"])}</div>'
@@ -1675,7 +1693,8 @@ def render_prioridades_acao(
     if prioridades_prod:
         top_prod = prioridades_prod[0]
         acoes.append(
-            f"Focar em **{top_prod['produto']}** (falta de {formatar_moeda(top_prod['gap_valor'])})"
+            f"Focar em **{_nome_produto(top_prod['produto'])}** "
+            f"(falta de {formatar_moeda(top_prod['gap_valor'])})"
         )
     if _eh_gerente:
         if prioridades_loja:
@@ -1705,7 +1724,7 @@ def render_prioridades_acao(
             top_pipe = pland["pipeline"][0]
             s = "s" if top_pipe["qtd"] != 1 else ""
             acoes.append(
-                f"Acionar pipeline de **{top_pipe['produto']}**: "
+                f"Acionar pipeline de **{_nome_produto(top_pipe['produto'])}**: "
                 f"{top_pipe['qtd']} contrato{s} em análise "
                 f"({formatar_moeda(top_pipe['valor'])})"
             )

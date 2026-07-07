@@ -66,10 +66,119 @@ def _atingimento(pontos: pd.Series, meta: pd.Series) -> pd.Series:
 
 
 def _rankear(rk: pd.DataFrame, sort_col: str, top_n: int) -> pd.DataFrame:
-    """Ordena desc por sort_col, corta top_n e insere 'Posição' (1..n)."""
-    rk = rk.sort_values(sort_col, ascending=False).head(top_n)
+    """Ordena desc por sort_col, corta top_n e insere 'Posição' (1..n).
+
+    Ordenação estável: linhas empatadas (ex.: zeradas do universo)
+    preservam a ordem de entrada.
+    """
+    rk = rk.sort_values(sort_col, ascending=False, kind="stable").head(top_n)
     rk.insert(0, "Posição", range(1, len(rk) + 1))
     return rk
+
+
+def _norm_nome(txt) -> str:
+    """Normaliza nome p/ matching cadastro × produção (trim + upper)."""
+    return " ".join(str(txt).upper().split())
+
+
+def _completar_universo(
+    rk: pd.DataFrame,
+    df_universo: Optional[pd.DataFrame],
+    tipo: str,
+) -> pd.DataFrame:
+    """Anexa ao ranking as entidades do universo sem produção (zeradas).
+
+    ``df_universo``: [LOJA(, REGIAO)] p/ tipo="loja"; [CONSULTOR(, LOJA)]
+    p/ tipo="consultor" (já sem supervisores — exclusão é do chamador).
+    Match por nome normalizado; zerados entram em ordem alfabética e
+    caem para o fim na ordenação estável de ``_rankear``.
+    """
+    coluna = "LOJA" if tipo == "loja" else "CONSULTOR"
+    label = "Loja" if tipo == "loja" else "Consultor"
+    if (
+        df_universo is None
+        or df_universo.empty
+        or coluna not in df_universo.columns
+    ):
+        return rk
+
+    presentes = (
+        set(rk[label].dropna().map(_norm_nome))
+        if label in rk.columns
+        else set()
+    )
+    faltantes = df_universo[
+        ~df_universo[coluna].map(_norm_nome).isin(presentes)
+    ].sort_values(coluna)
+    if faltantes.empty:
+        return rk
+
+    zeros = pd.DataFrame({label: faltantes[coluna].to_numpy()})
+    zeros["Qtd"] = 0
+    zeros["Valor"] = 0.0
+    zeros["Pontos"] = 0.0
+    if tipo == "consultor" and "Loja" in rk.columns:
+        zeros["Loja"] = (
+            faltantes["LOJA"].fillna("").to_numpy()
+            if "LOJA" in faltantes.columns
+            else ""
+        )
+    if tipo == "loja" and "REGIAO" in rk.columns:
+        zeros["REGIAO"] = (
+            faltantes["REGIAO"].fillna("").to_numpy()
+            if "REGIAO" in faltantes.columns
+            else ""
+        )
+    return pd.concat([rk, zeros], ignore_index=True)
+
+
+def listar_sem_producao(
+    df: pd.DataFrame,
+    df_universo: Optional[pd.DataFrame],
+    tipo: str = "loja",
+    df_supervisores: Optional[pd.DataFrame] = None,
+) -> pd.DataFrame:
+    """Entidades ativas do universo SEM produção no período.
+
+    "Sem produção" espelha o critério dos rankings: nenhum contrato com
+    VALOR > 0 (quem só emitiu, com valor zerado na consolidação, conta
+    como sem produção — sem zona cega entre ranking e lista).
+    Supervisores não entram no universo consultor (regra de negócio).
+    Match por nome normalizado (trim + upper).
+
+    Retorna [Loja, REGIAO] ou [Consultor, Loja, REGIAO] ordenado por
+    nome; colunas opcionais só quando presentes no universo.
+    """
+    coluna = "LOJA" if tipo == "loja" else "CONSULTOR"
+    label = "Loja" if tipo == "loja" else "Consultor"
+    if (
+        df_universo is None
+        or df_universo.empty
+        or coluna not in df_universo.columns
+    ):
+        return pd.DataFrame(columns=[label])
+
+    universo = (
+        excluir_supervisores(df_universo, df_supervisores)
+        if tipo == "consultor"
+        else df_universo
+    )
+
+    produzidos: set = set()
+    if coluna in df.columns and "VALOR" in df.columns:
+        df_v = df[df["VALOR"] > 0]
+        produzidos = set(df_v[coluna].dropna().map(_norm_nome))
+
+    zerados = universo[
+        ~universo[coluna].map(_norm_nome).isin(produzidos)
+    ].sort_values(coluna)
+
+    saida = pd.DataFrame({label: zerados[coluna].to_numpy()})
+    if tipo == "consultor" and "LOJA" in zerados.columns:
+        saida["Loja"] = zerados["LOJA"].fillna("").to_numpy()
+    if "REGIAO" in zerados.columns:
+        saida["REGIAO"] = zerados["REGIAO"].fillna("").to_numpy()
+    return saida
 
 
 # ── Rankings ─────────────────────────────────────────
@@ -78,8 +187,13 @@ def calcular_ranking_lojas(
     df: pd.DataFrame,
     df_metas: pd.DataFrame,
     top_n: int = 10,
+    df_universo: Optional[pd.DataFrame] = None,
 ) -> pd.DataFrame:
-    """Ranking de lojas por atingimento de meta prata."""
+    """Ranking de lojas por atingimento de meta prata.
+
+    ``df_universo`` ([LOJA, REGIAO]): se fornecido, lojas do universo
+    sem produção entram zeradas no fim do ranking (visão de controle).
+    """
     df_v = _preparar(df, "loja")
     if "LOJA" not in df_v.columns:
         return pd.DataFrame()
@@ -88,6 +202,8 @@ def calcular_ranking_lojas(
 
     if "REGIAO" in df.columns:
         ranking = _anexar_regiao(ranking, df)
+
+    ranking = _completar_universo(ranking, df_universo, "loja")
 
     if "LOJA" in df_metas.columns and "META_PRATA" in df_metas.columns:
         ranking = ranking.merge(
@@ -115,13 +231,23 @@ def calcular_ranking_consultores(
     df_metas: pd.DataFrame,
     top_n: int = 10,
     df_supervisores: Optional[pd.DataFrame] = None,
+    df_universo: Optional[pd.DataFrame] = None,
 ) -> pd.DataFrame:
-    """Ranking de consultores por atingimento."""
+    """Ranking de consultores por atingimento.
+
+    ``df_universo`` ([CONSULTOR, LOJA]): se fornecido, consultores do
+    universo sem produção entram zerados no fim do ranking (visão de
+    controle). Supervisores são excluídos do universo.
+    """
     df_v = _preparar(df, "consultor", df_supervisores)
     if "CONSULTOR" not in df_v.columns:
         return pd.DataFrame()
 
     ranking = _agrupar(df_v, "consultor")
+
+    if df_universo is not None:
+        universo = excluir_supervisores(df_universo, df_supervisores)
+        ranking = _completar_universo(ranking, universo, "consultor")
 
     if "LOJA" in df_metas.columns and "META_PRATA" in df_metas.columns:
         metas_loja = df_metas.set_index("LOJA")["META_PRATA"]
@@ -195,8 +321,14 @@ def calcular_ranking_pontos(
     tipo: str = "loja",
     top_n: int = 10,
     df_supervisores: Optional[pd.DataFrame] = None,
+    df_universo: Optional[pd.DataFrame] = None,
 ) -> pd.DataFrame:
-    """Ranking por pontos (lojas ou consultores)."""
+    """Ranking por pontos (lojas ou consultores).
+
+    ``df_universo``: se fornecido, entidades do universo sem produção
+    entram zeradas no fim do ranking (visão de controle). No escopo
+    consultor, supervisores são excluídos do universo.
+    """
     df_v = _preparar(df, tipo, df_supervisores)
     coluna = "LOJA" if tipo == "loja" else "CONSULTOR"
     if coluna not in df_v.columns:
@@ -205,6 +337,14 @@ def calcular_ranking_pontos(
     ranking = _agrupar(df_v, tipo)
     if "REGIAO" in df.columns and tipo == "loja":
         ranking = _anexar_regiao(ranking, df)
+
+    if df_universo is not None:
+        universo = (
+            excluir_supervisores(df_universo, df_supervisores)
+            if tipo == "consultor"
+            else df_universo
+        )
+        ranking = _completar_universo(ranking, universo, tipo)
 
     ranking["Ticket Médio"] = _ticket(ranking)
     ranking = _rankear(ranking, "Pontos", top_n)

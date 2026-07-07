@@ -51,12 +51,14 @@ from src.dashboard.pages.detalhes_cards import (
 )
 from src.dashboard.loaders import (
     carregar_categorias,
+    carregar_consultores_ativos,
     carregar_consultores_cadastro,
     carregar_contratos_cancelados,
     carregar_contratos_em_analise,
     carregar_digitacao_diaria_detalhe,
     carregar_lojas_ativas,
     carregar_lojas_regioes,
+    carregar_universo_lojas,
     carregar_metas_produto,
     carregar_metas_produto_consultor,
     carregar_pagamentos_online,
@@ -106,7 +108,6 @@ from src.dashboard.feriados_mgmt import render_pagina_feriados
 from src.shared.dias_uteis import calcular_dias_uteis
 
 warnings.filterwarnings("ignore", category=FutureWarning)
-warnings.filterwarnings("ignore", category=DeprecationWarning)
 warnings.filterwarnings("ignore", message=".*ScriptRunContext.*")
 
 logger = logging.getLogger(__name__)
@@ -1547,12 +1548,20 @@ def main():
                 df_metas_produto_full,
             )
         elif tab == "Rankings":
+            # Universos de ativos p/ a visao de controle (sem producao).
+            # Carregam global e passam pelo aplicar_rls (gerente enxerga
+            # so a propria regiao via REGIAO_ATUAL; fail-closed). A aba
+            # so os usa para admin/gestor/gerente_comercial.
+            _univ_lojas = aplicar_rls(carregar_universo_lojas(mes, ano))
+            _univ_cons = aplicar_rls(carregar_consultores_ativos())
             render_tab_rankings(
                 df_full,
                 df_metas_full,
                 df_sup_full,
                 df_scope=df_f,
                 perfil=role,
+                df_lojas_univ=_univ_lojas,
+                df_cons_univ=_univ_cons,
             )
         elif tab == "Analiticos":
             render_tab_analiticos(

@@ -1,6 +1,7 @@
 """
 Testes dos helpers puros de ``src/dashboard/loaders.py``
-(``_mes_apuracao_seguinte``, ``_reanexar_regiao``).
+(``_mes_apuracao_seguinte``, ``_reanexar_regiao``,
+``carregar_universo_lojas`` com fontes monkeypatched).
 
 O cliente Supabase (``_sb()``) é lazy — instanciado só dentro das
 funções de fetch — então o módulo importa sem nenhuma conexão.
@@ -8,7 +9,12 @@ funções de fetch — então o módulo importa sem nenhuma conexão.
 import pandas as pd
 import pytest
 
-from src.dashboard.loaders import _mes_apuracao_seguinte, _reanexar_regiao
+from src.dashboard import loaders
+from src.dashboard.loaders import (
+    _mes_apuracao_seguinte,
+    _reanexar_regiao,
+    carregar_universo_lojas,
+)
 
 
 @pytest.mark.unit
@@ -43,3 +49,49 @@ class TestReanexarRegiao:
         out = _reanexar_regiao(pivot, fonte)
         assert len(out) == 1
         assert out["REGIAO"].iloc[0] == "R1"
+
+
+@pytest.mark.unit
+class TestCarregarUniversoLojas:
+    """Composição pura: mês corrente → lojas ativas; histórico → metas."""
+
+    COLS = ["LOJA", "REGIAO", "REGIAO_ATUAL"]
+
+    def test_mes_corrente_usa_lojas_ativas(self, monkeypatch):
+        monkeypatch.setattr(loaders, "_eh_mes_atual", lambda m, a: True)
+        monkeypatch.setattr(
+            loaders, "carregar_lojas_ativas",
+            lambda: pd.DataFrame({
+                "LOJA": ["A", "C"], "REGIAO_ATUAL": ["R1", "R3"],
+            }),
+        )
+        out = carregar_universo_lojas(7, 2026)
+        assert list(out.columns) == self.COLS
+        # REGIAO := REGIAO_ATUAL (organograma vigente = competência)
+        assert list(out["REGIAO"]) == ["R1", "R3"]
+
+    def test_historico_usa_metas_do_periodo(self, monkeypatch):
+        monkeypatch.setattr(loaders, "_eh_mes_atual", lambda m, a: False)
+        monkeypatch.setattr(
+            loaders, "carregar_metas",
+            lambda m, a: pd.DataFrame({
+                "LOJA": ["A", "A", "B"],
+                "REGIAO": ["R1", "R1", "R2"],
+                "REGIAO_ATUAL": ["R9", "R9", "R2"],
+                "META_PRATA": [1.0, 1.0, 2.0],
+            }),
+        )
+        out = carregar_universo_lojas(1, 2026)
+        assert list(out.columns) == self.COLS
+        # Dedup por LOJA; REGIAO point-in-time preservada
+        assert list(out["LOJA"]) == ["A", "B"]
+        assert list(out["REGIAO"]) == ["R1", "R2"]
+
+    def test_fontes_vazias_retornam_colunas_esperadas(self, monkeypatch):
+        monkeypatch.setattr(loaders, "_eh_mes_atual", lambda m, a: True)
+        monkeypatch.setattr(
+            loaders, "carregar_lojas_ativas", lambda: pd.DataFrame(),
+        )
+        out = carregar_universo_lojas(7, 2026)
+        assert out.empty
+        assert list(out.columns) == self.COLS

@@ -6,7 +6,10 @@ import pandas as pd
 import streamlit as st
 import streamlit_antd_components as sac
 
-from src.dashboard.components.tables import exibir_tabela
+from src.dashboard.components.tables import (
+    botao_exportar_csv,
+    exibir_tabela,
+)
 from src.dashboard.formatters import formatar_moeda, formatar_numero
 
 
@@ -208,7 +211,15 @@ def render_tab_em_analise(df_analise, df_sup):
     if "REGIAO" in df_a.columns:
         cols.insert(2, "REGIAO")
 
+    df_detalhe = df_a[cols].sort_values(
+        "DATA_CADASTRO", ascending=False
+    )
     exibir_tabela(
-        df_a[cols].sort_values("DATA_CADASTRO", ascending=False),
+        df_detalhe,
         colunas_moeda=["VALOR"],
+        paginacao=100,
+        key="tab_em_analise",
+    )
+    botao_exportar_csv(
+        df_detalhe, "em_analise_detalhamento", "exp_em_analise"
     )

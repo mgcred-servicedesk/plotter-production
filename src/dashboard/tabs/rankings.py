@@ -11,22 +11,34 @@ Visibilidade por perfil:
 Highlight visual:
   gerente_comercial → destaca lojas da sua regiao em todos os rankings
   supervisor        → destaca a propria loja em todos os rankings
+
+Flag "Somente dados da regiao": restringe todas as sub-abas ao recorte
+regional. Admin/gestor escolhem a regiao num seletor; demais perfis usam
+a(s) regiao(oes) do proprio escopo RLS (fail-closed: escopo sem REGIAO
+nao exibe nada).
 """
 
+import re
+import unicodedata
 from typing import Callable, Optional
 
 import pandas as pd
 import streamlit as st
 import streamlit_antd_components as sac
 
-from src.dashboard.components.tables import exibir_tabela
+from src.dashboard.components.tables import botao_exportar_csv, exibir_tabela
 from src.dashboard.kpis.rankings import (
     calcular_ranking_consultores,
     calcular_ranking_lojas,
     calcular_ranking_pontos,
     calcular_ranking_por_acelerador,
     calcular_ranking_por_produto,
+    listar_sem_producao,
 )
+
+# Perfis com visao de controle: enxergam lojas/consultores ativos
+# SEM producao no periodo (universo completo nos rankings).
+_PERFIS_CONTROLE = ("admin", "gestor", "gerente_comercial")
 
 _HighlightFn = Callable[[pd.DataFrame], pd.Series]
 
@@ -38,6 +50,13 @@ _SEM_LIMITE = 10**9
 
 def _divider(label: str, icon: str, color: str) -> None:
     sac.divider(label=label, icon=icon, align="left", color=color)
+
+
+def _slug(txt: str) -> str:
+    """Normaliza texto para uso em keys e nomes de arquivo."""
+    s = unicodedata.normalize("NFKD", str(txt))
+    s = s.encode("ascii", "ignore").decode()
+    return re.sub(r"[^a-z0-9]+", "_", s.lower()).strip("_")
 
 
 def _make_highlight_fn(
@@ -88,16 +107,28 @@ def _make_highlight_fn(
 def _exibir_ranking(
     rk: pd.DataFrame,
     highlight_fn: Optional[_HighlightFn],
+    nome: Optional[str] = None,
+    key: Optional[str] = None,
 ) -> None:
-    """Exibe um ranking, aplicando o highlight do perfil se houver."""
+    """Exibe um ranking, aplicando o highlight do perfil se houver.
+
+    nome/key: se fornecidos, exibe botao de exportar CSV abaixo da
+    tabela. O export espelha EXATAMENTE o ranking renderizado — os
+    rankings sao org-wide por design (comparativo justo), portanto o
+    CSV contem o mesmo recorte ja visivel na tela.
+    """
     mask = highlight_fn(rk) if highlight_fn else None
     exibir_tabela(rk, highlight_mask=mask)
+    if nome and key:
+        botao_exportar_csv(rk, nome, key)
 
 
 def _exibir_ranking_pinned(
     rk_full: pd.DataFrame,
     top_n: int,
     highlight_fn: Optional[_HighlightFn],
+    nome: Optional[str] = None,
+    key: Optional[str] = None,
 ) -> None:
     """Exibe o Top N e fixa abaixo as linhas do escopo do usuario.
 
@@ -112,7 +143,7 @@ def _exibir_ranking_pinned(
             pinned = fora[highlight_fn(fora)]
             if not pinned.empty:
                 top = pd.concat([top, pinned])
-    _exibir_ranking(top, highlight_fn)
+    _exibir_ranking(top, highlight_fn, nome=nome, key=key)
 
 
 def _render_par(
@@ -124,26 +155,44 @@ def _render_par(
     suffix: str = "",
     top_label: bool = True,
     highlight_fn: Optional[_HighlightFn] = None,
+    export_prefix: str = "",
+    df_universo: Optional[pd.DataFrame] = None,
 ) -> None:
     """Renderiza par de colunas: Atingimento | Pontos para loja ou consultor.
 
     top_label=False omite o prefixo "Top N" (visoes de regiao sem limite).
     highlight_fn: se fornecida, gera máscara de destaque para o ranking.
+    export_prefix: identifica nome/key dos botoes de exportar CSV
+    (vazio = sem botao).
+    df_universo: universo de lojas/consultores ativos — entidades sem
+    producao entram zeradas no fim (usar so em visoes de lista completa,
+    senao o corte do Top N as esconde).
     """
     label = "Loja" if tipo == "loja" else "Consultor"
     prefix = f"Top {top_n} " if top_label else ""
+
+    def _export_args(sufixo: str) -> dict:
+        if not export_prefix:
+            return {}
+        return {
+            "nome": f"ranking_{export_prefix}_{sufixo}",
+            "key": f"exp_rk_{export_prefix}_{sufixo}",
+        }
 
     col1, col2 = st.columns(2)
     with col1:
         _divider(f"{prefix}{label}s por Atingimento{suffix}", "graph-up-arrow", "green")
         if tipo == "loja":
-            rk = calcular_ranking_lojas(df, df_metas, top_n=top_n)
+            rk = calcular_ranking_lojas(
+                df, df_metas, top_n=top_n, df_universo=df_universo,
+            )
         else:
             rk = calcular_ranking_consultores(
                 df, df_metas, top_n=top_n, df_supervisores=df_sup,
+                df_universo=df_universo,
             )
         if not rk.empty:
-            _exibir_ranking(rk, highlight_fn)
+            _exibir_ranking(rk, highlight_fn, **_export_args("atingimento"))
         else:
             st.info("Sem dados")
 
@@ -152,11 +201,99 @@ def _render_par(
         rk = calcular_ranking_pontos(
             df, tipo=tipo, top_n=top_n,
             df_supervisores=(df_sup if tipo == "consultor" else None),
+            df_universo=df_universo,
         )
         if not rk.empty:
-            _exibir_ranking(rk, highlight_fn)
+            _exibir_ranking(rk, highlight_fn, **_export_args("pontos"))
         else:
             st.info("Sem dados")
+
+
+def _filtrar_universo_regiao(
+    df_universo: Optional[pd.DataFrame],
+    regioes,
+) -> Optional[pd.DataFrame]:
+    """Recorta o universo pela(s) regiao(oes) exibida(s)."""
+    if df_universo is None or "REGIAO" not in df_universo.columns:
+        return None
+    regioes = {regioes} if isinstance(regioes, str) else set(regioes)
+    return df_universo[df_universo["REGIAO"].isin(regioes)]
+
+
+def _render_sem_producao(
+    df: pd.DataFrame,
+    df_universo: Optional[pd.DataFrame],
+    tipo: str,
+    df_sup=None,
+    key_suffix: str = "",
+) -> None:
+    """Bloco de controle: entidades ativas SEM producao no periodo.
+
+    Renderizado apenas para _PERFIS_CONTROLE (o gate e feito no
+    render_tab_rankings, que zera os universos p/ demais perfis).
+    `df` deve ser o MESMO df dos rankings exibidos (org-wide ou ja
+    recortado pelo flag de regiao) — a lista espelha o que esta na tela.
+    """
+    if df_universo is None or df_universo.empty:
+        return
+    zerados = listar_sem_producao(
+        df, df_universo, tipo=tipo, df_supervisores=df_sup,
+    )
+    plural = "lojas" if tipo == "loja" else "consultores"
+    if zerados.empty:
+        st.caption(
+            "Sem produção no período: nenhuma loja ativa zerada."
+            if tipo == "loja"
+            else "Sem produção no período: nenhum consultor ativo zerado."
+        )
+        return
+    with st.expander(
+        f"⚠ Sem produção no período ({len(zerados)} {plural})",
+        expanded=False,
+    ):
+        exibir_tabela(zerados)
+        botao_exportar_csv(
+            zerados,
+            f"sem_producao_{plural}{key_suffix}",
+            f"exp_sem_prod_{plural}{key_suffix}",
+        )
+
+
+def _render_sem_producao_produto(
+    df: pd.DataFrame,
+    produto: str,
+    df_universo: Optional[pd.DataFrame],
+    tipo: str,
+    df_sup=None,
+) -> None:
+    """Zerados no produto, dentro do expander da sub-aba Por Produto.
+
+    Sem expander aninhado (o Streamlit nao permite): caption + tabela
+    + export direto. So renderiza para perfis de controle — os
+    universos chegam None para os demais.
+
+    Criterio por produto: nenhum contrato com VALOR > 0 daquele
+    grupo_dashboard (mesmo recorte do ranking exibido acima).
+    """
+    if df_universo is None or df_universo.empty:
+        return
+    if "grupo_dashboard" in df.columns:
+        df_prod = df[df["grupo_dashboard"] == produto]
+    else:
+        df_prod = df.iloc[0:0]
+    zerados = listar_sem_producao(
+        df_prod, df_universo, tipo=tipo, df_supervisores=df_sup,
+    )
+    if zerados.empty:
+        return
+    plural = "lojas" if tipo == "loja" else "consultores"
+    st.caption(f"⚠ Sem produção em {produto}: {len(zerados)} {plural}")
+    exibir_tabela(zerados)
+    botao_exportar_csv(
+        zerados,
+        f"sem_producao_{_slug(produto)}_{tipo}",
+        f"exp_sem_prod_prod_{tipo}_{_slug(produto)}",
+    )
 
 
 def _render_secao_regiao(
@@ -167,20 +304,28 @@ def _render_secao_regiao(
     tipo: str,
     key_prefix: str,
     highlight_fn: Optional[_HighlightFn] = None,
+    df_universo: Optional[pd.DataFrame] = None,
 ) -> None:
     """Seção 'por região' abaixo dos rankings globais.
 
     df_scope → determina a(s) região(ões) do usuário (respeita RLS).
     df_full  → fonte dos dados de ranking (todas as lojas/consultores
                da região, independente do escopo RLS do usuário).
+    df_universo → universo de ativos (já recortado pelo RLS do perfil);
+               regiões só com zerados entram no seletor e as entidades
+               sem produção aparecem zeradas no fim do ranking.
 
     Supervisor vê apenas sua região no seletor, mas o ranking exibe
     TODAS as lojas daquela região para que saiba sua posição relativa.
     """
-    if "REGIAO" not in df_scope.columns or df_scope.empty:
-        return
+    regioes_set: set = set()
+    if "REGIAO" in df_scope.columns and not df_scope.empty:
+        regioes_set |= set(df_scope["REGIAO"].dropna())
+    if df_universo is not None and "REGIAO" in df_universo.columns:
+        regioes_set |= set(df_universo["REGIAO"].dropna())
+    regioes_set.discard("")
 
-    regioes = sorted(df_scope["REGIAO"].dropna().unique().tolist())
+    regioes = sorted(regioes_set)
     if not regioes:
         return
 
@@ -197,48 +342,84 @@ def _render_secao_regiao(
         )
 
     # Filtra df_full (org-wide) pela região → mostra todos da região
-    df_reg = df_full[df_full["REGIAO"] == regiao]
+    if "REGIAO" in df_full.columns:
+        df_reg = df_full[df_full["REGIAO"] == regiao]
+    else:
+        df_reg = df_full.iloc[0:0]
+    base = "lojas" if tipo == "loja" else "consultores"
     _render_par(
         df_reg, df_metas, df_sup, tipo=tipo,
-        top_n=max(len(df_reg), 1),
+        top_n=_SEM_LIMITE,
         suffix=f" — {regiao}",
         top_label=False,
         highlight_fn=highlight_fn,
+        export_prefix=f"{base}_{_slug(regiao)}",
+        df_universo=_filtrar_universo_regiao(df_universo, regiao),
     )
 
 
 def _render_lojas(
     df, df_metas, df_scope, df_sup, top_n: int,
     highlight_fn: Optional[_HighlightFn] = None,
+    com_secao_regiao: bool = True,
+    df_universo: Optional[pd.DataFrame] = None,
 ) -> None:
-    _render_par(df, df_metas, df_sup, tipo="loja", top_n=top_n, highlight_fn=highlight_fn)
-    _render_secao_regiao(
-        df_scope, df, df_metas, df_sup,
-        tipo="loja", key_prefix="lojas", highlight_fn=highlight_fn,
+    _render_par(
+        df, df_metas, df_sup, tipo="loja", top_n=top_n,
+        highlight_fn=highlight_fn, export_prefix="lojas",
     )
+    _render_sem_producao(df, df_universo, tipo="loja", key_suffix="_lojas")
+    if com_secao_regiao:
+        _render_secao_regiao(
+            df_scope, df, df_metas, df_sup,
+            tipo="loja", key_prefix="lojas", highlight_fn=highlight_fn,
+            df_universo=df_universo,
+        )
 
 
 def _render_consultores(
     df, df_metas, df_scope, df_sup, top_n: int,
     highlight_fn: Optional[_HighlightFn] = None,
+    com_secao_regiao: bool = True,
+    df_universo: Optional[pd.DataFrame] = None,
 ) -> None:
-    _render_par(df, df_metas, df_sup, tipo="consultor", top_n=top_n, highlight_fn=highlight_fn)
-    _render_secao_regiao(
-        df_scope, df, df_metas, df_sup,
-        tipo="consultor", key_prefix="cons", highlight_fn=highlight_fn,
+    _render_par(
+        df, df_metas, df_sup, tipo="consultor", top_n=top_n,
+        highlight_fn=highlight_fn, export_prefix="consultores",
     )
+    _render_sem_producao(
+        df, df_universo, tipo="consultor", df_sup=df_sup, key_suffix="_cons",
+    )
+    if com_secao_regiao:
+        _render_secao_regiao(
+            df_scope, df, df_metas, df_sup,
+            tipo="consultor", key_prefix="cons", highlight_fn=highlight_fn,
+            df_universo=df_universo,
+        )
 
 
 def _render_regioes(
     df, df_metas, df_sup, top_n: int,
     highlight_fn: Optional[_HighlightFn] = None,
+    df_lojas_univ: Optional[pd.DataFrame] = None,
+    df_cons_univ: Optional[pd.DataFrame] = None,
 ) -> None:
-    """Rankings intra-regiao com expander por regiao."""
+    """Rankings intra-regiao com expander por regiao.
+
+    Universos (visao de controle): regioes so com zerados ganham
+    expander e as entidades sem producao entram zeradas no fim.
+    """
     if "REGIAO" not in df.columns:
         st.warning("Dados de regiao nao disponiveis")
         return
 
-    regioes = sorted(df["REGIAO"].dropna().unique().tolist())
+    regioes_set = set(df["REGIAO"].dropna())
+    for univ in (df_lojas_univ, df_cons_univ):
+        if univ is not None and "REGIAO" in univ.columns:
+            regioes_set |= set(univ["REGIAO"].dropna())
+    regioes_set.discard("")
+
+    regioes = sorted(regioes_set)
     if not regioes:
         st.warning("Nenhuma regiao encontrada")
         return
@@ -246,17 +427,63 @@ def _render_regioes(
     for regiao in regioes:
         df_reg = df[df["REGIAO"] == regiao]
         with st.expander(str(regiao), expanded=False):
-            n_reg = max(len(df_reg), 1)
             _render_par(
                 df_reg, df_metas, df_sup,
-                tipo="loja", top_n=n_reg, suffix=f" — {regiao}",
+                tipo="loja", top_n=_SEM_LIMITE, suffix=f" — {regiao}",
                 top_label=False, highlight_fn=highlight_fn,
+                export_prefix=f"regiao_{_slug(regiao)}_lojas",
+                df_universo=_filtrar_universo_regiao(df_lojas_univ, regiao),
             )
             _render_par(
                 df_reg, df_metas, df_sup,
-                tipo="consultor", top_n=n_reg, suffix=f" — {regiao}",
+                tipo="consultor", top_n=_SEM_LIMITE, suffix=f" — {regiao}",
                 top_label=False, highlight_fn=highlight_fn,
+                export_prefix=f"regiao_{_slug(regiao)}_consultores",
+                df_universo=_filtrar_universo_regiao(df_cons_univ, regiao),
             )
+
+
+def _filtrar_somente_regiao(
+    df: pd.DataFrame,
+    df_scope: pd.DataFrame,
+    perfil: Optional[str],
+) -> tuple[pd.DataFrame, Optional[set]]:
+    """Aplica o flag "Somente dados da regiao" sobre o df org-wide.
+
+    Admin/gestor: escopo e global, entao a regiao vem de um seletor.
+    Demais perfis: regiao(oes) derivadas do escopo RLS (df_scope),
+    fail-closed — escopo vazio ou sem coluna REGIAO nao exibe nada.
+
+    Retorna (df filtrado, regioes selecionadas) — as regioes permitem
+    recortar tambem os universos de controle; None = nenhuma regiao.
+    """
+    if "REGIAO" not in df.columns:
+        st.warning("Dados de regiao nao disponiveis")
+        return df.iloc[0:0], None
+
+    if perfil in ("admin", "gestor"):
+        regioes = sorted(df["REGIAO"].dropna().unique().tolist())
+        if not regioes:
+            st.warning("Nenhuma regiao encontrada")
+            return df.iloc[0:0], None
+        regiao = st.selectbox(
+            "Regiao",
+            regioes,
+            key="rankings_flag_sel_regiao",
+        )
+        return df[df["REGIAO"] == regiao], {regiao}
+
+    if df_scope is None or "REGIAO" not in df_scope.columns:
+        st.info("Sem regiao no escopo do perfil — nada a exibir.")
+        return df.iloc[0:0], None
+
+    regioes_scope = set(df_scope["REGIAO"].dropna().unique())
+    if not regioes_scope:
+        st.info("Sem regiao no escopo do perfil — nada a exibir.")
+        return df.iloc[0:0], None
+
+    st.caption("Regiao: **" + ", ".join(sorted(regioes_scope)) + "**")
+    return df[df["REGIAO"].isin(regioes_scope)], regioes_scope
 
 
 def render_tab_rankings(
@@ -265,6 +492,8 @@ def render_tab_rankings(
     df_sup,
     df_scope: Optional[pd.DataFrame] = None,
     perfil: Optional[str] = None,
+    df_lojas_univ: Optional[pd.DataFrame] = None,
+    df_cons_univ: Optional[pd.DataFrame] = None,
 ) -> None:
     """Renderiza aba de Rankings.
 
@@ -272,6 +501,11 @@ def render_tab_rankings(
         df: dados org-wide (pre-RLS) para rankings globais.
         df_scope: dados filtrados por RLS (escopo do usuario) para
             rankings por regiao e highlight. Se None, usa df.
+        df_lojas_univ: universo de lojas ativas [LOJA, REGIAO] JA
+            recortado pelo RLS do perfil (aplicar_rls no chamador).
+            Habilita a visao de controle (sem producao) para
+            _PERFIS_CONTROLE; ignorado para os demais perfis.
+        df_cons_univ: idem para consultores [CONSULTOR, LOJA, REGIAO].
     """
     sac.divider(
         label="Rankings de Performance",
@@ -284,6 +518,12 @@ def render_tab_rankings(
     _is_consultor = perfil == "consultor"
     _ver_regioes = perfil in ("admin", "gestor")
 
+    # Visao de controle (sem producao) apenas p/ perfis de controle —
+    # fail-closed: demais perfis nao recebem universo algum.
+    if perfil not in _PERFIS_CONTROLE:
+        df_lojas_univ = None
+        df_cons_univ = None
+
     highlight_fn = _make_highlight_fn(_df_scope, perfil)
 
     top_n = st.number_input(
@@ -294,6 +534,28 @@ def render_tab_rankings(
         step=5,
         key="rankings_top_n",
     )
+
+    somente_regiao = st.toggle(
+        "Somente dados da regiao",
+        key="rankings_somente_regiao",
+        help=(
+            "Restringe todos os rankings (todas as sub-abas) aos dados "
+            "da regiao. Admin/gestor escolhem a regiao; demais perfis "
+            "usam a regiao do proprio escopo."
+        ),
+    )
+    if somente_regiao:
+        df, _regioes_flag = _filtrar_somente_regiao(df, _df_scope, perfil)
+        if _regioes_flag:
+            df_lojas_univ = _filtrar_universo_regiao(
+                df_lojas_univ, _regioes_flag,
+            )
+            df_cons_univ = _filtrar_universo_regiao(
+                df_cons_univ, _regioes_flag,
+            )
+        else:
+            df_lojas_univ = None
+            df_cons_univ = None
 
     tab_items = []
     if not _is_consultor:
@@ -311,13 +573,26 @@ def render_tab_rankings(
     )
 
     if menu == "Lojas":
-        _render_lojas(df, df_metas, _df_scope, df_sup, top_n=top_n, highlight_fn=highlight_fn)
+        _render_lojas(
+            df, df_metas, _df_scope, df_sup, top_n=top_n,
+            highlight_fn=highlight_fn,
+            com_secao_regiao=not somente_regiao,
+            df_universo=df_lojas_univ,
+        )
 
     elif menu == "Consultores":
-        _render_consultores(df, df_metas, _df_scope, df_sup, top_n=top_n, highlight_fn=highlight_fn)
+        _render_consultores(
+            df, df_metas, _df_scope, df_sup, top_n=top_n,
+            highlight_fn=highlight_fn,
+            com_secao_regiao=not somente_regiao,
+            df_universo=df_cons_univ,
+        )
 
     elif menu == "Regioes":
-        _render_regioes(df, df_metas, df_sup, top_n=top_n, highlight_fn=highlight_fn)
+        _render_regioes(
+            df, df_metas, df_sup, top_n=top_n, highlight_fn=highlight_fn,
+            df_lojas_univ=df_lojas_univ, df_cons_univ=df_cons_univ,
+        )
 
     elif menu == "Por Produto":
         if _is_consultor:
@@ -340,10 +615,18 @@ def render_tab_rankings(
             df_supervisores=df_sup,
         )
         if rankings:
+            _univ_prod = df_lojas_univ if tipo == "loja" else df_cons_univ
             for prod, rk in rankings.items():
                 if not rk.empty:
                     with st.expander(prod, expanded=False):
-                        _exibir_ranking_pinned(rk, top_n, highlight_fn)
+                        _exibir_ranking_pinned(
+                            rk, top_n, highlight_fn,
+                            nome=f"ranking_produto_{tipo}_{_slug(prod)}",
+                            key=f"exp_rk_prod_{tipo}_{_slug(prod)}",
+                        )
+                        _render_sem_producao_produto(
+                            df, prod, _univ_prod, tipo, df_sup=df_sup,
+                        )
         else:
             st.warning("Dados nao disponiveis")
 
@@ -371,6 +654,10 @@ def render_tab_rankings(
             for acel, rk in rankings_acel.items():
                 if not rk.empty:
                     with st.expander(acel, expanded=False):
-                        _exibir_ranking_pinned(rk, top_n, highlight_fn)
+                        _exibir_ranking_pinned(
+                            rk, top_n, highlight_fn,
+                            nome=f"ranking_acelerador_{tipo}_{_slug(acel)}",
+                            key=f"exp_rk_acel_{tipo}_{_slug(acel)}",
+                        )
         else:
             st.warning("Dados nao disponiveis")

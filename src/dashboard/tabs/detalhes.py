@@ -6,7 +6,10 @@ import pandas as pd
 import streamlit as st
 import streamlit_antd_components as sac
 
-from src.dashboard.components.tables import exibir_tabela
+from src.dashboard.components.tables import (
+    botao_exportar_csv,
+    exibir_tabela,
+)
 from src.dashboard.formatters import formatar_moeda, formatar_numero
 
 
@@ -80,5 +83,10 @@ def render_tab_detalhes(df):
     exibir_tabela(
         df_d[cols],
         colunas_moeda=["VALOR"],
-        colunas_numero=["pontos"],
+        colunas_pontos=["pontos"],
+        paginacao=100,
+        key="tab_detalhes",
+    )
+    botao_exportar_csv(
+        df_d[cols], "dados_detalhados", "exp_detalhes"
     )

@@ -5,6 +5,7 @@ Utiliza st-aggrid para tabelas interativas com ordenação,
 filtros e formatação automática. Fallback para st.dataframe
 nativo quando AG Grid não está disponível.
 """
+import math
 import re
 from typing import Dict, List, Optional
 
@@ -40,9 +41,11 @@ _MOEDA_KEYWORDS = [
 ]
 _PERC_KEYWORDS = ["% Ating", "% Proj", "Atingimento %"]
 # Meta Prata/Ouro são metas em pontos, não valores monetários
+_PONTOS_KEYWORDS = [
+    "Pontos", "pontos", "Meta Prata", "Meta Ouro",
+]
 _NUMERO_KEYWORDS = [
-    "Meta Prata", "Meta Ouro",
-    "Pontos", "Qtd", "Posição", "Nº Lojas",
+    "Qtd", "Posição", "Nº Lojas",
     "Nº Consultores", "Num Consultores", "TOTAL",
 ]
 
@@ -52,18 +55,25 @@ def _classificar_coluna(
     colunas_moeda: Optional[List[str]],
     colunas_percentual: Optional[List[str]],
     colunas_numero: Optional[List[str]],
+    colunas_pontos: Optional[List[str]] = None,
 ) -> Optional[str]:
-    """Retorna o tipo da coluna: 'moeda', 'perc', 'numero' ou None."""
+    """Retorna o tipo da coluna: 'moeda', 'perc', 'pontos',
+    'numero' ou None."""
     if colunas_moeda and col in colunas_moeda:
         return "moeda"
     if colunas_percentual and col in colunas_percentual:
         return "perc"
+    if colunas_pontos and col in colunas_pontos:
+        return "pontos"
     if colunas_numero and col in colunas_numero:
         return "numero"
     if any(kw in col for kw in _PERC_KEYWORDS):
         return "perc"
-    # Verificar número antes de moeda para que "Meta Prata"
-    # e "Meta Ouro" (pontos) tenham prioridade sobre "Meta"
+    # Verificar pontos antes de número e moeda para que
+    # "Total Pontos" ("TOTAL") e "Meta Prata"/"Meta Ouro"
+    # ("Meta") sejam classificados como pontos
+    if any(kw in col for kw in _PONTOS_KEYWORDS):
+        return "pontos"
     if any(kw in col for kw in _NUMERO_KEYWORDS):
         return "numero"
     if any(kw in col for kw in _MOEDA_KEYWORDS):
@@ -98,6 +108,16 @@ function(params) {
 }
 """) if _TEM_AGGRID else None
 
+_JS_PONTOS = JsCode("""
+function(params) {
+    if (params.value == null) return '';
+    return params.value.toLocaleString('pt-BR', {
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2
+    });
+}
+""") if _TEM_AGGRID else None
+
 # Estilo condicional para percentuais de atingimento
 _JS_CELL_STYLE_ATING = JsCode("""
 function(params) {
@@ -128,6 +148,7 @@ def _build_aggrid_options(
     colunas_percentual: Optional[List[str]],
     colunas_numero: Optional[List[str]],
     altura: int,
+    colunas_pontos: Optional[List[str]] = None,
 ):
     """Constrói opções do AG Grid com formatação automática."""
     gb = GridOptionsBuilder.from_dataframe(df)
@@ -145,7 +166,8 @@ def _build_aggrid_options(
 
     for col in df.columns:
         tipo = _classificar_coluna(
-            col, colunas_moeda, colunas_percentual, colunas_numero
+            col, colunas_moeda, colunas_percentual, colunas_numero,
+            colunas_pontos,
         )
 
         # Largura mínima por tipo de dado
@@ -167,6 +189,13 @@ def _build_aggrid_options(
                 cellStyle=(
                     _JS_CELL_STYLE_ATING if is_ating else None
                 ),
+                minWidth=120,
+            )
+        elif tipo == "pontos":
+            gb.configure_column(
+                col,
+                type=["numericColumn"],
+                valueFormatter=_JS_PONTOS,
                 minWidth=120,
             )
         elif tipo == "numero":
@@ -212,10 +241,12 @@ def _exibir_aggrid(
     colunas_moeda: Optional[List[str]],
     colunas_percentual: Optional[List[str]],
     colunas_numero: Optional[List[str]],
+    colunas_pontos: Optional[List[str]] = None,
 ) -> None:
     """Exibe tabela usando AG Grid."""
     grid_options = _build_aggrid_options(
-        df, colunas_moeda, colunas_percentual, colunas_numero, altura
+        df, colunas_moeda, colunas_percentual, colunas_numero, altura,
+        colunas_pontos,
     )
 
     should_fit = grid_options.pop("_should_fit", False)
@@ -252,6 +283,16 @@ def _formatar_numero_br(valor):
     return f"{valor:,.0f}".replace(",", ".")
 
 
+def _formatar_pontos_br(valor):
+    """Formata pontos no padrão contábil brasileiro (X.XXX,XX)."""
+    if pd.isna(valor):
+        return ""
+    return (
+        f"{valor:,.2f}"
+        .replace(",", "X").replace(".", ",").replace("X", ".")
+    )
+
+
 # Datas que chegam como texto ISO (yyyy-mm-dd, com hora/UTC opcional)
 # nao tem dtype datetime64 e escapariam da formatacao. Detectamos por
 # VALOR (nao por nome de coluna) para nao confundir com codigos.
@@ -281,43 +322,59 @@ def _coluna_texto_e_data(serie: pd.Series) -> bool:
     return bool(convertido.notna().all())
 
 
-def _formatar_dataframe_br(
+def _formatar_percentual_br(valor):
+    """Formata percentual no padrão brasileiro (X,X%)."""
+    if pd.isna(valor):
+        return ""
+    return f"{valor:.1f}%".replace(".", ",")
+
+
+def _preparar_exibicao_br(
     df: pd.DataFrame,
     colunas_moeda: Optional[List[str]],
     colunas_percentual: Optional[List[str]],
     colunas_numero: Optional[List[str]],
-) -> pd.DataFrame:
+    colunas_pontos: Optional[List[str]] = None,
+):
     """
-    Retorna cópia do DataFrame com colunas monetárias,
-    numéricas e de data formatadas no padrão brasileiro.
-    Datas (datetime64 ou texto ISO/UTC) viram dd/mm/aaaa.
+    Prepara o DataFrame para exibição no padrão brasileiro sem
+    perder os tipos originais (a ordenação do st.dataframe usa o
+    valor bruto; a formatação fica no Styler/column_config).
+
+    Retorna ``(df_conv, formatos, config_datas)`` onde ``df_conv``
+    tem colunas de data ISO-texto convertidas para datetime,
+    ``formatos`` é o mapa coluna→formatter para ``Styler.format`` e
+    ``config_datas`` é o column_config das colunas de data
+    (dd/mm/aaaa).
     """
-    df_fmt = df.copy()
+    df_conv = df.copy()
+    formatos: Dict[str, object] = {}
+    config_datas: Dict[str, object] = {}
     for col in df.columns:
         if pd.api.types.is_datetime64_any_dtype(df[col]):
-            df_fmt[col] = df[col].dt.strftime("%d/%m/%Y").where(
-                df[col].notna(), other=""
+            config_datas[col] = st.column_config.DatetimeColumn(
+                format="DD/MM/YYYY"
             )
             continue
         if _coluna_texto_e_data(df[col]):
-            convertido = pd.to_datetime(df[col], errors="coerce")
-            df_fmt[col] = convertido.dt.strftime("%d/%m/%Y").where(
-                convertido.notna(), other=""
+            df_conv[col] = pd.to_datetime(df[col], errors="coerce")
+            config_datas[col] = st.column_config.DatetimeColumn(
+                format="DD/MM/YYYY"
             )
             continue
         tipo = _classificar_coluna(
-            col, colunas_moeda, colunas_percentual, colunas_numero
+            col, colunas_moeda, colunas_percentual, colunas_numero,
+            colunas_pontos,
         )
         if tipo == "moeda":
-            df_fmt[col] = df[col].apply(_formatar_moeda_br)
+            formatos[col] = _formatar_moeda_br
         elif tipo == "perc":
-            df_fmt[col] = df[col].apply(
-                lambda v: "" if pd.isna(v)
-                else f"{v:.1f}%".replace(".", ",")
-            )
+            formatos[col] = _formatar_percentual_br
+        elif tipo == "pontos":
+            formatos[col] = _formatar_pontos_br
         elif tipo == "numero":
-            df_fmt[col] = df[col].apply(_formatar_numero_br)
-    return df_fmt
+            formatos[col] = _formatar_numero_br
+    return df_conv, formatos, config_datas
 
 
 _HIGHLIGHT_BG = "#fffbeb"   # amber-50 — linha destacada
@@ -332,30 +389,40 @@ def _exibir_dataframe(
     colunas_numero: Optional[List[str]],
     column_config: Optional[Dict],
     highlight_mask: Optional["pd.Series"] = None,
+    colunas_pontos: Optional[List[str]] = None,
 ) -> None:
     """Exibe tabela usando st.dataframe nativo (fallback)."""
-    df_fmt = _formatar_dataframe_br(
-        df, colunas_moeda, colunas_percentual, colunas_numero
+    df_conv, formatos, config_datas = _preparar_exibicao_br(
+        df, colunas_moeda, colunas_percentual, colunas_numero,
+        colunas_pontos,
     )
 
+    data = df_conv
+    if formatos:
+        data = data.style.format(formatos)
+
     if highlight_mask is not None and highlight_mask.any():
-        mask = highlight_mask.reindex(df_fmt.index, fill_value=False)
+        mask = highlight_mask.reindex(df_conv.index, fill_value=False)
 
         def _hl(row: "pd.Series") -> list:
             if mask.get(row.name, False):
                 return [_HIGHLIGHT_STYLE] * len(row)
             return [""] * len(row)
 
-        data = df_fmt.style.apply(_hl, axis=1)
-    else:
-        data = df_fmt
+        if not isinstance(data, pd.io.formats.style.Styler):
+            data = data.style
+        data = data.apply(_hl, axis=1)
+
+    # column_config explícito do chamador tem precedência sobre o
+    # config automático de datas.
+    config_final = {**config_datas, **(column_config or {})} or None
 
     st.dataframe(
         data,
         width="stretch",
         hide_index=True,
         height=altura,
-        column_config=column_config,
+        column_config=config_final,
     )
 
 
@@ -370,6 +437,9 @@ def exibir_tabela(
     column_config: Optional[Dict] = None,
     usar_aggrid: Optional[bool] = None,
     highlight_mask: Optional["pd.Series"] = None,
+    paginacao: Optional[int] = None,
+    key: Optional[str] = None,
+    colunas_pontos: Optional[List[str]] = None,
 ) -> None:
     """
     Exibe tabela com formatação automática.
@@ -382,22 +452,78 @@ def exibir_tabela(
         altura: Altura fixa em pixels. Se None, calcula
             dinamicamente.
         colunas_moeda: Lista de colunas para formatar como
-            moeda (R$).
+            moeda pt-BR (R$ X.XXX,XX).
         colunas_percentual: Lista de colunas para formatar
             como percentual.
         colunas_numero: Lista de colunas para formatar como
-            número inteiro.
+            número inteiro (X.XXX).
+        colunas_pontos: Lista de colunas de pontos, formato
+            contábil pt-BR (X.XXX,XX).
         column_config: Configuração manual de colunas
             (apenas st.dataframe).
         usar_aggrid: Forçar AG Grid (True), st.dataframe
             (False), ou automático (None).
         highlight_mask: Série booleana (mesmo índice do df)
             indicando quais linhas destacar.
+        paginacao: Linhas por página. Se definido e o df
+            exceder esse tamanho, exibe st.pagination abaixo
+            da tabela (requer ``key``).
+        key: Chave única — obrigatória quando ``paginacao``
+            está ativo (identifica o widget de paginação).
     """
     if df.empty:
         st.info("Nenhum dado disponível para exibição.")
         return
 
+    total = len(df)
+    if paginacao and total > paginacao:
+        if not key:
+            raise ValueError(
+                "exibir_tabela: 'key' é obrigatório quando "
+                "'paginacao' está ativo."
+            )
+        num_pages = math.ceil(total / paginacao)
+        corpo = st.container()
+        rodape = st.container()
+        with rodape:
+            col_info, col_pag = st.columns([1, 2])
+            with col_pag:
+                pagina = st.pagination(
+                    num_pages, key=f"{key}_pag"
+                )
+            ini = (pagina - 1) * paginacao
+            fim = min(ini + paginacao, total)
+            if highlight_mask is not None:
+                highlight_mask = highlight_mask.iloc[ini:fim]
+            df = df.iloc[ini:fim]
+            with col_info:
+                st.caption(
+                    f"Exibindo {ini + 1:,}–{fim:,} de "
+                    f"{total:,} registros".replace(",", ".")
+                )
+    else:
+        corpo = st.container()
+
+    with corpo:
+        _exibir_tabela_corpo(
+            df, altura, colunas_moeda, colunas_percentual,
+            colunas_numero, column_config, usar_aggrid,
+            highlight_mask, colunas_pontos,
+        )
+
+
+def _exibir_tabela_corpo(
+    df: pd.DataFrame,
+    altura: Optional[int],
+    colunas_moeda: Optional[List[str]],
+    colunas_percentual: Optional[List[str]],
+    colunas_numero: Optional[List[str]],
+    column_config: Optional[Dict],
+    usar_aggrid: Optional[bool],
+    highlight_mask: Optional["pd.Series"],
+    colunas_pontos: Optional[List[str]] = None,
+) -> None:
+    """Renderiza a tabela em si (página atual, se paginada)."""
     h = altura if altura else _calcular_altura(len(df))
 
     use_grid = (
@@ -413,10 +539,42 @@ def exibir_tabela(
     if use_grid and _TEM_AGGRID and not tem_highlight:
         _exibir_aggrid(
             df, h, colunas_moeda, colunas_percentual,
-            colunas_numero,
+            colunas_numero, colunas_pontos,
         )
     else:
         _exibir_dataframe(
             df, h, colunas_moeda, colunas_percentual,
             colunas_numero, column_config, highlight_mask,
+            colunas_pontos,
         )
+
+
+def botao_exportar_csv(
+    df: pd.DataFrame,
+    nome: str,
+    key: str,
+) -> None:
+    """Botão de download CSV para uma tabela.
+
+    O CSV é gerado sob demanda (callable) apenas quando o
+    usuário clica — sem custo de serialização a cada rerun.
+    Codificação: UTF-8 com BOM (utf-8-sig) — sem o BOM o Excel
+    pt-BR assume cp1252 e corrompe os acentos.
+
+    Contrato de segurança (RLS): o chamador DEVE passar um
+    DataFrame já filtrado pelo RLS do perfil ativo (princípio
+    "RLS antes de render" — docs/agents/rls.md). Este helper
+    exporta exatamente o que recebe, sem refazer filtros.
+    """
+    def _gerar_csv() -> bytes:
+        csv = df.to_csv(index=False, sep=";", decimal=",")
+        return csv.encode("utf-8-sig")
+
+    st.download_button(
+        label=f"Exportar {nome}",
+        data=_gerar_csv,
+        file_name=f"{nome}.csv",
+        mime="text/csv",
+        key=key,
+        icon=":material/download:",
+    )
