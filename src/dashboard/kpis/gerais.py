@@ -53,6 +53,24 @@ def excluir_supervisores(
     return df.copy()
 
 
+# Lojas de backoffice (digitação): a produção paga é repassada ao
+# consultor de loja que iniciou a negociação, então esses consultores
+# ficam fora de rankings, listagem de zerados e médias por
+# consultor/loja. Contratos cancelados e em análise NÃO passam por este
+# filtro (regra de negócio: nessas somas o Vai e Vem conta normalmente).
+LOJAS_BACKOFFICE: frozenset = frozenset({"VAI E VEM"})
+
+
+def excluir_lojas_backoffice(df: pd.DataFrame) -> pd.DataFrame:
+    """Remove linhas de lojas de backoffice (match por LOJA normalizada)."""
+    if df.empty or "LOJA" not in df.columns:
+        return df.copy()
+    lojas_norm = (
+        df["LOJA"].fillna("").astype(str).str.strip().str.upper()
+    )
+    return df[~lojas_norm.isin(LOJAS_BACKOFFICE)].copy()
+
+
 def contar_consultores(
     df: pd.DataFrame,
     df_sup: Optional[pd.DataFrame],
@@ -471,8 +489,14 @@ def calcular_medias_du_por_nivel(
     du_decorridos: int,
     df_supervisores: Optional[pd.DataFrame] = None,
 ) -> Dict:
-    """Calcula medias DU por loja e por consultor (excluindo supervisores)."""
-    df_sem_sup = excluir_supervisores(df, df_supervisores)
+    """Calcula medias DU por loja e por consultor.
+
+    Exclui supervisores e lojas de backoffice (``LOJAS_BACKOFFICE``) —
+    ambos distorceriam as médias por nível.
+    """
+    df_sem_sup = excluir_lojas_backoffice(
+        excluir_supervisores(df, df_supervisores)
+    )
 
     # Media DU por loja
     num_lojas = 0
@@ -548,13 +572,13 @@ def calcular_medias_organizacao(
     elif perfil == "supervisor":
         if "LOJA" not in df.columns:
             return {}
-        df_base = df
+        df_base = excluir_lojas_backoffice(df)
         coluna_grupo = "LOJA"
     else:  # consultor
         if "CONSULTOR" not in df.columns:
             return {}
-        df_base = excluir_supervisores(
-            df, df_sup
+        df_base = excluir_lojas_backoffice(
+            excluir_supervisores(df, df_sup)
         )
         coluna_grupo = "CONSULTOR"
 

@@ -14,7 +14,10 @@ import pandas as pd
 import streamlit as st
 
 from src.dashboard.formatters import formatar_moeda, formatar_percentual
-from src.dashboard.kpis.gerais import PRODUTOS_DASHBOARD
+from src.dashboard.kpis.gerais import (
+    PRODUTOS_DASHBOARD,
+    excluir_lojas_backoffice,
+)
 from src.dashboard.ui.colors import (
     get_status_color,
     get_status_bg_color,
@@ -722,8 +725,10 @@ def calcular_aceleradores_consultor(
     Para cada acelerador, retorna consultores zerados (prioridade) ou os
     de pior desempenho (menor contagem em relação à média da organização).
 
-    Exclui supervisores. Consultores sem nenhuma venda no mês (sem linha
-    no df) não aparecem — só os que têm pelo menos uma linha.
+    Exclui supervisores e lojas de backoffice (Vai e Vem — consultores
+    não ranqueados nem comparados à média da organização). Consultores
+    sem nenhuma venda no mês (sem linha no df) não aparecem — só os que
+    têm pelo menos uma linha.
     """
     if df.empty or "CONSULTOR" not in df.columns:
         return []
@@ -732,7 +737,9 @@ def calcular_aceleradores_consultor(
     if df_sup is not None and not df_sup.empty and "SUPERVISOR" in df_sup.columns:
         supervisores = set(df_sup["SUPERVISOR"].dropna().str.strip())
 
-    df_cons = df[~df["CONSULTOR"].isin(supervisores)].copy()
+    df_cons = excluir_lojas_backoffice(
+        df[~df["CONSULTOR"].isin(supervisores)].copy()
+    )
     if df_cons.empty:
         return []
 

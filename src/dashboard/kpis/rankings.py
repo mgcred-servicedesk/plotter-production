@@ -8,7 +8,10 @@ from typing import Dict, Optional
 import pandas as pd
 
 from src.config.settings import PRODUTOS_EMISSAO
-from src.dashboard.kpis.gerais import excluir_supervisores
+from src.dashboard.kpis.gerais import (
+    excluir_lojas_backoffice,
+    excluir_supervisores,
+)
 
 
 # ── Helpers compartilhados ───────────────────────────
@@ -18,10 +21,14 @@ def _preparar(
     tipo: str,
     df_supervisores: Optional[pd.DataFrame] = None,
 ) -> pd.DataFrame:
-    """Filtra VALOR > 0; exclui supervisores no escopo consultor."""
+    """Filtra VALOR > 0; no escopo consultor exclui supervisores e
+    lojas de backoffice (consultores do Vai e Vem não são ranqueados —
+    a produção paga deles é repassada ao consultor de loja)."""
     df_v = df[df["VALOR"] > 0].copy()
     if tipo == "consultor":
-        df_v = excluir_supervisores(df_v, df_supervisores)
+        df_v = excluir_lojas_backoffice(
+            excluir_supervisores(df_v, df_supervisores)
+        )
     return df_v
 
 
@@ -143,7 +150,8 @@ def listar_sem_producao(
     "Sem produção" espelha o critério dos rankings: nenhum contrato com
     VALOR > 0 (quem só emitiu, com valor zerado na consolidação, conta
     como sem produção — sem zona cega entre ranking e lista).
-    Supervisores não entram no universo consultor (regra de negócio).
+    Supervisores e consultores de lojas de backoffice (Vai e Vem) não
+    entram no universo consultor (regra de negócio).
     Match por nome normalizado (trim + upper).
 
     Retorna [Loja, REGIAO] ou [Consultor, Loja, REGIAO] ordenado por
@@ -159,7 +167,9 @@ def listar_sem_producao(
         return pd.DataFrame(columns=[label])
 
     universo = (
-        excluir_supervisores(df_universo, df_supervisores)
+        excluir_lojas_backoffice(
+            excluir_supervisores(df_universo, df_supervisores)
+        )
         if tipo == "consultor"
         else df_universo
     )
@@ -246,7 +256,9 @@ def calcular_ranking_consultores(
     ranking = _agrupar(df_v, "consultor")
 
     if df_universo is not None:
-        universo = excluir_supervisores(df_universo, df_supervisores)
+        universo = excluir_lojas_backoffice(
+            excluir_supervisores(df_universo, df_supervisores)
+        )
         ranking = _completar_universo(ranking, universo, "consultor")
 
     if "LOJA" in df_metas.columns and "META_PRATA" in df_metas.columns:
@@ -340,7 +352,9 @@ def calcular_ranking_pontos(
 
     if df_universo is not None:
         universo = (
-            excluir_supervisores(df_universo, df_supervisores)
+            excluir_lojas_backoffice(
+                excluir_supervisores(df_universo, df_supervisores)
+            )
             if tipo == "consultor"
             else df_universo
         )

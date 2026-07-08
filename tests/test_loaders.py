@@ -11,10 +11,70 @@ import pytest
 
 from src.dashboard import loaders
 from src.dashboard.loaders import (
+    _colapsar_cadastro_recente,
     _mes_apuracao_seguinte,
     _reanexar_regiao,
+    _status_consultor_ativo,
     carregar_universo_lojas,
 )
+
+
+@pytest.mark.unit
+class TestStatusConsultorAtivo:
+    def test_ativo_passa(self):
+        assert _status_consultor_ativo("Ativo (a)")
+        assert _status_consultor_ativo("  ativo (a) ")
+
+    def test_inativo_nao_passa(self):
+        # Substring "ativo" pegaria "Inativo (a)" — o match é por prefixo.
+        assert not _status_consultor_ativo("Inativo (a)")
+
+    def test_desligado_e_licencas_nao_passam(self):
+        assert not _status_consultor_ativo("Desligado (a)")
+        assert not _status_consultor_ativo("Licenciado (a)")
+        assert not _status_consultor_ativo("Licença Maternidade")
+
+    def test_vazio_conta_como_ativo(self):
+        # Linhas legadas sem status não somem do universo.
+        assert _status_consultor_ativo("")
+        assert _status_consultor_ativo(None)
+
+
+@pytest.mark.unit
+class TestColapsarCadastroRecente:
+    def test_registro_mais_recente_vence(self):
+        # Desligamento registrado em linha nova vence o 'Ativo (a)'
+        # antigo (match de nome normalizado: caixa/espaços).
+        rows = [
+            {"nome": "Ana Silva", "status": "Ativo (a)",
+             "updated_at": "2026-03-25T18:42:17+00:00"},
+            {"nome": " ANA  SILVA ", "status": "Desligado (a)",
+             "updated_at": "2026-07-08T15:17:33+00:00"},
+        ]
+        out = _colapsar_cadastro_recente(rows)
+        assert len(out) == 1
+        assert out[0]["status"] == "Desligado (a)"
+
+    def test_sem_updated_at_mantem_primeiro(self):
+        rows = [
+            {"nome": "Ana", "status": "Ativo (a)"},
+            {"nome": "Ana", "status": "Desligado (a)"},
+        ]
+        out = _colapsar_cadastro_recente(rows)
+        assert len(out) == 1
+        assert out[0]["status"] == "Ativo (a)"
+
+    def test_nomes_distintos_preservados_em_ordem(self):
+        rows = [
+            {"nome": "Bia", "status": "Ativo (a)", "updated_at": "2026-01-01"},
+            {"nome": "Ana", "status": "Ativo (a)", "updated_at": "2026-01-01"},
+        ]
+        out = _colapsar_cadastro_recente(rows)
+        assert [r["nome"] for r in out] == ["Ana", "Bia"]
+
+    def test_nome_vazio_ignorado(self):
+        rows = [{"nome": "", "status": "Ativo (a)"}, {"nome": None}]
+        assert _colapsar_cadastro_recente(rows) == []
 
 
 @pytest.mark.unit

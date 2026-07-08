@@ -21,6 +21,7 @@ import pandas as pd
 
 from src.dashboard.kpis.gerais import (
     PRODUTOS_DASHBOARD,
+    excluir_lojas_backoffice,
     excluir_supervisores,
     separar_cancelados_liquidos,
 )
@@ -137,9 +138,12 @@ def calcular_medias_pontos_por_nivel(
     """Medias DU em pontos por loja e por consultor.
 
     Mesma logica de ``calcular_medias_du_por_nivel`` (em valor),
-    mas operando sobre a coluna ``pontos``.
+    mas operando sobre a coluna ``pontos``. Exclui supervisores e
+    lojas de backoffice (``LOJAS_BACKOFFICE``).
     """
-    df_sem_sup = excluir_supervisores(df, df_supervisores)
+    df_sem_sup = excluir_lojas_backoffice(
+        excluir_supervisores(df, df_supervisores)
+    )
 
     num_lojas = 0
     media_du_loja = 0.0

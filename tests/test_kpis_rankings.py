@@ -341,3 +341,77 @@ class TestRankingGuards:
     def test_media_du_sem_coluna_retorna_vazio(self):
         df = pd.DataFrame({"VALOR": [100.0], "pontos": [10.0]})
         assert calcular_ranking_media_du(df, tipo="loja").empty
+
+
+@pytest.mark.unit
+class TestExclusaoBackoffice:
+    """Consultores de lojas de backoffice (Vai e Vem) não são ranqueados
+    nem listados como zerados — a produção paga deles é repassada ao
+    consultor de loja que iniciou a negociação. A exclusão vale só para
+    o eixo consultor; a loja em si segue no ranking de lojas."""
+
+    @pytest.fixture
+    def df_com_backoffice(self, df_rank):
+        linha = pd.DataFrame({
+            "LOJA": ["VAI E VEM"], "REGIAO": ["ALEXANDRE"],
+            "CONSULTOR": ["Amos"], "grupo_dashboard": ["CNC"],
+            "categoria_codigo": ["CNC"], "VALOR": [800.0],
+            "pontos": [200.0], "TIPO_PRODUTO": ["CNC"], "SUBTIPO": [""],
+            "is_bmg_med": [False], "is_seguro_vida": [False],
+        })
+        return pd.concat([df_rank, linha], ignore_index=True)
+
+    @pytest.fixture
+    def univ_com_backoffice(self, univ_consultores):
+        extra = pd.DataFrame({
+            "CONSULTOR": ["Carla"], "LOJA": ["VAI E VEM"],
+            "REGIAO": ["ALEXANDRE"],
+        })
+        return pd.concat([univ_consultores, extra], ignore_index=True)
+
+    def test_ranking_consultores_sem_backoffice(
+        self, df_com_backoffice, df_metas_lojas, univ_com_backoffice,
+    ):
+        rk = calcular_ranking_consultores(
+            df_com_backoffice, df_metas_lojas,
+            df_universo=univ_com_backoffice,
+        )
+        assert "Amos" not in rk["Consultor"].values   # produção paga
+        assert "Carla" not in rk["Consultor"].values  # universo zerado
+
+    def test_ranking_pontos_consultor_sem_backoffice(
+        self, df_com_backoffice, univ_com_backoffice,
+    ):
+        rk = calcular_ranking_pontos(
+            df_com_backoffice, tipo="consultor",
+            df_universo=univ_com_backoffice,
+        )
+        assert "Amos" not in rk["Consultor"].values
+        assert "Carla" not in rk["Consultor"].values
+
+    def test_zerados_sem_backoffice(
+        self, df_com_backoffice, univ_com_backoffice,
+    ):
+        tab = listar_sem_producao(
+            df_com_backoffice, univ_com_backoffice, tipo="consultor",
+        )
+        assert "Carla" not in tab["Consultor"].values
+        # consultores de loja seguem listados normalmente
+        assert "Ana" in tab["Consultor"].values
+
+    def test_match_loja_normalizado(self):
+        # Caixa/espaços divergentes ainda casam com LOJAS_BACKOFFICE.
+        univ = pd.DataFrame({
+            "CONSULTOR": ["Carla"], "LOJA": ["  vai e vem "],
+            "REGIAO": ["ALEXANDRE"],
+        })
+        df = pd.DataFrame(columns=["CONSULTOR", "LOJA", "VALOR"])
+        tab = listar_sem_producao(df, univ, tipo="consultor")
+        assert tab.empty
+
+    def test_loja_backoffice_segue_no_ranking_de_lojas(
+        self, df_com_backoffice, df_metas_lojas,
+    ):
+        # Escopo aprovado: exclusão apenas no eixo consultor.
+        rk = calcular_ranking_lojas(df_com_backoffice, df_metas_lojas)
+        assert "VAI E VEM" in rk["Loja"].values

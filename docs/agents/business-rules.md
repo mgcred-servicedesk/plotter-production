@@ -191,6 +191,38 @@ def _excluir_supervisores(df, df_sup):
 
 Aplicar **antes** de rankings, contagens de consultores e médias por consultor.
 
+## Lojas de backoffice (Vai e Vem)
+
+`VAI E VEM` não é loja de venda: é o **setor de digitação de contratos via
+backoffice**. Ele digita contratos impossíveis nas lojas e, quando a proposta
+é paga, a produção é **repassada ao consultor de loja** que iniciou a
+negociação (raro ficar contrato pago sem remanejar). Consequências:
+
+- Consultores do Vai e Vem **não são ranqueados**, não entram na listagem de
+  zerados, nos aceleradores por consultor nem nas médias por consultor; a
+  loja não entra nas médias por loja.
+- Constante `LOJAS_BACKOFFICE` + helper `excluir_lojas_backoffice` em
+  `src/dashboard/kpis/gerais.py`; aplicados em `_preparar` (escopo consultor)
+  e nos universos de `rankings.py`, nas médias de `gerais.py`/`pontuacao.py`
+  e em `calcular_aceleradores_consultor` (`ui/prioridades_acao.py`).
+- **Exceção**: somas de contratos **cancelados** e **em análise** contam o
+  Vai e Vem normalmente (sem filtro).
+- A loja em si **segue** no ranking/zerados de lojas (escopo da exclusão é o
+  eixo consultor).
+- Não confundir com `_REGIOES_EXCLUIR_MEDIA` (região `ALEXANDRE` = DIGITAL +
+  VAI E VEM, usada só na média da organização p/ gerente_comercial): DIGITAL
+  **conta** nas métricas de consultor — a exclusão nova é por **loja**.
+
+## Universo de consultores ativos — cadastro duplicado
+
+A tabela `consultores` tem nomes duplicados (ex.: desligamento registrado em
+linha nova, deixando o `Ativo (a)` antigo órfão). Os loaders
+(`carregar_consultores_cadastro` / `carregar_consultores_ativos`) colapsam
+cada nome normalizado no registro de `updated_at` **mais recente** antes do
+filtro de status, e o status casa por **prefixo** `ativo` (substring aceitaria
+`Inativo (a)`). Fonte da verdade do headcount é a planilha do RH — divergência
+entre universo e RH indica cadastro desatualizado no Supabase, não bug.
+
 ## Reconquista (v2)
 
 Campanha de retenção. Fonte: export único `reconquista.xlsx`, **1 linha por

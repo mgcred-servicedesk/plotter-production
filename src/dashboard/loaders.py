@@ -1137,26 +1137,60 @@ def carregar_metas_consultor(
     return _metas_consultor_historico(mes, ano, loja)
 
 
-@st.cache_data(ttl=86400)
+def _status_consultor_ativo(status) -> bool:
+    """True se o status do cadastro indica consultor ativo.
+
+    Match por prefixo ("Ativo (a)") — substring aceitaria "Inativo (a)".
+    Status vazio/nulo conta como ativo (linhas legadas sem status).
+    """
+    s = (status or "").strip().lower()
+    return not s or s.startswith("ativo")
+
+
+def _colapsar_cadastro_recente(rows: list[dict]) -> list[dict]:
+    """Colapsa cadastro duplicado: 1 registro por nome normalizado,
+    vencendo o de ``updated_at`` mais recente.
+
+    A tabela ``consultores`` tem nomes duplicados (ex.: desligamento
+    registrado em linha nova, deixando o 'Ativo (a)' antigo orfao) —
+    sem o colapso, a pessoa segue no universo de ativos indevidamente.
+    Comparacao lexicografica funciona: timestamps ISO 8601 em UTC.
+    """
+    por_nome: dict[str, dict] = {}
+    for row in rows:
+        nome = " ".join(str(row.get("nome") or "").upper().split())
+        if not nome:
+            continue
+        atual = por_nome.get(nome)
+        if atual is None or (
+            (row.get("updated_at") or "") > (atual.get("updated_at") or "")
+        ):
+            por_nome[nome] = row
+    return [por_nome[k] for k in sorted(por_nome)]
+
+
+@st.cache_data(ttl=1800)
 def carregar_consultores_cadastro() -> list[str]:
     """
     Retorna lista ordenada de nomes de consultores
     cadastrados em ``consultores`` (ativos).
 
-    Usado em selects de configuracao (cadastro de
-    usuario e 'Visualizar Como'). TTL 24h.
+    Cadastro duplicado colapsa no registro mais recente
+    (``updated_at``) antes do filtro de status. Usado em
+    selects de configuracao (cadastro de usuario e
+    'Visualizar Como'). TTL 30min — reflete uploads do
+    angry-man sem esperar um dia.
     """
     resp = (
         _sb()
         .table("consultores")
-        .select("nome, status")
+        .select("nome, status, updated_at")
         .order("nome")
         .execute()
     )
     nomes: list[str] = []
-    for row in resp.data or []:
-        status = (row.get("status") or "").lower()
-        if status and "ativo" not in status:
+    for row in _colapsar_cadastro_recente(resp.data or []):
+        if not _status_consultor_ativo(row.get("status")):
             continue
         nome = row.get("nome", "")
         if nome:
@@ -1164,7 +1198,7 @@ def carregar_consultores_cadastro() -> list[str]:
     return sorted(set(nomes))
 
 
-@st.cache_data(ttl=86400)
+@st.cache_data(ttl=1800)
 def carregar_consultores_ativos() -> pd.DataFrame:
     """Consultores ATIVOS com loja-base e regiao atual.
 
@@ -1174,22 +1208,23 @@ def carregar_consultores_ativos() -> pd.DataFrame:
     controle (consultor sem producao no periodo). REGIAO := regiao
     ATUAL da loja-base — o cadastro de consultores nao tem vigencia
     temporal, entao meses historicos refletem o organograma de hoje.
-    Nomes duplicados (mesmo consultor em 2 lojas) colapsam na primeira
-    ocorrencia — os rankings agregam por nome. Carrega global; recorte
-    por perfil client-side (aplicar_rls). TTL 24h.
+    Nomes duplicados colapsam no registro de ``updated_at`` mais
+    recente (desligamento novo vence 'Ativo (a)' antigo). Carrega
+    global; recorte por perfil client-side (aplicar_rls). TTL 24h.
     """
     cols = ["CONSULTOR", "LOJA", "REGIAO", "REGIAO_ATUAL"]
     resp = (
         _sb()
         .table("consultores")
-        .select("nome, status, lojas(nome, ativo, regioes(nome))")
+        .select(
+            "nome, status, updated_at, lojas(nome, ativo, regioes(nome))"
+        )
         .order("nome")
         .execute()
     )
     rows = []
-    for row in resp.data or []:
-        status = (row.get("status") or "").lower()
-        if status and "ativo" not in status:
+    for row in _colapsar_cadastro_recente(resp.data or []):
+        if not _status_consultor_ativo(row.get("status")):
             continue
         nome = (row.get("nome") or "").strip()
         if not nome:
@@ -1217,9 +1252,10 @@ def carregar_consultores_ativos() -> pd.DataFrame:
 # ══════════════════════════════════════════════════════
 
 
-@st.cache_data(ttl=21600)
+@st.cache_data(ttl=1800)
 def carregar_supervisores() -> pd.DataFrame:
-    """Carrega supervisores com suas lojas e regioes. TTL 6h."""
+    """Carrega supervisores com suas lojas e regioes. TTL 30min
+    (reflete uploads do angry-man sem esperar horas)."""
     resp = (
         _sb().table("supervisores").select("nome, lojas(nome), regioes(nome)").execute()
     )

@@ -96,6 +96,19 @@ class TestCalcularMediasPontosPorNivel:
         r = calcular_medias_pontos_por_nivel(sample_pontos_df, 10, df_supervisores=sup)
         assert r["num_consultores"] == 2  # João removido
 
+    def test_exclui_loja_backoffice(self):
+        # Vai e Vem (backoffice) fora das médias em pontos.
+        df = pd.DataFrame({
+            "LOJA": ["A", "VAI E VEM"],
+            "CONSULTOR": ["João", "Amos"],
+            "pontos": [600.0, 400.0],
+        })
+        r = calcular_medias_pontos_por_nivel(df, 10)
+        assert r["num_lojas"] == 1
+        assert r["media_du_loja_pontos"] == pytest.approx(60.0)
+        assert r["num_consultores"] == 1
+        assert r["media_du_consultor_pontos"] == pytest.approx(60.0)
+
 
 @pytest.mark.unit
 class TestCalcularMixPontos:

@@ -317,6 +317,20 @@ class TestCalcularMediasDuPorNivel:
         r = calcular_medias_du_por_nivel(df, 10, df_supervisores=sup)
         assert r["num_consultores"] == 1
 
+    def test_exclui_loja_backoffice(self):
+        # Vai e Vem (backoffice) não entra na média por loja nem na
+        # média por consultor.
+        df = pd.DataFrame({
+            "LOJA": ["A", "VAI E VEM"],
+            "CONSULTOR": ["João", "Amos"],
+            "VALOR": [1000.0, 500.0],
+        })
+        r = calcular_medias_du_por_nivel(df, du_decorridos=10)
+        assert r["num_lojas"] == 1
+        assert r["media_du_loja"] == pytest.approx(100.0)
+        assert r["num_consultores"] == 1
+        assert r["media_du_consultor"] == pytest.approx(100.0)
+
 
 @pytest.mark.unit
 class TestCalcularMediasOrganizacao:
