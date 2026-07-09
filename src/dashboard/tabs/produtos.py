@@ -279,13 +279,15 @@ def _render_produto_regional(
     visao_por_loja = perfil_role == "gerente_comercial"
 
     # ── Normalizar nomes de supervisores para comparação robusta ──
+    # df_sup vem de carregar_supervisores(): a coluna de nomes é
+    # SUPERVISOR (nao CONSULTOR).
     supervisores_raw: set = set()
     if (
         df_sup is not None
         and not df_sup.empty
-        and "CONSULTOR" in df_sup.columns
+        and "SUPERVISOR" in df_sup.columns
     ):
-        supervisores_raw = set(df_sup["CONSULTOR"].unique())
+        supervisores_raw = set(df_sup["SUPERVISOR"].dropna().unique())
 
     supervisores_norm = {
         str(n).strip().upper() for n in supervisores_raw

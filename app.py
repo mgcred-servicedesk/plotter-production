@@ -71,7 +71,6 @@ from src.dashboard.permissions import pode_ver
 from src.dashboard.rls import (
     aplicar_rls,
     aplicar_rls_metas,
-    aplicar_rls_supervisores,
 )
 from src.dashboard.tabs.analiticos import render_tab_analiticos
 from src.dashboard.tabs.detalhes import render_tab_detalhes
@@ -1081,10 +1080,15 @@ def main():
             st.query_params.clear()
 
         # ── RLS: filtrar dados por perfil ─────────
+        # df_sup NAO e recortado por escopo: a lista de supervisores so
+        # serve para EXCLUSAO em metricas consultor-level (nunca e
+        # exibida). Recorta-la deixava escapar supervisor cujo cadastro
+        # em `supervisores` aponta outra loja/regiao (ex.: remanejamento
+        # ainda nao refletido) — ele aparecia como consultor na regiao
+        # visualizada. A exclusao deve usar sempre a lista global.
         df = aplicar_rls(df)
         df_metas = aplicar_rls_metas(df_metas, df)
         df_metas_produto = aplicar_rls_metas(df_metas_produto, df)
-        df_sup = aplicar_rls_supervisores(df_sup, df)
         if not df_analise.empty:
             df_analise = aplicar_rls(df_analise)
         if not df_cancelados.empty:
@@ -1131,7 +1135,6 @@ def main():
             df_cancelados_f = _aplicar_filtros_ui(df_cancelados_f)
             df_metas_f = _filtrar_metas_ui(df_metas_f, df_f)
             df_metas_prod_f = _filtrar_metas_ui(df_metas_prod_f, df_f)
-            df_sup_f = aplicar_rls_supervisores(df_sup_f, df_f)
 
         render_status_bar(
             len(df_f),
