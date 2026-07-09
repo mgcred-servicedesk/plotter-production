@@ -1,0 +1,65 @@
+-- =====================================================
+-- Migracao 060: drop de indices nao usados em tabelas com
+-- churn de escrita do ETL (linter 0005 unused_index)
+--
+-- Contexto: continuacao da economia do Disk IO Budget (ver 054/
+-- 055 e progress docs 2026-07-08/09). O Performance Advisor lista
+-- 15 indices nunca usados. Estes 3 estao em tabelas que o ETL
+-- (angry-man) reescreve por inteiro a cada import — cada indice
+-- custa paginas sujas + WAL por linha reescrita, sem nunca servir
+-- uma leitura (mesma logica da 055 em contratos):
+--
+--   * idx_pagamentos_online_data_status — morto em definitivo
+--     desde o commit cbdabfa (o loader nao ordena mais por
+--     data_status; a aba so agrega). pagamentos_online sofre
+--     delete-all + reinsert a cada import.
+--   * idx_reconquista_status — reconquista e truncada e
+--     recarregada a cada import (fn_importar_reconquista);
+--     nenhuma view/RPC filtra status no banco (o app filtra
+--     em pandas).
+--   * idx_produtos_categoria_id — produtos e reescrita ~29x por
+--     linha pelo ETL (upserts fantasma). Ganho menor (updates
+--     sem mudanca de categoria_id podem ser HOT), mas o indice
+--     nunca foi usado: produtos e minuscula, seq scan sempre
+--     vence. ATENCAO: cobre a FK produtos.categoria_id — o
+--     linter passara a acusar "unindexed foreign key" (INFO);
+--     aceito: DELETE em categorias_produto e raro/admin.
+--     Origem: database/schema.sql do repo angry-man (nao ha
+--     migration dele aqui) — remover tambem la, ou um rebuild
+--     do schema o recriaria.
+--
+-- NAO dropados (decisao 2026-07-09): os 9 indices de tabelas
+-- pequenas sem churn (lojas, feriados, usuarios, usuario_escopos,
+-- supervisores, categorias_produto) — ganho ~zero e 6 cobrem FKs.
+-- Os 3 idx_rsnap_* somem com a 031 (drop da reconquista_snapshot).
+--
+-- Locks: DROP INDEX pega ACCESS EXCLUSIVE subsegundo nas tabelas
+-- alvo — executar fora do horario do import do ETL.
+-- Executar no Supabase SQL Editor.
+-- =====================================================
+
+DROP INDEX IF EXISTS public.idx_pagamentos_online_data_status;
+DROP INDEX IF EXISTS public.idx_reconquista_status;
+DROP INDEX IF EXISTS public.idx_produtos_categoria_id;
+
+
+-- ===========================================
+-- Verificacao (apos executar)
+-- ===========================================
+-- SELECT indexname FROM pg_indexes
+-- WHERE schemaname = 'public'
+--   AND indexname IN ('idx_pagamentos_online_data_status',
+--                     'idx_reconquista_status',
+--                     'idx_produtos_categoria_id');
+-- Esperado: 0 linhas. Re-rodar o Performance Advisor: os 3 INFOs
+-- de unused_index somem (surge 1 INFO de unindexed FK em
+-- produtos.categoria_id — aceito, ver cabecalho).
+--
+-- Reversao:
+--   CREATE INDEX idx_pagamentos_online_data_status
+--       ON public.pagamentos_online (data_status);
+--   CREATE INDEX idx_reconquista_status
+--       ON public.reconquista (status);
+--   CREATE INDEX idx_produtos_categoria_id
+--       ON public.produtos (categoria_id);
+-- =====================================================
