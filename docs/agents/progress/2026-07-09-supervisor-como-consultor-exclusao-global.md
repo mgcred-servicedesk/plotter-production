@@ -111,6 +111,45 @@ Pendências adicionais:
 - [ ] Usuário: corrigir as 5 lojas em `configuracao/Supervisores.xlsx`
       (angry-man) ANTES do próximo import — senão os pares antigos
       são re-inseridos.
-- [ ] angry-man: importSupervisores deveria remover pares ausentes
+- [x] angry-man: importSupervisores deveria remover pares ausentes
       da planilha (replace-style, como pagamentos_online) para o
-      problema não voltar a cada rodízio.
+      problema não voltar a cada rodízio. → feito, ver seção abaixo.
+
+## Continuação (mesma sessão) — migration 063 + replace-style no angry-man
+
+Usuário pediu para alinhar o angry-man à regra corrigida aqui. Feito:
+
+- **Migration 063** (`fn_supervisores_replace(p_rows jsonb)`): foto
+  única no padrão da 015 (`fn_pagamentos_online_replace`) — mínimo de
+  30 linhas contra wipe por planilha corrompida, advisory lock
+  20260709, DELETE+INSERT atômicos, EXECUTE só service_role (padrão
+  058 para default privileges). `regiao_id` derivado de
+  `lojas.regiao_id` (planilha só como fallback), `DISTINCT ON (nome,
+  loja_id)` deduplica inclusive pares com loja NULL — o upsert antigo
+  duplicava linhas `loja_id NULL` a cada import (UNIQUE NULLS
+  DISTINCT não dispara onConflict).
+- **angry-man** (4 arquivos): `importSupervisores` troca o upsert
+  acumulativo por UMA chamada à RPC e passa a reportar linha a linha
+  loja não resolvida (antes gravava NULL em silêncio); entrada em
+  `RPC_ENDPOINT_MAP` e na whitelist da Edge Function `reconquista-rpc`
+  (precedente: `fn_aplicar_remanejamento_regiao`, cadastro, já vivia
+  lá); `schema.sql` sem o `idx_produtos_categoria_id` (follow-up da
+  060). tsc e vitest (61) verdes; nada referencia `supervisores.id`
+  (regenerar ids por import é seguro).
+
+Alternativas descartadas: diff client-side (DELETE em modo web vai
+com anon key + RLS sem policy de escrita = no-op silencioso; Electron
+main bloqueia DELETE sem filtro) e estender `fn_admin_import` (a 015
+documenta por quê não).
+
+Pendências (ordem de deploy):
+
+- [ ] Usuário: rodar 062 e 063 no SQL Editor.
+- [ ] Usuário: redeploy da Edge Function `reconquista-rpc`
+      (`supabase functions deploy reconquista-rpc`) — sem isso o
+      import de supervisores em modo web falha com "RPC sem endpoint
+      web mapeado"/"Funcao nao permitida". Electron funciona só com
+      a 063 aplicada.
+- [ ] Usuário: corrigir as 5 lojas na planilha; a partir daí um
+      import concilia tudo sozinho (a 062 corrige a produção já,
+      antes do ciclo de deploy do angry-man).
