@@ -1,0 +1,58 @@
+-- =====================================================
+-- Migracao 054: work_mem = 12MB para o role authenticator
+--
+-- Contexto (aviso de Disk IO Budget do Supabase, 2026-07-08):
+--
+-- O diagnostico via pg_stat_database / pg_stat_statements mostrou que a
+-- leitura NAO consome disco (cache hit 99,9999%; blks_read ~58 MB desde
+-- fev/2026 — o banco inteiro, contratos = 68 MB, cabe em memoria). O
+-- dreno de Disk IO vem de ESCRITA, e um dos dois vetores sao os
+-- ARQUIVOS TEMPORARIOS: 107 GB acumulados (63 mil arquivos) em
+-- pg_stat_database. Spillers atuais: as queries paginadas de
+-- v_contratos_dashboard (ORDER BY id da paginacao ordena o mes inteiro
+-- com linhas largas; ~0,5 MB de temp POR CHAMADA, ~13,5 mil chamadas) e
+-- as queries de introspeccao do proprio PostgREST.
+--
+-- Causa: work_mem default (4MB) e menor que o working set dos sorts
+-- (~10 MB no pior mes). Com 12MB o sort cabe em memoria e o spill some.
+--
+-- Escopo: APENAS o role de login do PostgREST (authenticator) — cobre
+-- todas as queries do dashboard e do ETL via API. SQL Editor (role
+-- postgres), autovacuum e demais processos seguem no default. NAO se
+-- usa ALTER DATABASE para nao inflar consumo de RAM de processos que
+-- nao precisam.
+--
+-- ⚠️  12MB (e nao 16/32) por rodarmos em compute NANO (0,5 GB RAM):
+-- work_mem e alocavel POR NO de sort/hash POR QUERY CONCORRENTE.
+-- Com o cache do Streamlit na frente, a concorrencia real de queries
+-- pesadas e baixa (1-2), entao o teto pratico fica em ~24 MB extras.
+-- Se houver upgrade de compute (Micro+), pode-se subir para 16-32MB
+-- em migration futura.
+--
+-- Efeito: role-level GUC aplica no LOGIN. As conexoes do pool do
+-- PostgREST ja abertas NAO pegam o valor novo — entra em vigor
+-- conforme o pool recicla conexoes, ou de imediato reiniciando a API
+-- (Dashboard -> Settings -> Infrastructure -> Restart project).
+--
+-- Reversivel: ALTER ROLE authenticator RESET work_mem;
+--
+-- Executar no Supabase SQL Editor.
+-- =====================================================
+
+
+ALTER ROLE authenticator SET work_mem = '12MB';
+
+
+-- ===========================================
+-- Verificacao
+--
+--   -- Config persistida no role:
+--   SELECT rolname, rolconfig FROM pg_roles
+--   WHERE rolname = 'authenticator';
+--   -- Esperado: {work_mem=12MB}
+--
+--   -- Em vigor nas conexoes novas da API (via RPC/REST qualquer):
+--   -- os temp files devem parar de crescer. Acompanhar por 48h:
+--   SELECT temp_files, pg_size_pretty(temp_bytes) AS temp_total
+--   FROM pg_stat_database WHERE datname = current_database();
+-- ===========================================
