@@ -1280,13 +1280,13 @@ VALUES
 -- ------------------------------------------------
 -- CNC             → CNC
 -- CNC 13º / CNC 13 → CNC_13
--- CNC ANT         → ANT_BENEF
+-- CNC ANT (legado) / ANT. DE BENEF. → ANT_BENEF
 -- SAQUE           → SAQUE
 -- SAQUE BENEFICIO → SAQUE_BENEFICIO
 -- CONSIG / CONSIG BMG → CONSIG_BMG
 -- CONSIG ITAU     → CONSIG_ITAU
 -- CONSIG C6       → CONSIG_C6
--- CONSIG PRIV     → CONSIG_PRIV
+-- CONSIG PRIV (legado) / CLT → CONSIG_PRIV
 -- FGTS            → FGTS
 -- EMISSAO / EMISSAO CB / EMISSAO CC → CARTAO
 -- Portabilidade   → PORTABILIDADE
