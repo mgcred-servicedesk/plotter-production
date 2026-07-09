@@ -47,18 +47,19 @@ público). Principais:
 | `carregar_consultores_cadastro()` | lista de nomes | 24 h |
 | `carregar_ultimo_periodo()` | `{mes, ano}` mais recente | 24 h |
 
-### Exemplo — view
+### Exemplo — view (paginada por keyset)
 
 ```python
-resp = (
-    _sb()
-    .from_("v_contratos_dashboard")
-    .select("*")
-    .eq("periodo_id", periodo["id"])
-    .order("id")
-    .limit(_PAGE_SIZE)
-    .offset(offset)
-    .execute()
+all_data = _paginar_keyset(
+    lambda: (
+        _sb()
+        .from_("v_contratos_dashboard")
+        .select("*")
+        .eq("periodo_id", periodo["id"])
+        .order("id")
+        .limit(_PAGE_SIZE)
+    ),
+    "id",
 )
 ```
 
@@ -73,35 +74,55 @@ resp = (
 df = pd.DataFrame(resp.data or [])
 ```
 
+RPC com resultset potencialmente **> 1000 linhas**: nunca paginar com
+`.range()` — o PostgREST reexecuta a função inteira a cada página.
+Padrão do projeto: variante `*_json` (migration 057) que agrega o
+resultado da função original em JSON único (`json_agg` +
+`COALESCE('[]')`) e é chamada **uma vez**, sem `.range()`/`.limit()`:
+
+```python
+resp = _sb().rpc("obter_cancelados_classificados_json", params).execute()
+all_data = resp.data or []   # lista já parseada pelo postgrest-py
+```
+
+As funções originais (`RETURNS TABLE`) são mantidas para debug/uso
+manual no SQL Editor.
+
 ## Paginação
 
-Supabase limita respostas a 1000 linhas. Sempre paginar:
+Supabase limita respostas a 1000 linhas. O padrão canônico é **keyset
+pagination** via helper `_paginar_keyset` (loaders.py) — cursor
+`WHERE chave > último ORDER BY chave LIMIT N`:
 
 ```python
 _PAGE_SIZE = 1000
 
-all_data: list[dict] = []
-offset = 0
-while True:
-    resp = (
+all_data = _paginar_keyset(
+    lambda: (
         _sb()
-        .from_("v_contratos_dashboard")
+        .from_("v_reconquista")
         .select("*")
-        .eq("periodo_id", periodo["id"])
-        .order("id")
+        .eq("ref_ano", ref_ano)
+        .eq("ref_mes", ref_mes)
+        .order("co_adesao")
         .limit(_PAGE_SIZE)
-        .offset(offset)
-        .execute()
-    )
-    batch = resp.data or []
-    all_data.extend(batch)
-    if len(batch) < _PAGE_SIZE:
-        break
-    offset += _PAGE_SIZE
+    ),
+    "co_adesao",
+)
 ```
 
-`.order("id")` é **obrigatório** — sem ordenação estável, o offset pode
-pular ou repetir linhas (commit `705885b`).
+Regras:
+
+- A `coluna_chave` deve ser **única** (PK ou UNIQUE) — chave repetida
+  faz linhas serem puladas entre páginas. Chaves em uso:
+  `v_contratos_dashboard.id` (PK), `v_pagamentos_online_efetivo.proposta`
+  (PK), `v_reconquista.co_adesao` (UNIQUE).
+- A query base deve trazer `.order(coluna_chave)` e `.limit(_PAGE_SIZE)`.
+- **OFFSET é proibido em novos loaders**: cada página com OFFSET
+  reordena o resultset inteiro (sort que spilla para temp files —
+  dreno do Disk IO Budget, ver migration 054 e progress doc
+  2026-07-08). A exigência de ordenação estável do commit `705885b`
+  continua valendo — agora garantida pela chave única.
 
 ## Estratégia de cache — `_atual` vs `_historico`
 

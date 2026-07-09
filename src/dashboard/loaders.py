@@ -17,7 +17,7 @@ side-effects em funcoes cacheadas.
 """
 
 from datetime import datetime
-from typing import Dict, List, Optional, Tuple
+from typing import Callable, Dict, List, Optional, Tuple
 
 import pandas as pd
 import streamlit as st
@@ -113,6 +113,32 @@ def _eh_mes_atual(mes: int, ano: int) -> bool:
     return mes == hoje.month and ano == hoje.year
 
 
+def _paginar_keyset(montar_query: Callable, coluna_chave: str) -> List[dict]:
+    """Pagina por cursor: WHERE chave > ultimo ORDER BY chave LIMIT N.
+
+    Substitui a paginacao por OFFSET: com OFFSET cada pagina reordena o
+    resultset inteiro (sort que spilla para temp files no Postgres —
+    dreno do Disk IO Budget, ver migration 054); com cursor todo request
+    e um top-N de no maximo _PAGE_SIZE linhas, que cabe em work_mem.
+
+    ``montar_query`` deve devolver a query base ja com ``.order(
+    coluna_chave)`` e ``.limit(_PAGE_SIZE)``; ``coluna_chave`` deve ser
+    UNICA (PK/UNIQUE) — chave repetida faria linhas serem puladas entre
+    paginas.
+    """
+    all_data: List[dict] = []
+    ultimo = None
+    while True:
+        query = montar_query()
+        if ultimo is not None:
+            query = query.gt(coluna_chave, ultimo)
+        batch = query.execute().data or []
+        all_data.extend(batch)
+        if len(batch) < _PAGE_SIZE:
+            return all_data
+        ultimo = batch[-1][coluna_chave]
+
+
 # ══════════════════════════════════════════════════════
 # Categorias e periodos
 # ══════════════════════════════════════════════════════
@@ -187,27 +213,20 @@ def _fetch_contratos_pagos(mes: int, ano: int) -> pd.DataFrame:
         return pd.DataFrame()
 
     # select explicito (em vez de "*"): so as colunas consumidas pelo
-    # dashboard trafegam do PostgREST. "id" entra apenas para o order
-    # estavel da paginacao (nao e mapeado para o DataFrame).
+    # dashboard trafegam do PostgREST. "id" entra apenas como cursor da
+    # paginacao keyset (nao e mapeado para o DataFrame).
     colunas = "id," + ",".join(_COLS_CONTRATOS_PAGOS)
-    all_data: List[dict] = []
-    offset = 0
-    while True:
-        resp = (
+    all_data = _paginar_keyset(
+        lambda: (
             _sb()
             .from_("v_contratos_dashboard")
             .select(colunas)
             .eq("periodo_id", periodo["id"])
             .order("id")
             .limit(_PAGE_SIZE)
-            .offset(offset)
-            .execute()
-        )
-        batch = resp.data or []
-        all_data.extend(batch)
-        if len(batch) < _PAGE_SIZE:
-            break
-        offset += _PAGE_SIZE
+        ),
+        "id",
+    )
 
     if not all_data:
         return pd.DataFrame()
@@ -273,24 +292,21 @@ def carregar_contratos_em_analise(
 
 
 def _fetch_contratos_em_analise(mes: int, ano: int) -> pd.DataFrame:
-    """Executa a RPC de contratos em analise sem cache."""
-    all_data: List[dict] = []
-    offset = 0
-    while True:
-        resp = (
-            _sb()
-            .rpc(
-                "obter_contratos_em_analise",
-                {"p_mes": mes, "p_ano": ano},
-            )
-            .range(offset, offset + _PAGE_SIZE - 1)
-            .execute()
+    """Executa a RPC de contratos em analise sem cache.
+
+    Variante _json (migration 057): uma execucao devolve o resultado
+    inteiro agregado em JSON. O .range() antigo fazia o PostgREST
+    reexecutar a funcao inteira a cada pagina de 1000 linhas.
+    """
+    resp = (
+        _sb()
+        .rpc(
+            "obter_contratos_em_analise_json",
+            {"p_mes": mes, "p_ano": ano},
         )
-        batch = resp.data or []
-        all_data.extend(batch)
-        if len(batch) < _PAGE_SIZE:
-            break
-        offset += _PAGE_SIZE
+        .execute()
+    )
+    all_data = resp.data or []
 
     if not all_data:
         return pd.DataFrame()
@@ -485,20 +501,10 @@ def _fetch_digitacao_diaria_detalhe(
     params: Dict[str, int] = {"p_mes": mes, "p_ano": ano}
     if dias_recentes is not None:
         params["p_dias_recentes"] = dias_recentes
-    all_data: List[dict] = []
-    offset = 0
-    while True:
-        resp = (
-            _sb()
-            .rpc("obter_digitacao_diaria_detalhe", params)
-            .range(offset, offset + _PAGE_SIZE - 1)
-            .execute()
-        )
-        batch = resp.data or []
-        all_data.extend(batch)
-        if len(batch) < _PAGE_SIZE:
-            break
-        offset += _PAGE_SIZE
+    # Variante _json (migration 057): execucao unica, sem reexecucao
+    # da funcao por pagina.
+    resp = _sb().rpc("obter_digitacao_diaria_detalhe_json", params).execute()
+    all_data = resp.data or []
 
     if not all_data:
         return pd.DataFrame(columns=cols)
@@ -562,27 +568,21 @@ def carregar_contratos_cancelados(
 def _fetch_contratos_cancelados(mes: int, ano: int) -> pd.DataFrame:
     """Executa a RPC de contratos cancelados sem cache.
 
-    Usa ``obter_cancelados_classificados``, que alem das colunas
-    de cancelados traz ``classificacao`` (redigitada/recuperada/
-    liquido) — matching feito no banco, sem expor o nome do cliente.
+    Usa ``obter_cancelados_classificados_json`` (migration 057), que
+    alem das colunas de cancelados traz ``classificacao`` (redigitada/
+    recuperada/liquido) — matching feito no banco, sem expor o nome do
+    cliente. Execucao unica: o .range() antigo fazia o PostgREST
+    reexecutar a funcao (~2,6 s) a cada pagina de 1000 linhas.
     """
-    all_data: List[dict] = []
-    offset = 0
-    while True:
-        resp = (
-            _sb()
-            .rpc(
-                "obter_cancelados_classificados",
-                {"p_mes": mes, "p_ano": ano},
-            )
-            .range(offset, offset + _PAGE_SIZE - 1)
-            .execute()
+    resp = (
+        _sb()
+        .rpc(
+            "obter_cancelados_classificados_json",
+            {"p_mes": mes, "p_ano": ano},
         )
-        batch = resp.data or []
-        all_data.extend(batch)
-        if len(batch) < _PAGE_SIZE:
-            break
-        offset += _PAGE_SIZE
+        .execute()
+    )
+    all_data = resp.data or []
 
     if not all_data:
         return pd.DataFrame()
@@ -1549,25 +1549,22 @@ def _pagamentos_online_cache() -> pd.DataFrame:
 
 
 def _fetch_pagamentos_online() -> pd.DataFrame:
-    """Executa a query da view sem cache, paginada."""
-    all_data: List[dict] = []
-    offset = 0
-    while True:
-        resp = (
+    """Executa a query da view sem cache, paginada.
+
+    Cursor keyset por ``proposta`` (PK de pagamentos_online). A ordem
+    antiga (data_status desc) foi dispensada: a aba so agrega
+    (max/sum/len) — nenhum consumidor depende da ordem das linhas.
+    """
+    all_data = _paginar_keyset(
+        lambda: (
             _sb()
             .from_("v_pagamentos_online_efetivo")
             .select("*")
-            .order("data_status", desc=True)
             .order("proposta")
             .limit(_PAGE_SIZE)
-            .offset(offset)
-            .execute()
-        )
-        batch = resp.data or []
-        all_data.extend(batch)
-        if len(batch) < _PAGE_SIZE:
-            break
-        offset += _PAGE_SIZE
+        ),
+        "proposta",
+    )
 
     if not all_data:
         return pd.DataFrame()
@@ -1706,26 +1703,24 @@ def _mes_apuracao_seguinte(mes: int, ano: int) -> Tuple[int, int]:
 
 
 def _fetch_reconquista(ref_ano: int, ref_mes: int) -> List[dict]:
-    """Pagina v_reconquista filtrada pelo periodo de referencia."""
-    all_data: List[dict] = []
-    offset = 0
-    while True:
-        resp = (
+    """Pagina v_reconquista filtrada pelo periodo de referencia.
+
+    Cursor keyset por ``co_adesao`` (UNIQUE, migration 028). Corrige a
+    paginacao anterior, que usava OFFSET sem ORDER BY — ordem instavel
+    podia repetir/perder linhas entre paginas.
+    """
+    return _paginar_keyset(
+        lambda: (
             _sb()
             .from_("v_reconquista")
             .select("*")
             .eq("ref_ano", ref_ano)
             .eq("ref_mes", ref_mes)
+            .order("co_adesao")
             .limit(_PAGE_SIZE)
-            .offset(offset)
-            .execute()
-        )
-        batch = resp.data or []
-        all_data.extend(batch)
-        if len(batch) < _PAGE_SIZE:
-            break
-        offset += _PAGE_SIZE
-    return all_data
+        ),
+        "co_adesao",
+    )
 
 
 @st.cache_data(ttl=600)
