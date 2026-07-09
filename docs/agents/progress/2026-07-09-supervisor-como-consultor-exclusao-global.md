@@ -89,3 +89,28 @@ exclusão por nome existe exatamente para isso.
 
 - Regra: [business-rules.md](../business-rules.md) — "Exclusão de supervisores"
 - RLS client-side: [rls.md](../rls.md)
+
+## Continuação (mesma sessão) — migration 062
+
+Usuário decidiu conciliar `supervisores` com o roster do RH. Criada
+`database/migrations/062_conciliar_supervisores_rh.sql`: DELETE do
+par (nome, loja antiga) + INSERT do par correto com `ON CONFLICT
+(nome, loja_id) DO NOTHING` para os 5 remanejados + DELETE da
+duplicata da MONICA (VILAR DOS TELES; PAVUNA já estava correta).
+
+Decisão não óbvia: **DELETE+INSERT em vez de UPDATE** — o
+`importSupervisores` do angry-man (configuracao/Supervisores.xlsx,
+upsert `onConflict nome,loja_id`) nunca remove o par antigo em
+remanejamento (origem da duplicata da MONICA); se a planilha for
+corrigida/importada antes da migration, o par novo já existe e um
+UPDATE violaria `uq_supervisores_nome_loja`. O padrão adotado é
+idempotente e independe da ordem.
+
+Pendências adicionais:
+
+- [ ] Usuário: corrigir as 5 lojas em `configuracao/Supervisores.xlsx`
+      (angry-man) ANTES do próximo import — senão os pares antigos
+      são re-inseridos.
+- [ ] angry-man: importSupervisores deveria remover pares ausentes
+      da planilha (replace-style, como pagamentos_online) para o
+      problema não voltar a cada rodízio.
