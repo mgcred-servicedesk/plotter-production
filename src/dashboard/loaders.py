@@ -16,6 +16,8 @@ dentro de ``@st.cache_data`` — Streamlit nao garante
 side-effects em funcoes cacheadas.
 """
 
+import logging
+import uuid
 from datetime import datetime
 from typing import Callable, Dict, List, Optional, Tuple
 
@@ -24,6 +26,8 @@ import streamlit as st
 
 from src.config.supabase_client import get_supabase_client
 from src.dashboard.rls import _obter_perfil_efetivo
+
+logger = logging.getLogger(__name__)
 
 
 _PAGE_SIZE = 1000
@@ -355,6 +359,126 @@ def _contratos_pagos_atual(mes: int, ano: int) -> pd.DataFrame:
 def _contratos_pagos_historico(mes: int, ano: int) -> pd.DataFrame:
     """Contratos pagos — historico. TTL 24h."""
     return _fetch_contratos_pagos(mes, ano)
+
+
+# ══════════════════════════════════════════════════════
+# Contratos pagos por intervalo de datas
+#
+# O dashboard e mensal (um periodo por mes), mas a aba de Gestao
+# precisa apurar faixas livres — inclusive cruzando meses anteriores
+# ao selecionado na sidebar. Como `contratos.periodo_id` e DERIVADO de
+# `data_status_pagamento` (ver schema.sql), o conjunto de periodos que
+# cobre um intervalo de PAGAMENTO e exato: nenhum contrato pago dentro
+# da faixa mora fora desses meses.
+#
+# Por CADASTRO a garantia nao vale — um contrato cadastrado em maio e
+# pago em julho vive no periodo de julho. Por isso o modo de cadastro
+# varre do mes inicial ate o mes corrente (ver
+# :func:`meses_do_intervalo`), e ainda assim nao alcanca o que for
+# pago depois de hoje. A aba avisa.
+# ══════════════════════════════════════════════════════
+
+# Teto de meses por consulta. O Supabase esta em compute Nano: varrer
+# ano e meio de contratos de uma vez derruba a instancia antes de
+# devolver resposta. Preferimos recusar com mensagem clara.
+MAX_MESES_INTERVALO = 12
+
+CAMPO_PAGAMENTO = "DATA"
+CAMPO_CADASTRO = "DATA_CADASTRO"
+
+
+def meses_do_intervalo(
+    data_ini,
+    data_fim,
+    campo: str = CAMPO_PAGAMENTO,
+    hoje=None,
+) -> List[Tuple[int, int]]:
+    """Meses (mes, ano) a carregar para cobrir o intervalo.
+
+    Por PAGAMENTO, os meses de ``data_ini`` a ``data_fim`` bastam —
+    ``periodo_id`` deriva da data de pagamento. Por CADASTRO, o alvo
+    pode ter sido pago em qualquer mes posterior, entao a varredura vai
+    de ``data_ini`` ate o mes corrente.
+
+    Retorna [] se o intervalo for invalido (fim antes do inicio).
+    """
+    if data_ini is None or data_fim is None or data_fim < data_ini:
+        return []
+
+    limite = data_fim
+    if campo == CAMPO_CADASTRO:
+        hoje = hoje or datetime.now().date()
+        limite = max(data_fim, hoje)
+
+    meses: List[Tuple[int, int]] = []
+    mes, ano = data_ini.month, data_ini.year
+    while (ano, mes) <= (limite.year, limite.month):
+        meses.append((mes, ano))
+        mes += 1
+        if mes > 12:
+            mes, ano = 1, ano + 1
+    return meses
+
+
+def filtrar_por_intervalo(
+    df: pd.DataFrame,
+    data_ini,
+    data_fim,
+    campo: str = CAMPO_PAGAMENTO,
+) -> pd.DataFrame:
+    """Recorta o DataFrame pelo intervalo, na coluna de data escolhida.
+
+    Limites INCLUSIVOS nas duas pontas, para casar com a leitura de
+    quem digita "de 01/05 a 31/05" — e com os limiares da aba de
+    Gestao, que tambem sao inclusivos. Linhas sem data saem.
+    """
+    if df.empty or campo not in df.columns:
+        return df
+    datas = pd.to_datetime(df[campo], errors="coerce").dt.date
+    dentro = datas.notna() & (datas >= data_ini) & (datas <= data_fim)
+    return df[dentro].copy()
+
+
+def carregar_contratos_pagos_intervalo(
+    data_ini,
+    data_fim,
+    campo: str = CAMPO_PAGAMENTO,
+) -> Tuple[pd.DataFrame, str]:
+    """Contratos pagos num intervalo livre de datas.
+
+    Compoe os periodos mensais ja cacheados por
+    :func:`carregar_contratos_pagos` — sem query nova e sem cache
+    proprio, para nao manter uma segunda copia dos mesmos contratos em
+    memoria (o Supabase esta em compute Nano).
+
+    Args:
+        data_ini, data_fim: limites inclusivos (``datetime.date``).
+        campo: ``DATA`` (pagamento, padrao) ou ``DATA_CADASTRO``.
+
+    Returns:
+        ``(df, aviso)``. ``aviso`` traz o motivo quando o resultado vem
+        vazio ou limitado — nunca devolvemos vazio silencioso.
+    """
+    meses = meses_do_intervalo(data_ini, data_fim, campo)
+    if not meses:
+        return pd.DataFrame(), "Intervalo invalido: fim anterior ao inicio."
+    if len(meses) > MAX_MESES_INTERVALO:
+        return (
+            pd.DataFrame(),
+            f"Intervalo exige varrer {len(meses)} meses (maximo "
+            f"{MAX_MESES_INTERVALO}). Reduza a faixa de datas.",
+        )
+
+    partes = []
+    for mes, ano in meses:
+        parte = carregar_contratos_pagos(mes, ano)
+        if not parte.empty:
+            partes.append(parte)
+    if not partes:
+        return pd.DataFrame(), "Nenhum contrato pago nos meses do intervalo."
+
+    df = pd.concat(partes, ignore_index=True)
+    return filtrar_por_intervalo(df, data_ini, data_fim, campo), ""
 
 
 # ══════════════════════════════════════════════════════
@@ -1938,3 +2062,127 @@ def carregar_reconquista(mes: int, ano: int) -> Dict:
         "clientes": clientes,
         "prox": prox,
     }
+
+
+# ══════════════════════════════════════════════════════
+# Presets da aba de Gestao
+# ══════════════════════════════════════════════════════
+
+
+def _uuid_valido(valor: str) -> bool:
+    """True quando ``valor`` e um UUID bem formado."""
+    try:
+        uuid.UUID(str(valor))
+        return True
+    except (ValueError, AttributeError, TypeError):
+        return False
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+def carregar_presets_gestao(usuario_id: str) -> list[dict]:
+    """Presets da aba de Gestao visiveis para ``usuario_id``.
+
+    Traz os proprios mais os que outros marcaram como
+    ``compartilhado``. O recorte por dono e feito AQUI, na
+    aplicacao: a chave do dashboard e service_role (BYPASSRLS), entao
+    as policies da migracao 064 nao chegam a rodar — sao rede de
+    seguranca para acesso futuro com chave anon. Ver rls.md.
+
+    Retorna lista de dicts ``[id, usuario_id, nome, compartilhado,
+    config, proprio]``, ordenada pelos proprios primeiro. TTL 5min;
+    mutacoes invalidam via :func:`_invalidar_cache_presets`.
+    """
+    if not _uuid_valido(usuario_id):
+        return []
+    resp = (
+        _sb()
+        .table("gestao_presets")
+        .select("id, usuario_id, nome, compartilhado, config")
+        # usuario_id vai interpolado no filtro do PostgREST — validado
+        # como UUID acima, para que nenhum texto arbitrario da sessao
+        # chegue a compor a expressao.
+        .or_(f"usuario_id.eq.{usuario_id},compartilhado.is.true")
+        .order("nome")
+        .execute()
+    )
+    presets = []
+    for row in resp.data or []:
+        presets.append({**row, "proprio": row.get("usuario_id") == usuario_id})
+    return sorted(presets, key=lambda p: (not p["proprio"], p["nome"]))
+
+
+def salvar_preset_gestao(
+    usuario_id: str,
+    nome: str,
+    config: dict,
+    compartilhado: bool = False,
+) -> tuple[bool, str]:
+    """Cria ou sobrescreve um preset do proprio usuario.
+
+    Sobrescreve pelo par (usuario_id, nome) — a constraint
+    ``uq_gestao_presets_dono_nome``. Salvar com um nome que ja existe
+    e uma ATUALIZACAO deliberada; quem chama deve confirmar antes.
+    Nunca toca preset de outro dono.
+    """
+    nome = (nome or "").strip()
+    if not _uuid_valido(usuario_id):
+        return False, "Sessao sem usuario identificado."
+    if not nome:
+        return False, "Informe um nome para o preset."
+    if len(nome) > 60:
+        return False, "Nome muito longo (maximo 60 caracteres)."
+
+    try:
+        (
+            _sb()
+            .table("gestao_presets")
+            .upsert(
+                {
+                    "usuario_id": usuario_id,
+                    "nome": nome,
+                    "config": config,
+                    "compartilhado": bool(compartilhado),
+                },
+                on_conflict="usuario_id,nome",
+            )
+            .execute()
+        )
+    except Exception as exc:
+        logger.exception("Falha ao salvar preset de Gestao")
+        return False, f"Nao foi possivel salvar o preset: {exc}"
+
+    _invalidar_cache_presets()
+    return True, f"Preset '{nome}' salvo."
+
+
+def excluir_preset_gestao(usuario_id: str, preset_id: str) -> tuple[bool, str]:
+    """Apaga um preset, desde que pertenca ao proprio usuario.
+
+    O filtro por ``usuario_id`` na propria query e o que impede apagar
+    preset alheio — com service_role a policy de DELETE nao roda.
+    """
+    if not _uuid_valido(usuario_id) or not _uuid_valido(preset_id):
+        return False, "Preset invalido."
+    try:
+        (
+            _sb()
+            .table("gestao_presets")
+            .delete()
+            .eq("id", preset_id)
+            .eq("usuario_id", usuario_id)
+            .execute()
+        )
+    except Exception as exc:
+        logger.exception("Falha ao excluir preset de Gestao")
+        return False, f"Nao foi possivel excluir o preset: {exc}"
+
+    _invalidar_cache_presets()
+    return True, "Preset excluido."
+
+
+def _invalidar_cache_presets() -> None:
+    """Invalida o cache de :func:`carregar_presets_gestao`."""
+    try:
+        carregar_presets_gestao.clear()
+    except Exception:
+        pass

@@ -2,16 +2,17 @@
 KPIs gerais do dashboard + helpers compartilhados entre
 os modulos de KPI.
 
-Este modulo hospeda ``excluir_supervisores`` e
-``contar_consultores``, que sao reusados por
-``produtos.py``, ``regioes.py``, ``rankings.py`` e
-``evolucao.py``.
+Este modulo hospeda ``excluir_supervisores``,
+``contar_consultores`` e ``mascaras_aceleradores``, que sao
+reusados por ``produtos.py``, ``regioes.py``,
+``rankings.py``, ``gestao.py`` e ``evolucao.py``.
 """
 
 from typing import Dict, List, Optional
 
 import pandas as pd
 
+from src.config.settings import PRODUTOS_EMISSAO
 from src.shared.dias_uteis import calcular_dias_uteis
 
 
@@ -69,6 +70,67 @@ def excluir_lojas_backoffice(df: pd.DataFrame) -> pd.DataFrame:
         df["LOJA"].fillna("").astype(str).str.strip().str.upper()
     )
     return df[~lojas_norm.isin(LOJAS_BACKOFFICE)].copy()
+
+
+# Aceleradores: recortes que contam por QUANTIDADE de contratos, nao
+# por valor. BMG Med, Vida Familiar e Emissao chegam com VALOR = 0 da
+# consolidacao (conta_valor=false / regra de emissao), entao qualquer
+# leitura que filtre VALOR > 0 antes de conta-los devolve zero — quem
+# consome estas mascaras precisa aplica-las no df COMPLETO.
+#
+# SUPER CONTA e a excecao e merece atencao: alem de acelerador, ela E
+# CNC em valor (``PRODUTOS_DASHBOARD['CNC']`` inclui SUPER_CONTA, e a
+# consolidacao registra "conta valor/pontos como CNC e tambem e
+# contado como producao Super Conta"). Ou seja, contar Super Conta
+# aqui NAO tira o dinheiro dela do CNC — a mascara e so contagem.
+ACELERADORES: tuple = (
+    "BMG Med", "Vida Familiar", "Emissao", "Super Conta",
+)
+
+
+def mascaras_aceleradores(df: pd.DataFrame) -> Dict[str, pd.Series]:
+    """Mascara booleana de cada acelerador sobre as linhas de ``df``.
+
+    Fonte unica da definicao, compartilhada por rankings e pela aba de
+    Gestao: se as duas superficies divergirem sobre o que e um "BMG
+    Med", passam a discordar sobre o mesmo consultor.
+
+    Coluna ausente vira mascara toda falsa (nunca KeyError) — df
+    parcial e caso normal em testes e em periodos sem consolidacao.
+    """
+    falso = pd.Series(False, index=df.index)
+
+    def _flag(col: str) -> pd.Series:
+        if col not in df.columns:
+            return falso
+        return df[col].fillna(False).astype(bool)
+
+    if "TIPO_PRODUTO" in df.columns:
+        emissao = df["TIPO_PRODUTO"].str.upper().isin(
+            {p.upper() for p in PRODUTOS_EMISSAO}
+        )
+    else:
+        emissao = falso
+
+    # Prefere a flag canonica derivada na consolidacao; o fallback por
+    # SUBTIPO cobre df parcial (testes, periodo sem consolidacao) e usa
+    # exatamente a mesma normalizacao (strip + upper).
+    if "is_super_conta" in df.columns:
+        super_conta = _flag("is_super_conta")
+    elif "SUBTIPO" in df.columns:
+        super_conta = (
+            df["SUBTIPO"].astype(str).str.strip().str.upper()
+            == "SUPER CONTA"
+        )
+    else:
+        super_conta = falso
+
+    return {
+        "BMG Med": _flag("is_bmg_med"),
+        "Vida Familiar": _flag("is_seguro_vida"),
+        "Emissao": emissao,
+        "Super Conta": super_conta,
+    }
 
 
 def contar_consultores(

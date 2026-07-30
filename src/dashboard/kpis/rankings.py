@@ -7,10 +7,10 @@ from typing import Dict, Optional
 
 import pandas as pd
 
-from src.config.settings import PRODUTOS_EMISSAO
 from src.dashboard.kpis.gerais import (
     excluir_lojas_backoffice,
     excluir_supervisores,
+    mascaras_aceleradores,
 )
 from src.dashboard.kpis.produtos import (
     COL_PRODUTO_DETALHADO,
@@ -425,29 +425,10 @@ def calcular_ranking_por_acelerador(
     if coluna not in df_base.columns:
         return {}
 
-    def _flag(col: str) -> pd.Series:
-        return (
-            df_base.get(col, pd.Series(False, index=df_base.index))
-            .fillna(False)
-            .astype(bool)
-        )
-
-    aceleradores = {
-        "BMG Med": _flag("is_bmg_med"),
-        "Vida Familiar": _flag("is_seguro_vida"),
-        "Emissao": (
-            df_base["TIPO_PRODUTO"].str.upper().isin(
-                {p.upper() for p in PRODUTOS_EMISSAO}
-            )
-            if "TIPO_PRODUTO" in df_base.columns
-            else pd.Series(False, index=df_base.index)
-        ),
-        "Super Conta": (
-            df_base["SUBTIPO"].str.strip().str.upper() == "SUPER CONTA"
-            if "SUBTIPO" in df_base.columns
-            else pd.Series(False, index=df_base.index)
-        ),
-    }
+    # Definicao compartilhada com a aba de Gestao (kpis/gerais.py):
+    # as duas superficies precisam concordar sobre o que e cada
+    # acelerador, senao apontam consultores diferentes.
+    aceleradores = mascaras_aceleradores(df_base)
 
     rankings: Dict[str, pd.DataFrame] = {}
     for nome, mask in aceleradores.items():

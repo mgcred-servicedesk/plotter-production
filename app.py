@@ -55,6 +55,7 @@ from src.dashboard.loaders import (
     carregar_consultores_cadastro,
     carregar_contratos_cancelados,
     carregar_contratos_em_analise,
+    carregar_contratos_pagos_intervalo,
     carregar_digitacao_diaria_detalhe,
     carregar_lojas_ativas,
     carregar_lojas_regioes,
@@ -1590,7 +1591,44 @@ def main():
             df_pag_online = carregar_pagamentos_online()
             render_tab_pagamentos_online(df_pag_online)
         elif tab == "Gestao":
-            render_tab_gestao(df_f, df_sup_f)
+            # Universo de consultores ATIVOS: sem ele a aba so enxerga
+            # quem produziu, e um criterio "ate R$ X" perde quem vendeu
+            # nada. Passa pelo mesmo recorte de df_f — aplicar_rls
+            # (perfil) e os filtros granulares da sidebar — para que a
+            # lista nao traga consultor de loja que o usuario filtrou.
+            _univ_cons_gestao = _aplicar_filtros_ui(
+                aplicar_rls(carregar_consultores_ativos())
+            )
+            # Metas por produto de escopo CONSULTOR (alvo individual de
+            # cada consultor da loja): sustentam a base "% da meta" nos
+            # criterios. Ausentes, a base e ignorada com aviso na aba.
+            _metas_gestao = _filtrar_metas_ui(
+                carregar_metas_produto_consultor(mes, ano), df_f
+            )
+
+            def _carregar_intervalo_gestao(ini, fim, campo):
+                """Contratos pagos num intervalo livre, no escopo do usuario.
+
+                A aba so escolhe as datas; o recorte de seguranca fica
+                aqui, igual ao de df_f: aplicar_rls (perfil) primeiro,
+                filtros granulares da sidebar depois. Um intervalo
+                personalizado nao pode ser porta para ver o que o mes
+                selecionado nao mostraria.
+                """
+                bruto, aviso = carregar_contratos_pagos_intervalo(
+                    ini, fim, campo
+                )
+                if bruto.empty:
+                    return bruto, aviso
+                return _aplicar_filtros_ui(aplicar_rls(bruto)), aviso
+
+            render_tab_gestao(
+                df_f,
+                df_sup_f,
+                _univ_cons_gestao,
+                _metas_gestao,
+                _carregar_intervalo_gestao,
+            )
 
     except Exception:
         logger.exception("Erro inesperado no main()")

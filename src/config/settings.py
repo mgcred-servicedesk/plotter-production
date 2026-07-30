@@ -10,6 +10,18 @@ constantes que não têm fonte no banco.
 # Produtos de emissão (CARTÃO/Pré-Adesão) — contam só como quantidade.
 PRODUTOS_EMISSAO = ['EMISSAO', 'EMISSAO CC', 'EMISSAO CB']
 
+# Meses por extenso em pt-BR. O calendário do `st.date_input` é
+# inglês-only (o locale do BaseWeb/date-fns vem cravado no bundle do
+# Streamlit, sem API que o alcance), então as datas que o usuário
+# confere são escritas por extenso pela própria aplicação.
+# NOTA: `src/dashboard/ui/header.py` e `app.py` ainda mantêm cópias
+# locais deste dicionário — migrar quando alguma delas for tocada.
+MESES_PT = {
+    1: 'janeiro', 2: 'fevereiro', 3: 'março', 4: 'abril',
+    5: 'maio', 6: 'junho', 7: 'julho', 8: 'agosto',
+    9: 'setembro', 10: 'outubro', 11: 'novembro', 12: 'dezembro',
+}
+
 # Desmembramento do grupo 'PACK' nas suas três categorias. A chave é o
 # `categoria_codigo` (verdade dos contratos / RPCs); o valor é o rótulo
 # exibido — o mesmo texto do tipo na planilha de origem (coluna "Produto"
