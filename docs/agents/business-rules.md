@@ -76,6 +76,28 @@ Regras:
 - **Conta duplamente**: para valor/pontos **como CNC** E separadamente como produção de Super Conta (quantidade).
 - No DB: categoria `SUPER_CONTA` com `grupo_dashboard = 'CNC'` e entrada própria em `pontuacao` com o mesmo multiplicador do CNC.
 
+## PACK — meta conjunta e desmembramento
+
+`grupo_dashboard = 'PACK'` agrupa três categorias (`FGTS`, `ANT_BENEF`,
+`CNC_13`) que **dividem uma única meta** (`grupo_meta =
+FGTS_ANT_BENEF_13`). Não existe alvo por categoria — daí a regra de
+exibição:
+
+| Superfície | Dimensão de produto |
+|---|---|
+| Compara valor × meta: aba Produtos, heatmap região×produto, KPIs por região, cards MIX (valor e pontos), prioridades | **PACK agregado** (`grupo_dashboard`), rotulado `PACK_LABEL_AGREGADO` |
+| Não compara com meta: Analíticos, Em Análise, rankings por produto, "sem produção", distribuição por consultor, aba Gestão, páginas de detalhe dos cards | **desmembrado** em `PRODUTO_DETALHADO` |
+
+- Rótulos canônicos em [`src/config/settings.py`](../../src/config/settings.py):
+  `PACK_SPLIT_LABELS` (chaveado por `categoria_codigo`) e
+  `PACK_LABEL_AGREGADO` (junção dos três). São os nomes do tipo **na
+  planilha de origem** — os mesmos que aparecem em `TIPO_PRODUTO`.
+  Rótulo novo de produto entra ali, nunca hardcoded na tab.
+- O desmembramento é client-side e puro: `adicionar_produto_detalhado(df)`
+  (`src/dashboard/kpis/produtos.py`) deriva `PRODUTO_DETALHADO` de
+  `categoria_codigo`, com fallback para `grupo_dashboard` quando a
+  categoria não veio (digitação legada, join de produto não resolvido).
+
 ## Pipeline "Em Análise"
 
 O sistema de origem só retorna `status_banco ∈ {EM ANALISE, CANCELADO}` e

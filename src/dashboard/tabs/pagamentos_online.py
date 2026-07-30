@@ -19,9 +19,10 @@ from src.dashboard.formatters import formatar_moeda, formatar_numero
 
 # Mapa grupo_produto (no banco) -> (label longo, label curto) para exibicao.
 # A coluna `grupo_produto` em pagamentos_online vem do extrator DNA com nomes
-# que diferem do vocabulario interno do dashboard; aqui traduzimos.
+# que diferem do vocabulario interno do dashboard; aqui traduzimos. O label
+# curto e o nome do tipo como no resto do dashboard (= planilha de origem).
 GRUPO_DISPLAY: dict[str, tuple[str, str]] = {
-    "Antecipação em Conta": ("Antecipação de Benefício", "Ant. Ben."),
+    "Antecipação em Conta": ("Antecipação de Benefício", "ANT. DE BENEF."),
     "Crédito na Conta": ("Crédito na Conta", "CNC"),
 }
 

@@ -82,6 +82,29 @@ class TestCalcularKpisPorProduto:
         assert (res["% Atingimento"] == 0).all()
         assert (res["% Projeção"] == 0).all()
 
+    def test_pack_permanece_agregado(self, sem_feriados):
+        # Superficie com meta: a meta FGTS_ANT_BENEF_13 e conjunta, entao
+        # o pack NAO se desmembra aqui (ao contrario dos quadros sem meta).
+        df = pd.DataFrame({
+            "CONSULTOR": ["João", "Maria", "João"],
+            "grupo_dashboard": ["PACK", "PACK", "PACK"],
+            "categoria_codigo": ["FGTS", "ANT_BENEF", "CNC_13"],
+            "VALOR": [100.0, 200.0, 300.0],
+        })
+        categorias = pd.DataFrame({
+            "codigo": ["FGTS", "ANT_BENEF", "CNC_13"],
+            "grupo_dashboard": ["PACK", "PACK", "PACK"],
+            "grupo_meta": ["FGTS_ANT_BENEF_13"] * 3,
+        })
+        metas = pd.DataFrame({"FGTS_ANT_BENEF_13": [1200.0]})
+        res = calcular_kpis_por_produto(
+            df, metas, categorias, ano=2026, mes=3, dia_atual=16,
+        )
+        assert list(res["Produto"]) == ["PACK"]
+        assert res.iloc[0]["Valor"] == pytest.approx(600.0)
+        assert res.iloc[0]["Meta"] == pytest.approx(1200.0)
+        assert res.iloc[0]["% Atingimento"] == pytest.approx(50.0)
+
 
 @pytest.mark.unit
 class TestCalcularDistribuicaoProdutos:
@@ -107,6 +130,22 @@ class TestCalcularDistribuicaoProdutos:
         assert distrib["TOTAL"].tolist() == [1000.0, 500.0]
         assert set(moeda) >= {"CNC", "SAQUE", "TOTAL"}
         assert numero == []
+
+    def test_pack_vira_uma_coluna_por_categoria(self):
+        # Distribuicao nao compara com meta → PACK desmembrado.
+        df = pd.DataFrame({
+            "CONSULTOR": ["João", "João", "Maria"],
+            "grupo_dashboard": ["PACK", "PACK", "PACK"],
+            "categoria_codigo": ["FGTS", "CNC_13", "ANT_BENEF"],
+            "VALOR": [1000.0, 300.0, 500.0],
+            "TIPO_PRODUTO": ["FGTS", "CNC 13º", "ANT. DE BENEF."],
+        })
+        distrib, moeda, _ = calcular_distribuicao_produtos(df)
+        assert {"FGTS", "CNC 13º", "ANT. DE BENEF."}.issubset(set(moeda))
+        joao = distrib[distrib["CONSULTOR"] == "João"].iloc[0]
+        assert joao["FGTS"] == pytest.approx(1000.0)
+        assert joao["CNC 13º"] == pytest.approx(300.0)
+        assert joao["TOTAL"] == pytest.approx(1300.0)
 
     def test_aceleradores_contados_por_quantidade(self):
         df = pd.DataFrame({

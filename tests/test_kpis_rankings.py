@@ -8,6 +8,7 @@ ordenam por atingimento, pontos, ticket médio, média DU ou acelerador.
 import pandas as pd
 import pytest
 
+from src.config.settings import PACK_LABEL_AGREGADO
 from src.dashboard.kpis.rankings import (
     calcular_ranking_consultores,
     calcular_ranking_lojas,
@@ -100,6 +101,39 @@ class TestCalcularRankingPorProduto:
         assert set(rks) == {"CNC", "SAQUE"}
         # CNC: B pontos 460 > A pontos 300
         assert rks["CNC"].iloc[0]["Loja"] == "B"
+
+    def test_pack_desmembrado_em_tres_produtos(self):
+        # Ranking e por Pontos (sem meta) → o PACK vira FGTS,
+        # ANT. DE BENEF. e CNC 13º, cada um com o seu ranking.
+        df = pd.DataFrame({
+            "LOJA": ["A", "B", "A", "B", "A"],
+            "CONSULTOR": ["João", "Maria", "João", "Maria", "João"],
+            "grupo_dashboard": ["PACK"] * 4 + ["CNC"],
+            "categoria_codigo": [
+                "FGTS", "FGTS", "ANT_BENEF", "CNC_13", "CNC",
+            ],
+            "VALOR": [100.0, 200.0, 300.0, 400.0, 500.0],
+            "pontos": [1.0, 2.0, 3.0, 4.0, 5.0],
+        })
+        rks = calcular_ranking_por_produto(df, tipo="loja")
+        assert set(rks) == {"FGTS", "ANT. DE BENEF.", "CNC 13º", "CNC"}
+        # FGTS: B (200) na frente de A (100)
+        assert rks["FGTS"].iloc[0]["Loja"] == "B"
+        assert len(rks["ANT. DE BENEF."]) == 1
+        assert rks["ANT. DE BENEF."].iloc[0]["Loja"] == "A"
+
+    def test_sem_categoria_mantem_grupo(self):
+        # Digitacao/dados legados sem categoria_codigo: cai no label
+        # amigavel do grupo, sem quebrar o dict.
+        df = pd.DataFrame({
+            "LOJA": ["A"],
+            "CONSULTOR": ["João"],
+            "grupo_dashboard": ["PACK"],
+            "VALOR": [100.0],
+            "pontos": [1.0],
+        })
+        rks = calcular_ranking_por_produto(df, tipo="loja")
+        assert set(rks) == {PACK_LABEL_AGREGADO}
 
 
 @pytest.mark.unit

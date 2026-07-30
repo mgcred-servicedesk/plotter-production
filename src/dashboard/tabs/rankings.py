@@ -27,6 +27,10 @@ import streamlit as st
 import streamlit_antd_components as sac
 
 from src.dashboard.components.tables import botao_exportar_csv, exibir_tabela
+from src.dashboard.kpis.produtos import (
+    COL_PRODUTO_DETALHADO,
+    adicionar_produto_detalhado,
+)
 from src.dashboard.kpis.rankings import (
     calcular_ranking_consultores,
     calcular_ranking_lojas,
@@ -272,13 +276,15 @@ def _render_sem_producao_produto(
     + export direto. So renderiza para perfis de controle — os
     universos chegam None para os demais.
 
-    Criterio por produto: nenhum contrato com VALOR > 0 daquele
-    grupo_dashboard (mesmo recorte do ranking exibido acima).
+    Criterio por produto: nenhum contrato com VALOR > 0 daquele produto
+    (``PRODUTO_DETALHADO`` — mesma dimensao do ranking exibido acima,
+    com o PACK desmembrado).
     """
     if df_universo is None or df_universo.empty:
         return
-    if "grupo_dashboard" in df.columns:
-        df_prod = df[df["grupo_dashboard"] == produto]
+    df_split = adicionar_produto_detalhado(df)
+    if COL_PRODUTO_DETALHADO in df_split.columns:
+        df_prod = df_split[df_split[COL_PRODUTO_DETALHADO] == produto]
     else:
         df_prod = df.iloc[0:0]
     zerados = listar_sem_producao(

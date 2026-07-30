@@ -68,6 +68,33 @@ _COLS_CONTRATOS_PAGOS = {
 }
 
 
+# Fallback TIPO_PRODUTO → categoria, usado quando
+# produtos.categoria_id esta NULL no banco (ver
+# _preencher_categoria_fallback e migration 061).
+_TIPO_PARA_CATEGORIA = {
+    "CNC": "CNC",
+    "CNC 13º": "CNC_13",
+    "CNC 13": "CNC_13",
+    "CNC ANT": "ANT_BENEF",
+    "ANT. DE BENEF.": "ANT_BENEF",
+    "SAQUE": "SAQUE",
+    "SAQUE BENEFICIO": "SAQUE_BENEFICIO",
+    "CONSIG": "CONSIG_BMG",
+    "CONSIG BMG": "CONSIG_BMG",
+    "CONSIG PRIV": "CONSIG_PRIV",
+    "CLT": "CONSIG_PRIV",
+    "CONSIG ITAU": "CONSIG_ITAU",
+    "CONSIG Itau": "CONSIG_ITAU",
+    "CONSIG C6": "CONSIG_C6",
+    "FGTS": "FGTS",
+    "EMISSAO": "CARTAO",
+    "EMISSAO CB": "CARTAO",
+    "EMISSAO CC": "CARTAO",
+    "Portabilidade": "PORTABILIDADE",
+    "PORTABILIDADE": "PORTABILIDADE",
+}
+
+
 # Portabilidade herda os pontos do CONSIG do banco origem.
 # Chaves normalizadas (strip + upper). CONSIG_PRIV nao entra:
 # Privado nao se aplica a portabilidade.
@@ -156,6 +183,63 @@ def carregar_categorias() -> pd.DataFrame:
         .execute()
     )
     return pd.DataFrame(resp.data or [])
+
+
+def _preencher_categoria_fallback(df: pd.DataFrame) -> pd.DataFrame:
+    """Preenche categoria (e derivados) quando o banco veio sem ela.
+
+    O ETL sobrescreve ``produtos`` a cada import e, quando a planilha de
+    origem renomeia um tipo (ex: ``CONSIG PRIV`` -> ``CLT``,
+    ``CNC ANT`` -> ``ANT. DE BENEF.``), grava ``categoria_id = NULL``
+    (ver ``database/migrations/061``). Sem este fallback as linhas ficam
+    com ``categoria_codigo``/``grupo_dashboard`` vazios e desaparecem de
+    tudo que agrupa por produto — inclusive dos filtros da aba
+    Analiticos. Corrigir na origem (ETL) segue sendo o definitivo.
+
+    Muta e devolve ``df``. So preenche colunas que ja existem no frame
+    (em analise/cancelados nao trazem ``grupo_meta`` nem
+    ``conta_pontuacao``).
+    """
+    if df.empty or "categoria_codigo" not in df.columns:
+        return df
+
+    # Normaliza NaN → "" antes da máscara: contratos com categoria_id NULL
+    # no banco chegam como NaN (float) e quebram diagnósticos posteriores
+    # (sorted misturando float/str). Ex.: Maio/2025 tinha 13 linhas
+    # PAPCARD/CONTA SIMPLES sem categoria.
+    df["categoria_codigo"] = df["categoria_codigo"].fillna("")
+    mask_sem_cat = df["categoria_codigo"] == ""
+    if not mask_sem_cat.any() or "TIPO_PRODUTO" not in df.columns:
+        return df
+
+    df.loc[mask_sem_cat, "categoria_codigo"] = (
+        df.loc[mask_sem_cat, "TIPO_PRODUTO"]
+        .map(_TIPO_PARA_CATEGORIA)
+        .fillna("")
+    )
+
+    # Preencher grupo_dashboard, grupo_meta, conta_valor,
+    # conta_pontuacao a partir das categorias do banco
+    categorias = carregar_categorias()
+    if categorias.empty:
+        return df
+
+    cat_map = categorias.set_index("codigo")
+    preenchidos = mask_sem_cat & (df["categoria_codigo"] != "")
+
+    for campo in [
+        "grupo_dashboard",
+        "grupo_meta",
+        "conta_valor",
+        "conta_pontuacao",
+    ]:
+        if campo in cat_map.columns and campo in df.columns:
+            df.loc[preenchidos, campo] = (
+                df.loc[preenchidos, "categoria_codigo"]
+                .map(cat_map[campo])
+            )
+
+    return df
 
 
 @st.cache_data(ttl=86400)
@@ -343,7 +427,7 @@ def _fetch_contratos_em_analise(mes: int, ano: int) -> pd.DataFrame:
             df["DATA_CADASTRO"], errors="coerce"
         )
 
-    return df
+    return _preencher_categoria_fallback(df)
 
 
 @st.cache_data(ttl=900)
@@ -636,7 +720,7 @@ def _fetch_contratos_cancelados(mes: int, ano: int) -> pd.DataFrame:
             df["DATA_CADASTRO"], errors="coerce"
         )
 
-    return df
+    return _preencher_categoria_fallback(df)
 
 
 @st.cache_data(ttl=900)
@@ -1346,62 +1430,7 @@ def _executar_consolidacao(
     if df.empty:
         return df, df_metas, df_supervisores, None
 
-    # Fallback: preencher categoria_codigo via TIPO_PRODUTO
-    # quando produtos.categoria_id esta NULL no banco
-    _TIPO_PARA_CATEGORIA = {
-        "CNC": "CNC",
-        "CNC 13º": "CNC_13",
-        "CNC 13": "CNC_13",
-        "CNC ANT": "ANT_BENEF",
-        "ANT. DE BENEF.": "ANT_BENEF",
-        "SAQUE": "SAQUE",
-        "SAQUE BENEFICIO": "SAQUE_BENEFICIO",
-        "CONSIG": "CONSIG_BMG",
-        "CONSIG BMG": "CONSIG_BMG",
-        "CONSIG PRIV": "CONSIG_PRIV",
-        "CLT": "CONSIG_PRIV",
-        "CONSIG ITAU": "CONSIG_ITAU",
-        "CONSIG Itau": "CONSIG_ITAU",
-        "CONSIG C6": "CONSIG_C6",
-        "FGTS": "FGTS",
-        "EMISSAO": "CARTAO",
-        "EMISSAO CB": "CARTAO",
-        "EMISSAO CC": "CARTAO",
-        "Portabilidade": "PORTABILIDADE",
-        "PORTABILIDADE": "PORTABILIDADE",
-    }
-
-    # Normaliza NaN → "" antes da máscara: contratos com categoria_id NULL
-    # no banco chegam como NaN (float) e quebram diagnósticos posteriores
-    # (sorted misturando float/str). Ex.: Maio/2025 tinha 13 linhas
-    # PAPCARD/CONTA SIMPLES sem categoria.
-    df["categoria_codigo"] = df["categoria_codigo"].fillna("")
-    mask_sem_cat = df["categoria_codigo"] == ""
-    if mask_sem_cat.any() and "TIPO_PRODUTO" in df.columns:
-        df.loc[mask_sem_cat, "categoria_codigo"] = (
-            df.loc[mask_sem_cat, "TIPO_PRODUTO"]
-            .map(_TIPO_PARA_CATEGORIA)
-            .fillna("")
-        )
-
-        # Preencher grupo_dashboard, grupo_meta, conta_valor,
-        # conta_pontuacao a partir das categorias do banco
-        categorias = carregar_categorias()
-        if not categorias.empty:
-            cat_map = categorias.set_index("codigo")
-            preenchidos = mask_sem_cat & (df["categoria_codigo"] != "")
-
-            for campo in [
-                "grupo_dashboard",
-                "grupo_meta",
-                "conta_valor",
-                "conta_pontuacao",
-            ]:
-                if campo in cat_map.columns:
-                    df.loc[preenchidos, campo] = (
-                        df.loc[preenchidos, "categoria_codigo"]
-                        .map(cat_map[campo])
-                    )
+    df = _preencher_categoria_fallback(df)
 
     # Mapear pontos por categoria_codigo
     if not df_pontos.empty:

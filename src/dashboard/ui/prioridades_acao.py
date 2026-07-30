@@ -13,6 +13,7 @@ from typing import Dict, List, Optional
 import pandas as pd
 import streamlit as st
 
+from src.config.settings import PACK_LABEL_AGREGADO
 from src.dashboard.formatters import formatar_moeda, formatar_percentual
 from src.dashboard.kpis.gerais import (
     PRODUTOS_DASHBOARD,
@@ -79,7 +80,7 @@ _NOMES_MIX = {
     "CLT": "CLT",
     "SAQUE": "Saque",
     "CONSIGNADO": "Consignado",
-    "FGTS_ANT_BEN_CNC13": "FGTS/Ant.Ben./13º",
+    "FGTS_ANT_BEN_CNC13": PACK_LABEL_AGREGADO,
 }
 
 

@@ -1,17 +1,56 @@
 """
 KPIs e distribuicoes por grupo de produto.
+
+Guarda tambem a dimensao derivada ``PRODUTO_DETALHADO``, que desmembra o
+grupo ``PACK`` nas suas tres categorias. Superficies que comparam valor
+x META continuam agrupando por ``grupo_dashboard`` (a meta
+``FGTS_ANT_BENEF_13`` e conjunta — nao existe alvo por categoria).
 """
 
 from typing import Optional
 
 import pandas as pd
 
-from src.config.settings import PRODUTOS_EMISSAO
+from src.config.settings import (  # noqa: F401  (PACK_SPLIT_LABELS reexportado)
+    NOMES_DISPLAY_PRODUTO,
+    PACK_SPLIT_LABELS,
+    PRODUTOS_EMISSAO,
+)
 from src.dashboard.kpis.gerais import (
     contar_consultores,
     excluir_supervisores,
 )
 from src.shared.dias_uteis import calcular_dias_uteis
+
+# Nome da coluna derivada que substitui ``grupo_dashboard`` nas visoes
+# sem meta (listagens, rankings, distribuicao, detalhe dos cards).
+COL_PRODUTO_DETALHADO = "PRODUTO_DETALHADO"
+
+
+def adicionar_produto_detalhado(df: pd.DataFrame) -> pd.DataFrame:
+    """Acrescenta ``PRODUTO_DETALHADO`` desmembrando o grupo 'PACK'.
+
+    Para cada linha: se ``categoria_codigo`` pertence ao PACK
+    (``PACK_SPLIT_LABELS``), usa o rotulo granular (FGTS / ANT. DE
+    BENEF. / CNC 13º); caso contrario mantem o ``grupo_dashboard``
+    (aplicando ``NOMES_DISPLAY_PRODUTO`` como rede de seguranca para
+    qualquer 'PACK' residual que nao tenha caido no split). Copia
+    defensiva.
+
+    Se faltar ``grupo_dashboard``, devolve o df inalterado (os
+    consumidores fazem fallback para ``grupo_dashboard`` quando a coluna
+    nao existe).
+    """
+    if df.empty or "grupo_dashboard" not in df.columns:
+        return df
+    out = df.copy()
+    base = out["grupo_dashboard"].replace(NOMES_DISPLAY_PRODUTO)
+    if "categoria_codigo" in out.columns:
+        granular = out["categoria_codigo"].map(PACK_SPLIT_LABELS)
+        out[COL_PRODUTO_DETALHADO] = granular.fillna(base)
+    else:
+        out[COL_PRODUTO_DETALHADO] = base
+    return out
 
 
 def calcular_kpis_por_produto(
@@ -146,8 +185,14 @@ def calcular_distribuicao_produtos(
 
     # ── Pivot de VALOR (produtos de crédito) ────────────────────────────────
     mask_cred = (df_v["VALOR"] > 0) & ~bmg_v & ~seg_v & ~em_v
-    df_cred = df_v[mask_cred].copy()
-    df_cred["PRODUTO_MIX"] = df_cred["grupo_dashboard"].fillna("OUTROS")
+    # PACK desmembrado: a distribuicao nao compara com meta, entao cada
+    # categoria vira sua propria coluna (FGTS / ANT. DE BENEF. / CNC 13º).
+    df_cred = adicionar_produto_detalhado(df_v[mask_cred].copy())
+    df_cred["PRODUTO_MIX"] = (
+        df_cred[COL_PRODUTO_DETALHADO].fillna("OUTROS")
+        if COL_PRODUTO_DETALHADO in df_cred.columns
+        else df_cred["grupo_dashboard"].fillna("OUTROS")
+    )
 
     if not df_cred.empty:
         pv_val = df_cred.pivot_table(

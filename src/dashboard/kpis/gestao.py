@@ -2,31 +2,35 @@
 KPIs para a aba de Gestao: visao por consultor do VALOR pago por
 produto MIX, com filtro multi-criterio por faixa de valor.
 
-A dimensao de produto e o MIX (5 grupos) definido em
-``PRODUTOS_DASHBOARD`` (src/dashboard/kpis/gerais.py), que mapeia cada
-produto para os ``categoria_codigo`` correspondentes. "Consignado", por
-exemplo, agrega CONSIG_BMG/ITAU/C6.
+A dimensao de produto deriva do MIX definido em ``PRODUTOS_DASHBOARD``
+(src/dashboard/kpis/gerais.py), que mapeia cada produto para os
+``categoria_codigo`` correspondentes. "Consignado", por exemplo, agrega
+CONSIG_BMG/ITAU/C6; o pack (FGTS_ANT_BEN_CNC13) aparece desmembrado nas
+suas tres categorias — ver ``PRODUTOS_GESTAO``.
 """
 from typing import Dict, Optional
 
 import pandas as pd
 
+from src.config.settings import PACK_SPLIT_LABELS
 from src.dashboard.kpis.gerais import PRODUTOS_DASHBOARD, excluir_supervisores
 
 # Mapeamento produto -> categoria_codigo para a aba de Gestao.
 #
 # Difere do MIX global (PRODUTOS_DASHBOARD) em um ponto: o grupo
-# "FGTS/Ant.Ben./13o" e desmembrado para medir FGTS e Ant.Ben. em
-# separado. O 13o (CNC_13) fica de fora desta visao por enquanto. Os
-# demais produtos sao derivados de PRODUTOS_DASHBOARD para manter
-# sincronia com a taxonomia global.
+# "FGTS_ANT_BEN_CNC13" e desmembrado nas suas tres categorias (a visao
+# nao compara com meta, entao vale a leitura granular), com os rotulos
+# canonicos de PACK_SPLIT_LABELS. Os demais produtos sao derivados de
+# PRODUTOS_DASHBOARD para manter sincronia com a taxonomia global.
 PRODUTOS_GESTAO: Dict[str, list[str]] = {
     "CNC": PRODUTOS_DASHBOARD["CNC"],
     "CLT": PRODUTOS_DASHBOARD["CLT"],
     "Saque": PRODUTOS_DASHBOARD["SAQUE"],
     "Consignado": PRODUTOS_DASHBOARD["CONSIGNADO"],
-    "FGTS": ["FGTS"],
-    "Ant.Ben.": ["ANT_BENEF"],
+    **{
+        PACK_SPLIT_LABELS[cat]: [cat]
+        for cat in PRODUTOS_DASHBOARD["FGTS_ANT_BEN_CNC13"]
+    },
 }
 
 
@@ -37,10 +41,10 @@ def vendas_mix_por_consultor(
     """Tabela por consultor com o VALOR pago em cada produto de Gestao.
 
     Colunas: ``Regiao`` e ``Loja`` (quando presentes em ``df``),
-    ``Consultor``, uma coluna por produto de ``PRODUTOS_GESTAO`` (com
-    FGTS e Ant.Ben. separados) e ``Total`` (soma dessas colunas, sem o
-    13o). Considera apenas ``VALOR > 0`` e exclui supervisores, em linha
-    com os rankings de consultor.
+    ``Consultor``, uma coluna por produto de ``PRODUTOS_GESTAO`` (com o
+    pack desmembrado em FGTS, ANT. DE BENEF. e CNC 13º) e ``Total``
+    (soma dessas colunas). Considera apenas ``VALOR > 0`` e exclui
+    supervisores, em linha com os rankings de consultor.
 
     Espera ``df`` ja filtrado por RLS (feito em ``app.py``); nao aplica
     RLS nem queries aqui.

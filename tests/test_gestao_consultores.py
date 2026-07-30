@@ -127,16 +127,17 @@ def test_df_vazio_ou_sem_colunas():
     assert vendas_mix_por_consultor(df_incompleto).empty
 
 
-def test_produtos_gestao_separam_fgts_ant_ben():
+def test_produtos_gestao_desmembram_o_pack():
+    # O pack vira 3 colunas com os rotulos canonicos da planilha.
     assert set(PRODUTOS_GESTAO) == {
-        "CNC", "CLT", "Saque", "Consignado", "FGTS", "Ant.Ben.",
+        "CNC", "CLT", "Saque", "Consignado",
+        "FGTS", "ANT. DE BENEF.", "CNC 13º",
     }
-    # 13o (CNC_13) fica de fora desta visao
     todos_codigos = [c for cats in PRODUTOS_GESTAO.values() for c in cats]
-    assert "CNC_13" not in todos_codigos
+    assert "CNC_13" in todos_codigos
 
 
-def test_fgts_e_ant_ben_separados_e_13o_excluido():
+def test_pack_desmembrado_em_tres_colunas_e_soma_no_total():
     df = pd.DataFrame({
         "CONSULTOR": ["Ana", "Ana", "Ana"],
         "categoria_codigo": ["FGTS", "ANT_BENEF", "CNC_13"],
@@ -144,6 +145,6 @@ def test_fgts_e_ant_ben_separados_e_13o_excluido():
     })
     ana = vendas_mix_por_consultor(df).set_index("Consultor").loc["Ana"]
     assert ana["FGTS"] == 10000.0
-    assert ana["Ant.Ben."] == 7000.0
-    # 13o nao entra em nenhuma coluna nem no Total
-    assert ana["Total"] == 17000.0
+    assert ana["ANT. DE BENEF."] == 7000.0
+    assert ana["CNC 13º"] == 5000.0
+    assert ana["Total"] == 22000.0

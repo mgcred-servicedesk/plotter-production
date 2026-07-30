@@ -29,54 +29,22 @@ Regras transversais:
   ``excluir_supervisores``.
 """
 
-from typing import Optional
+from typing import Callable, Optional
 
 import pandas as pd
 
-from src.config.settings import NOMES_DISPLAY_PRODUTO
 from src.dashboard.kpis.gerais import (
     excluir_supervisores,
     separar_cancelados_liquidos,
 )
-
-# Desmembramento do grupo 'PACK' (grupo_dashboard) nas suas categorias
-# granulares para os pivots de detalhe. A chave e o ``categoria_codigo``
-# (verdade dos contratos / RPC); o valor e o rotulo exibido. Linhas fora
-# deste mapa mantem o ``grupo_dashboard``. Espelha a composicao do PACK
-# em ``PRODUTOS_DASHBOARD['FGTS_ANT_BEN_CNC13']`` (gerais.py).
-PACK_SPLIT_LABELS = {
-    "FGTS": "FGTS",
-    "ANT_BENEF": "Antecipação",
-    "CNC_13": "13o",
-}
-
-# Nome da coluna derivada que substitui ``grupo_dashboard`` nos pivots
-# de detalhe quando o PACK e desmembrado.
-COL_PRODUTO_DETALHADO = "PRODUTO_DETALHADO"
-
-
-def adicionar_produto_detalhado(df: pd.DataFrame) -> pd.DataFrame:
-    """Acrescenta ``PRODUTO_DETALHADO`` desmembrando o grupo 'PACK'.
-
-    Para cada linha: se ``categoria_codigo`` pertence ao PACK
-    (``PACK_SPLIT_LABELS``), usa o rotulo granular (FGTS / Antecipação /
-    13o); caso contrario mantem o ``grupo_dashboard`` (aplicando
-    ``NOMES_DISPLAY_PRODUTO`` como rede de seguranca para qualquer 'PACK'
-    residual que nao tenha caido no split). Copia defensiva.
-
-    Se faltar ``grupo_dashboard``, devolve o df inalterado (os pivots
-    fazem fallback para ``grupo_dashboard`` quando a coluna nao existe).
-    """
-    if df.empty or "grupo_dashboard" not in df.columns:
-        return df
-    out = df.copy()
-    base = out["grupo_dashboard"].replace(NOMES_DISPLAY_PRODUTO)
-    if "categoria_codigo" in out.columns:
-        granular = out["categoria_codigo"].map(PACK_SPLIT_LABELS)
-        out[COL_PRODUTO_DETALHADO] = granular.fillna(base)
-    else:
-        out[COL_PRODUTO_DETALHADO] = base
-    return out
+# Dimensao derivada do desmembramento do PACK. Definida em
+# ``kpis/produtos.py`` (taxonomia de produto) e reexportada aqui: as
+# paginas de detalhe dos cards importam estes nomes deste modulo.
+from src.dashboard.kpis.produtos import (  # noqa: F401
+    COL_PRODUTO_DETALHADO,
+    PACK_SPLIT_LABELS,
+    adicionar_produto_detalhado,
+)
 
 
 # ──────────────────────────────────────────────────────────────────
@@ -205,6 +173,33 @@ def _medias_por_dimensao(
     return pd.DataFrame(linhas, columns=cols)
 
 
+# Rotulo da coluna-dimensao nos quadros por produto (a UI exibe o df
+# como veio, sem renomear).
+_COL_PRODUTO_SAIDA = "Produto"
+
+
+def _por_produto_detalhado(
+    agregador: Callable[..., pd.DataFrame],
+    df: pd.DataFrame,
+    *args,
+) -> pd.DataFrame:
+    """Roda ``agregador`` sobre a dimensao de produto desmembrada.
+
+    Acrescenta ``PRODUTO_DETALHADO`` (PACK -> FGTS / ANT. DE BENEF. /
+    CNC 13º), delega para o agregador generico e renomeia a coluna-
+    dimensao para ``Produto``. Se ``df`` nao tiver ``grupo_dashboard``,
+    ``adicionar_produto_detalhado`` devolve o frame inalterado e o
+    agregador cai no caminho "sem a coluna" (df vazio com as colunas de
+    saida) — mesmo contrato de quando a dimensao era ``grupo_dashboard``.
+    """
+    resultado = agregador(
+        adicionar_produto_detalhado(df), COL_PRODUTO_DETALHADO, *args
+    )
+    return resultado.rename(
+        columns={COL_PRODUTO_DETALHADO: _COL_PRODUTO_SAIDA}
+    )
+
+
 # ──────────────────────────────────────────────────────────────────
 # Quadro 1 — Analise por produto / regiao
 # ──────────────────────────────────────────────────────────────────
@@ -215,13 +210,18 @@ def detalhe_analise_por_produto(
     du_decorridos: int,
     du_totais: int,
 ) -> pd.DataFrame:
-    """Detalhe dos contratos em ANALISE por grupo de produto.
+    """Detalhe dos contratos em ANALISE por produto.
 
-    Saida: ``grupo_dashboard, Valor, Quantidade, Ticket Médio,
+    Agrupa por ``PRODUTO_DETALHADO`` (PACK desmembrado em FGTS /
+    ANT. DE BENEF. / CNC 13º) — quadro sem meta, entao vale a leitura
+    granular. Saida: ``Produto, Valor, Quantidade, Ticket Médio,
     Média DU, Projeção``.
     """
-    return _breakdown_por_dimensao(
-        df_analise, "grupo_dashboard", du_decorridos, du_totais
+    return _por_produto_detalhado(
+        _breakdown_por_dimensao,
+        df_analise,
+        du_decorridos,
+        du_totais,
     )
 
 
@@ -440,16 +440,20 @@ def detalhe_cancelados_por_produto(
     du_decorridos: int,
     du_totais: int,
 ) -> pd.DataFrame:
-    """Detalhe dos cancelados LIQUIDOS por grupo de produto.
+    """Detalhe dos cancelados LIQUIDOS por produto.
 
     Considera apenas ``CLASSIFICACAO=='liquido'`` (via
     ``separar_cancelados_liquidos``); redigitadas/recuperadas saem da
-    contagem. Saida: ``grupo_dashboard, Valor, Quantidade, Ticket Médio,
-    Média DU, Projeção``.
+    contagem. Agrupa por ``PRODUTO_DETALHADO`` (PACK desmembrado).
+    Saida: ``Produto, Valor, Quantidade, Ticket Médio, Média DU,
+    Projeção``.
     """
     liquidos, _, _ = separar_cancelados_liquidos(df_cancelados)
-    return _breakdown_por_dimensao(
-        liquidos, "grupo_dashboard", du_decorridos, du_totais
+    return _por_produto_detalhado(
+        _breakdown_por_dimensao,
+        liquidos,
+        du_decorridos,
+        du_totais,
     )
 
 
@@ -567,15 +571,21 @@ def detalhe_medias_por_produto(
     du_totais: int,
     df_supervisores: Optional[pd.DataFrame] = None,
 ) -> pd.DataFrame:
-    """Media por grupo de produto (base ``consultor`` ou ``loja``).
+    """Media por produto (base ``consultor`` ou ``loja``).
 
     ``Média`` = Valor / Qtd Base; ``Média DU`` = Média / du_decorridos,
     com a MESMA base. ``Projeção`` = Média DU × du_totais. ``base='consultor'``
-    exclui supervisores. Saida: ``grupo_dashboard, Valor, Qtd Base, Média,
-    Média DU, Projeção``.
+    exclui supervisores. Agrupa por ``PRODUTO_DETALHADO`` (PACK
+    desmembrado em FGTS / ANT. DE BENEF. / CNC 13º) — quadro sem meta.
+    Saida: ``Produto, Valor, Qtd Base, Média, Média DU, Projeção``.
     """
-    return _medias_por_dimensao(
-        df, "grupo_dashboard", base, du_decorridos, du_totais, df_supervisores
+    return _por_produto_detalhado(
+        _medias_por_dimensao,
+        df,
+        base,
+        du_decorridos,
+        du_totais,
+        df_supervisores,
     )
 
 

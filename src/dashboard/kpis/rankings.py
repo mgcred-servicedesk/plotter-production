@@ -12,6 +12,10 @@ from src.dashboard.kpis.gerais import (
     excluir_lojas_backoffice,
     excluir_supervisores,
 )
+from src.dashboard.kpis.produtos import (
+    COL_PRODUTO_DETALHADO,
+    adicionar_produto_detalhado,
+)
 
 
 # ── Helpers compartilhados ───────────────────────────
@@ -310,13 +314,23 @@ def calcular_ranking_por_produto(
     top_n: int = 10,
     df_supervisores: Optional[pd.DataFrame] = None,
 ) -> Dict[str, pd.DataFrame]:
-    """Rankings por grupo_dashboard (lojas ou consultores)."""
-    df_v = _preparar(df, tipo, df_supervisores)
-    grupos = df_v[df_v["grupo_dashboard"].notna()]["grupo_dashboard"].unique()
+    """Rankings por produto (lojas ou consultores).
+
+    Agrupa por ``PRODUTO_DETALHADO`` — ``grupo_dashboard`` com o PACK
+    desmembrado em FGTS / ANT. DE BENEF. / CNC 13º. O ranking e por
+    Pontos (sem meta), entao o desmembramento nao afeta comparativo com
+    alvo.
+    """
+    df_v = adicionar_produto_detalhado(_preparar(df, tipo, df_supervisores))
+    if COL_PRODUTO_DETALHADO not in df_v.columns:
+        return {}
+    grupos = df_v[df_v[COL_PRODUTO_DETALHADO].notna()][
+        COL_PRODUTO_DETALHADO
+    ].unique()
 
     rankings = {}
     for grupo in sorted(grupos):
-        df_g = df_v[df_v["grupo_dashboard"] == grupo]
+        df_g = df_v[df_v[COL_PRODUTO_DETALHADO] == grupo]
         if df_g.empty:
             rankings[grupo] = pd.DataFrame()
             continue

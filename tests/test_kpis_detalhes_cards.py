@@ -10,6 +10,7 @@ digitacao diaria, que usa as minusculas do RPC.
 import pandas as pd
 import pytest
 
+from src.config.settings import PACK_LABEL_AGREGADO
 from src.dashboard.kpis.detalhes_cards import (
     COL_PRODUTO_DETALHADO,
     _aplicar_conta_valor,
@@ -107,7 +108,7 @@ def df_analise_loja():
 @pytest.mark.unit
 class TestDetalheAnalise:
     _COLS = [
-        "grupo_dashboard", "Valor", "Quantidade", "Ticket Médio",
+        "Produto", "Valor", "Quantidade", "Ticket Médio",
         "Média DU", "Projeção",
     ]
 
@@ -116,7 +117,7 @@ class TestDetalheAnalise:
             df_analise_detalhe, du_decorridos=10, du_totais=20
         )
         assert list(res.columns) == self._COLS
-        cnc = res[res["grupo_dashboard"] == "CNC"].iloc[0]
+        cnc = res[res["Produto"] == "CNC"].iloc[0]
         assert cnc["Valor"] == pytest.approx(1500.0)
         assert cnc["Quantidade"] == 2
         assert cnc["Ticket Médio"] == pytest.approx(750.0)
@@ -127,7 +128,7 @@ class TestDetalheAnalise:
         res = detalhe_analise_por_produto(
             df_analise_detalhe, du_decorridos=10, du_totais=20
         )
-        saque = res[res["grupo_dashboard"] == "SAQUE"].iloc[0]
+        saque = res[res["Produto"] == "SAQUE"].iloc[0]
         assert saque["Valor"] == pytest.approx(800.0)
         # a linha com VALOR 0 nao conta na quantidade
         assert saque["Quantidade"] == 1
@@ -154,6 +155,24 @@ class TestDetalheAnalise:
         )
         assert res.empty
         assert list(res.columns) == self._COLS
+
+    def test_por_produto_desmembra_o_pack(self):
+        # Quadro sem meta → PACK vira 3 linhas com os rotulos da planilha.
+        df = pd.DataFrame(
+            {
+                "grupo_dashboard": ["PACK", "PACK", "PACK", "CNC"],
+                "categoria_codigo": ["FGTS", "ANT_BENEF", "CNC_13", "CNC"],
+                "VALOR": [100.0, 200.0, 300.0, 400.0],
+                "conta_valor": [True, True, True, True],
+            }
+        )
+        res = detalhe_analise_por_produto(df, du_decorridos=5, du_totais=10)
+        assert set(res["Produto"]) == {
+            "FGTS", "ANT. DE BENEF.", "CNC 13º", "CNC",
+        }
+        ant = res[res["Produto"] == "ANT. DE BENEF."].iloc[0]
+        assert ant["Valor"] == pytest.approx(200.0)
+        assert ant["Quantidade"] == 1
 
     def test_conta_valor_false_zera_valor_mantem_qtd(self):
         df = pd.DataFrame(
@@ -289,7 +308,7 @@ class TestDetalheCancelados:
         res = detalhe_cancelados_por_produto(
             df_cancelados_detalhe, du_decorridos=10, du_totais=20
         )
-        cnc = res[res["grupo_dashboard"] == "CNC"].iloc[0]
+        cnc = res[res["Produto"] == "CNC"].iloc[0]
         # apenas a linha 'liquido' do CNC conta (a 'redigitada' sai)
         assert cnc["Valor"] == pytest.approx(1000.0)
         assert cnc["Quantidade"] == 1
@@ -414,7 +433,7 @@ def df_medias():
 @pytest.mark.unit
 class TestDetalheMedias:
     _COLS = [
-        "grupo_dashboard", "Valor", "Qtd Base", "Média", "Média DU",
+        "Produto", "Valor", "Qtd Base", "Média", "Média DU",
         "Projeção",
     ]
 
@@ -423,7 +442,7 @@ class TestDetalheMedias:
             df_medias, base="consultor", du_decorridos=10, du_totais=20
         )
         assert list(res.columns) == self._COLS
-        cnc = res[res["grupo_dashboard"] == "CNC"].iloc[0]
+        cnc = res[res["Produto"] == "CNC"].iloc[0]
         # CNC: 2100 entre 3 consultores distintos (João, Maria, Pedro)
         assert cnc["Valor"] == pytest.approx(2100.0)
         assert cnc["Qtd Base"] == 3
@@ -435,7 +454,7 @@ class TestDetalheMedias:
         res = detalhe_medias_por_produto(
             df_medias, base="loja", du_decorridos=10, du_totais=20
         )
-        cnc = res[res["grupo_dashboard"] == "CNC"].iloc[0]
+        cnc = res[res["Produto"] == "CNC"].iloc[0]
         # CNC: 2100 entre 2 lojas distintas (A, B)
         assert cnc["Qtd Base"] == 2
         assert cnc["Média"] == pytest.approx(1050.0)
@@ -448,7 +467,7 @@ class TestDetalheMedias:
             df_medias, base="consultor", du_decorridos=10, du_totais=20,
             df_supervisores=df_sup,
         )
-        cnc = res[res["grupo_dashboard"] == "CNC"].iloc[0]
+        cnc = res[res["Produto"] == "CNC"].iloc[0]
         # Maria (supervisora) sai: valor 2100-500=1600, base 2 (João, Pedro)
         assert cnc["Valor"] == pytest.approx(1600.0)
         assert cnc["Qtd Base"] == 2
@@ -485,6 +504,28 @@ class TestDetalheMedias:
         assert a["Média"] == pytest.approx(950.0)
         assert a["Média DU"] == pytest.approx(95.0)
         assert a["Projeção"] == pytest.approx(1900.0)
+
+    def test_media_por_produto_desmembra_o_pack(self):
+        # Paginas "Média por Consultor/Loja": quadro sem meta, PACK
+        # desmembrado nos rotulos da planilha.
+        df = pd.DataFrame(
+            {
+                "grupo_dashboard": ["PACK", "PACK", "PACK"],
+                "categoria_codigo": ["FGTS", "ANT_BENEF", "CNC_13"],
+                "CONSULTOR": ["João", "Maria", "João"],
+                "LOJA": ["A", "A", "A"],
+                "VALOR": [1000.0, 500.0, 300.0],
+                "conta_valor": [True, True, True],
+            }
+        )
+        res = detalhe_medias_por_produto(
+            df, base="consultor", du_decorridos=10, du_totais=20
+        )
+        assert set(res["Produto"]) == {"FGTS", "ANT. DE BENEF.", "CNC 13º"}
+        fgts = res[res["Produto"] == "FGTS"].iloc[0]
+        assert fgts["Valor"] == pytest.approx(1000.0)
+        assert fgts["Qtd Base"] == 1
+        assert fgts["Média"] == pytest.approx(1000.0)
 
     def test_du_zero_media_du_zero(self, df_medias):
         res = detalhe_medias_por_produto(
@@ -827,8 +868,10 @@ class TestAdicionarProdutoDetalhado:
             }
         )
         out = adicionar_produto_detalhado(df)
+        # Rotulos = nomes do tipo na planilha de origem (mesmos da coluna
+        # "Produto"/TIPO_PRODUTO), padronizados em todo o app.
         assert out[COL_PRODUTO_DETALHADO].tolist() == [
-            "FGTS", "Antecipação", "13o", "CNC",
+            "FGTS", "ANT. DE BENEF.", "CNC 13º", "CNC",
         ]
         # nao muta a entrada
         assert "PRODUTO_DETALHADO" not in df.columns
@@ -851,14 +894,14 @@ class TestAdicionarProdutoDetalhado:
         # 'PACK' residual nao tiver categoria mapeada, mantem o label.
         df = pd.DataFrame(
             {
-                "grupo_dashboard": ["FGTS/Ant. Ben./CNC 13o", "CNC"],
+                "grupo_dashboard": [PACK_LABEL_AGREGADO, "CNC"],
                 "categoria_codigo": ["", "CNC"],
                 "VALOR": [10.0, 20.0],
             }
         )
         out = adicionar_produto_detalhado(df)
         assert out[COL_PRODUTO_DETALHADO].tolist() == [
-            "FGTS/Ant. Ben./CNC 13o", "CNC",
+            PACK_LABEL_AGREGADO, "CNC",
         ]
 
     def test_pack_cru_sem_categoria_usa_nomes_display(self):
@@ -871,7 +914,7 @@ class TestAdicionarProdutoDetalhado:
             }
         )
         out = adicionar_produto_detalhado(df)
-        assert out[COL_PRODUTO_DETALHADO].tolist() == ["FGTS/Ant. Ben./CNC 13o"]
+        assert out[COL_PRODUTO_DETALHADO].tolist() == [PACK_LABEL_AGREGADO]
 
     def test_sem_grupo_dashboard_inalterado(self):
         df = pd.DataFrame({"VALOR": [1.0]})
@@ -899,12 +942,12 @@ class TestAdicionarProdutoDetalhado:
         )
         # uma coluna por produto granular, sem 'PACK'
         assert "PACK" not in pivot.columns
-        for col in ("FGTS", "Antecipação", "13o", "CNC"):
+        for col in ("FGTS", "ANT. DE BENEF.", "CNC 13º", "CNC"):
             assert col in pivot.columns
         r1 = pivot[pivot["REGIAO"] == "R1"].iloc[0]
         assert r1["FGTS"] == pytest.approx(100.0)
-        assert r1["Antecipação"] == pytest.approx(200.0)
-        assert r1["13o"] == pytest.approx(300.0)
+        assert r1["ANT. DE BENEF."] == pytest.approx(200.0)
+        assert r1["CNC 13º"] == pytest.approx(300.0)
         assert r1["Total"] == pytest.approx(1000.0)
 
 

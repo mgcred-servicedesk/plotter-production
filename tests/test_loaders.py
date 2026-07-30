@@ -13,6 +13,7 @@ from src.dashboard import loaders
 from src.dashboard.loaders import (
     _colapsar_cadastro_recente,
     _mes_apuracao_seguinte,
+    _preencher_categoria_fallback,
     _reanexar_regiao,
     _status_consultor_ativo,
     carregar_universo_lojas,
@@ -109,6 +110,71 @@ class TestReanexarRegiao:
         out = _reanexar_regiao(pivot, fonte)
         assert len(out) == 1
         assert out["REGIAO"].iloc[0] == "R1"
+
+
+@pytest.mark.unit
+class TestPreencherCategoriaFallback:
+    """Contratos com produtos.categoria_id NULL no banco (migration 061).
+
+    Vale para pagos, em analise e cancelados — os dois ultimos nao
+    trazem grupo_meta/conta_pontuacao e nao devem ganhar colunas novas.
+    """
+
+    CATEGORIAS = pd.DataFrame({
+        "codigo": ["CONSIG_PRIV", "ANT_BENEF"],
+        "grupo_dashboard": ["CLT", "PACK"],
+        "grupo_meta": ["CLT", "FGTS_ANT_BENEF_13"],
+        "conta_valor": [True, True],
+        "conta_pontuacao": [True, True],
+    })
+
+    @pytest.fixture(autouse=True)
+    def _stub_categorias(self, monkeypatch):
+        monkeypatch.setattr(
+            loaders, "carregar_categorias", lambda: self.CATEGORIAS,
+        )
+
+    def test_preenche_categoria_e_grupo_por_tipo_produto(self):
+        df = pd.DataFrame({
+            "TIPO_PRODUTO": ["CLT", "ANT. DE BENEF.", "CNC"],
+            "categoria_codigo": ["", None, "CNC"],
+            "grupo_dashboard": [None, None, "CNC"],
+            "conta_valor": [None, None, True],
+        })
+        out = _preencher_categoria_fallback(df)
+        assert list(out["categoria_codigo"]) == [
+            "CONSIG_PRIV", "ANT_BENEF", "CNC",
+        ]
+        assert list(out["grupo_dashboard"]) == ["CLT", "PACK", "CNC"]
+        assert list(out["conta_valor"]) == [True, True, True]
+
+    def test_tipo_desconhecido_fica_vazio(self):
+        df = pd.DataFrame({
+            "TIPO_PRODUTO": ["CONTA SIMPLES"],
+            "categoria_codigo": [None],
+            "grupo_dashboard": [None],
+        })
+        out = _preencher_categoria_fallback(df)
+        assert out["categoria_codigo"].iloc[0] == ""
+        assert pd.isna(out["grupo_dashboard"].iloc[0])
+
+    def test_nao_cria_colunas_ausentes(self):
+        # Em analise/cancelados nao expoem grupo_meta/conta_pontuacao.
+        df = pd.DataFrame({
+            "TIPO_PRODUTO": ["CLT"],
+            "categoria_codigo": [""],
+            "grupo_dashboard": [None],
+        })
+        out = _preencher_categoria_fallback(df)
+        assert "grupo_meta" not in out.columns
+        assert "conta_pontuacao" not in out.columns
+
+    def test_df_vazio_ou_sem_coluna_passa_direto(self):
+        assert _preencher_categoria_fallback(pd.DataFrame()).empty
+        df = pd.DataFrame({"TIPO_PRODUTO": ["CLT"]})
+        assert list(_preencher_categoria_fallback(df).columns) == [
+            "TIPO_PRODUTO"
+        ]
 
 
 @pytest.mark.unit

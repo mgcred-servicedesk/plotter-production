@@ -25,7 +25,7 @@ app.py                         ← ★ main entry point (orquestrador)
 src/
   config/
     supabase_client.py         ← get_supabase_client()
-    settings.py                ← PRODUTOS_EMISSAO, NOMES_DISPLAY_PRODUTO (taxonomia vem do banco)
+    settings.py                ← PRODUTOS_EMISSAO, PACK_SPLIT_LABELS/PACK_LABEL_AGREGADO, NOMES_DISPLAY_PRODUTO (taxonomia vem do banco)
   shared/
     dias_uteis.py              ← calcular_dias_uteis() + carregar_feriados()
   dashboard/

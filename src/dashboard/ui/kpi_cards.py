@@ -6,7 +6,7 @@ Nova organizacao dos cards:
    - Total Pago, Em Analise, Cancelados
    - Media DU Loja, Media DU Consultor, Pontos Efetivos
 2. Metas Diarias por Produto (5 cards)
-   - CNC, CLT, Saque, Consignado, FGTS/Ant.Ben/CNC13
+   - CNC, CLT, Saque, Consignado, FGTS / ANT. DE BENEF. / CNC 13o
 """
 
 from typing import Dict, List, Optional, Sequence
@@ -14,6 +14,7 @@ from typing import Dict, List, Optional, Sequence
 import streamlit as st
 import streamlit_antd_components as sac
 
+from src.config.settings import PACK_LABEL_AGREGADO
 from src.dashboard.formatters import (
     formatar_moeda,
     formatar_numero,
@@ -467,7 +468,9 @@ _NOMES_PRODUTO = {
     "CLT": "CLT",
     "SAQUE": "Saque",
     "CONSIGNADO": "Consignado",
-    "FGTS_ANT_BEN_CNC13": "FGTS/Ant.Ben./13o",
+    # Card de meta: o pack fica agregado (a meta e conjunta), com o
+    # rotulo canonico de settings — mesmo vocabulario do desmembramento.
+    "FGTS_ANT_BEN_CNC13": PACK_LABEL_AGREGADO,
 }
 
 
@@ -793,7 +796,7 @@ def criar_cards_metas_produto(produtos: List[Dict]) -> None:
     Renderiza os cards de metas por produto em layout 2x3.
 
     Linha 1: Mix Geral | CNC | CLT
-    Linha 2: Saque | Consignado | FGTS/Ant.Ben./13o
+    Linha 2: Saque | Consignado | pack agregado (PACK_LABEL_AGREGADO)
 
     Args:
         produtos: Lista de dicts com dados de cada produto
@@ -827,7 +830,7 @@ def criar_cards_metas_produto(produtos: List[Dict]) -> None:
         unsafe_allow_html=True,
     )
 
-    # Linha 2: Saque | Consignado | FGTS/Ant.Ben./13o
+    # Linha 2: Saque | Consignado | pack agregado (PACK_LABEL_AGREGADO)
     col_saq, col_cons, col_fgts = st.columns(3)
     with col_saq:
         if "SAQUE" in idx:

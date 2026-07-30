@@ -181,7 +181,7 @@ Config estática sem `mes`/`ano` pode usar um único `@st.cache_data(ttl=86400)`
 | `CONSULTOR` | str | uppercase |
 | `TIPO_PRODUTO` | str | uppercase |
 | `TIPO OPER.` | str | de `tipo_operacao` — identifica BMG MED, Seguro, etc. |
-| `SUBTIPO` | str | uppercase; `SUPER CONTA` é subtipo de CNC |
+| `SUBTIPO` | str | uppercase; subproduto (`NOVO`, `REFIN`, `MARGEM COMPLEMENTAR`, `SUPER CONTA`, `13º`). Exibido como "Subproduto" na aba Analíticos |
 | `VALOR` | float | sempre `float(c.get("valor", 0))` |
 | `pontos` | float | lowercase — campo computado |
 | `DATA` | datetime | `pd.to_datetime(..., errors="coerce")` |
@@ -190,6 +190,21 @@ Config estática sem `mes`/`ano` pode usar um único `@st.cache_data(ttl=86400)`
 | `grupo_meta` | str \| None | idem |
 | `conta_valor` | bool | se False → `VALOR = 0` no agregado |
 | `conta_pontuacao` | bool | se False → `pontos = 0` |
+
+### Fallback de categoria (`produtos.categoria_id` NULL)
+
+O ETL faz upsert integral de `produtos` a cada import; quando a planilha
+renomeia um tipo (ex: `CONSIG PRIV` → `CLT`, `CNC ANT` → `ANT. DE BENEF.`)
+o `categoria_id` volta a `NULL` e as linhas chegam sem
+`categoria_codigo`/`grupo_dashboard` (migration `061`).
+
+`_preencher_categoria_fallback(df)` (loaders) mapeia `TIPO_PRODUTO` →
+`categoria_codigo` via `_TIPO_PARA_CATEGORIA` e reidrata
+`grupo_dashboard`/`grupo_meta`/`conta_valor`/`conta_pontuacao` a partir de
+`carregar_categorias()`. Aplicado nos **três** fluxos de contrato — pagos
+(`_executar_consolidacao`), em análise e cancelados (`_fetch_*`). Só
+preenche colunas que já existem no frame (em análise/cancelados não
+expõem `grupo_meta` nem `conta_pontuacao`). Correção definitiva é no ETL.
 
 ## Dias úteis e feriados
 

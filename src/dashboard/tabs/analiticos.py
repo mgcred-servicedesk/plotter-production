@@ -23,12 +23,92 @@ from src.dashboard.kpis.gerais import (
     calcular_oportunidades_perdidas,
     separar_cancelados_liquidos,
 )
-from src.dashboard.kpis.produtos import calcular_distribuicao_produtos
+from src.dashboard.kpis.produtos import (
+    COL_PRODUTO_DETALHADO,
+    adicionar_produto_detalhado,
+    calcular_distribuicao_produtos,
+)
 
 
 # Compat: alias local mantido — implementação canônica em
 # components/tables.py (CSV sob demanda via callable).
 _exportar_csv = botao_exportar_csv
+
+
+# Colunas de produto exibidas nas tabelas de detalhamento, na ordem
+# da hierarquia do banco: grupo (PRODUTO_DETALHADO — grupo_dashboard com
+# o PACK desmembrado em FGTS / ANT. DE BENEF. / CNC 13º) →
+# TIPO_PRODUTO (produtos.tipo) → SUBTIPO (produtos.subtipo).
+_COLS_PRODUTO = [COL_PRODUTO_DETALHADO, "TIPO_PRODUTO", "SUBTIPO"]
+
+
+def _opcoes_coluna(df: pd.DataFrame, coluna: str) -> list:
+    """Valores distintos de `coluna` para selectbox (sem nulo/vazio).
+
+    Em analise/cancelados chegam com "" onde o join de produto nao
+    resolveu; pagos chegam com NaN. Ambos ficam fora das opcoes.
+    """
+    if coluna not in df.columns:
+        return []
+    return sorted(
+        {
+            str(x).strip()
+            for x in df[coluna].unique()
+            if pd.notna(x) and str(x).strip()
+        }
+    )
+
+
+def _filtrar_detalhamento(df: pd.DataFrame, key_prefix: str) -> pd.DataFrame:
+    """Filtros de Loja, Consultor, Produto e Subproduto.
+
+    Produto filtra por ``PRODUTO_DETALHADO`` — a taxonomia do dashboard
+    com o PACK desmembrado, para que FGTS, ANT. DE BENEF. e CNC 13º
+    sejam buscaveis separadamente. Subproduto filtra por ``SUBTIPO``
+    (NOVO, REFIN, MARGEM COMPLEMENTAR, SUPER CONTA...) e e em cascata:
+    suas opcoes saem do recorte ja filtrado, evitando combinacoes sem
+    linhas.
+    """
+    df = adicionar_produto_detalhado(df)
+    col1, col2, col3, col4 = st.columns(4)
+    with col1:
+        lojas = ["Todas"] + sorted(df["LOJA"].unique().tolist())
+        filt_loja = st.selectbox("Loja", lojas, key=f"{key_prefix}_loja")
+    with col2:
+        consultores = ["Todos"] + sorted(
+            df["CONSULTOR"].unique().tolist()
+        )
+        filt_cons = st.selectbox(
+            "Consultor", consultores, key=f"{key_prefix}_cons"
+        )
+    with col3:
+        produtos = ["Todos"] + _opcoes_coluna(df, COL_PRODUTO_DETALHADO)
+        filt_prod = st.selectbox(
+            "Produto", produtos, key=f"{key_prefix}_prod"
+        )
+
+    df_d = df.copy()
+    if filt_loja != "Todas":
+        df_d = df_d[df_d["LOJA"] == filt_loja]
+    if filt_cons != "Todos":
+        df_d = df_d[df_d["CONSULTOR"] == filt_cons]
+    if filt_prod != "Todos" and COL_PRODUTO_DETALHADO in df_d.columns:
+        df_d = df_d[df_d[COL_PRODUTO_DETALHADO] == filt_prod]
+
+    subprodutos = ["Todos"] + _opcoes_coluna(df_d, "SUBTIPO")
+    # Cascata: ao trocar o Produto, o Subproduto selecionado pode nao
+    # existir mais nas opcoes. Reseta antes de instanciar o widget
+    # (depois disso o session_state e imutavel no mesmo rerun).
+    key_sub = f"{key_prefix}_sub"
+    if st.session_state.get(key_sub) not in subprodutos:
+        st.session_state[key_sub] = "Todos"
+    with col4:
+        filt_sub = st.selectbox("Subproduto", subprodutos, key=key_sub)
+
+    if filt_sub != "Todos" and "SUBTIPO" in df_d.columns:
+        df_d = df_d[df_d["SUBTIPO"].astype(str).str.strip() == filt_sub]
+
+    return df_d
 
 
 def _render_detalhamento_pagos(df, df_sup):
@@ -39,38 +119,7 @@ def _render_detalhamento_pagos(df, df_sup):
 
     st.markdown(f"**{len(df):,} contratos pagos**".replace(",", "."))
 
-    # Filtros
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        lojas = ["Todas"] + sorted(df["LOJA"].unique().tolist())
-        filt_loja = st.selectbox("Loja", lojas, key="det_pago_loja")
-    with col2:
-        consultores = ["Todos"] + sorted(
-            df["CONSULTOR"].unique().tolist()
-        )
-        filt_cons = st.selectbox(
-            "Consultor", consultores, key="det_pago_cons"
-        )
-    with col3:
-        produtos = ["Todos"]
-        if "grupo_dashboard" in df.columns:
-            produtos += sorted(
-                [
-                    str(x) for x in df["grupo_dashboard"].unique()
-                    if pd.notna(x)
-                ]
-            )
-        filt_prod = st.selectbox(
-            "Produto", produtos, key="det_pago_prod"
-        )
-
-    df_d = df.copy()
-    if filt_loja != "Todas":
-        df_d = df_d[df_d["LOJA"] == filt_loja]
-    if filt_cons != "Todos":
-        df_d = df_d[df_d["CONSULTOR"] == filt_cons]
-    if filt_prod != "Todos" and "grupo_dashboard" in df_d.columns:
-        df_d = df_d[df_d["grupo_dashboard"] == filt_prod]
+    df_d = _filtrar_detalhamento(df, "det_pago")
 
     # KPIs
     total_valor = df_d["VALOR"].sum()
@@ -98,7 +147,7 @@ def _render_detalhamento_pagos(df, df_sup):
     cols = ["NR_ADE", "DATA", "LOJA", "CONSULTOR"]
     if "REGIAO" in df_d.columns:
         cols.append("REGIAO")
-    cols += ["TIPO_PRODUTO", "TIPO OPER.", "VALOR", "BANCO"]
+    cols += _COLS_PRODUTO + ["TIPO OPER.", "VALOR", "BANCO"]
 
     cols_disp = [c for c in cols if c in df_d.columns]
     df_tabela = (
@@ -107,7 +156,9 @@ def _render_detalhamento_pagos(df, df_sup):
         .rename(columns={
             "NR_ADE": "Nº ADE",
             "DATA": "Data Pagamento",
+            COL_PRODUTO_DETALHADO: "Grupo",
             "TIPO_PRODUTO": "Produto",
+            "SUBTIPO": "Subproduto",
             "TIPO OPER.": "Tipo Operacao",
             "VALOR": "Valor",
             "BANCO": "Banco",
@@ -136,43 +187,7 @@ def _render_detalhamento_em_analise(df_analise):
         .replace(",", ".")
     )
 
-    # Filtros
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        lojas = ["Todas"] + sorted(
-            df_analise["LOJA"].unique().tolist()
-        )
-        filt_loja = st.selectbox(
-            "Loja", lojas, key="det_analise_loja"
-        )
-    with col2:
-        consultores = ["Todos"] + sorted(
-            df_analise["CONSULTOR"].unique().tolist()
-        )
-        filt_cons = st.selectbox(
-            "Consultor", consultores, key="det_analise_cons"
-        )
-    with col3:
-        produtos = ["Todos"]
-        if "grupo_dashboard" in df_analise.columns:
-            produtos += sorted(
-                [
-                    str(x)
-                    for x in df_analise["grupo_dashboard"].unique()
-                    if pd.notna(x)
-                ]
-            )
-        filt_prod = st.selectbox(
-            "Produto", produtos, key="det_analise_prod"
-        )
-
-    df_d = df_analise.copy()
-    if filt_loja != "Todas":
-        df_d = df_d[df_d["LOJA"] == filt_loja]
-    if filt_cons != "Todos":
-        df_d = df_d[df_d["CONSULTOR"] == filt_cons]
-    if filt_prod != "Todos" and "grupo_dashboard" in df_d.columns:
-        df_d = df_d[df_d["grupo_dashboard"] == filt_prod]
+    df_d = _filtrar_detalhamento(df_analise, "det_analise")
 
     # KPIs
     total_valor = df_d["VALOR"].sum()
@@ -198,8 +213,8 @@ def _render_detalhamento_em_analise(df_analise):
     cols = ["NR_ADE", "DATA_CADASTRO", "LOJA", "CONSULTOR"]
     if "REGIAO" in df_d.columns:
         cols.append("REGIAO")
-    cols += [
-        "TIPO_PRODUTO", "TIPO OPER.", "VALOR",
+    cols += _COLS_PRODUTO + [
+        "TIPO OPER.", "VALOR",
         "STATUS_BANCO", "BANCO",
     ]
 
@@ -210,7 +225,9 @@ def _render_detalhamento_em_analise(df_analise):
         .rename(columns={
             "NR_ADE": "Nº ADE",
             "DATA_CADASTRO": "Data Cadastro",
+            COL_PRODUTO_DETALHADO: "Grupo",
             "TIPO_PRODUTO": "Produto",
+            "SUBTIPO": "Subproduto",
             "TIPO OPER.": "Tipo Operacao",
             "VALOR": "Valor",
             "STATUS_BANCO": "Status Banco",
@@ -252,43 +269,7 @@ def _render_detalhamento_cancelados(df_cancel):
             f"{n_recup} recuperada(s) (paga em 7 dias)."
         )
 
-    # Filtros
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        lojas = ["Todas"] + sorted(
-            df_cancel["LOJA"].unique().tolist()
-        )
-        filt_loja = st.selectbox(
-            "Loja", lojas, key="det_cancel_loja"
-        )
-    with col2:
-        consultores = ["Todos"] + sorted(
-            df_cancel["CONSULTOR"].unique().tolist()
-        )
-        filt_cons = st.selectbox(
-            "Consultor", consultores, key="det_cancel_cons"
-        )
-    with col3:
-        produtos = ["Todos"]
-        if "grupo_dashboard" in df_cancel.columns:
-            produtos += sorted(
-                [
-                    str(x)
-                    for x in df_cancel["grupo_dashboard"].unique()
-                    if pd.notna(x)
-                ]
-            )
-        filt_prod = st.selectbox(
-            "Produto", produtos, key="det_cancel_prod"
-        )
-
-    df_d = df_cancel.copy()
-    if filt_loja != "Todas":
-        df_d = df_d[df_d["LOJA"] == filt_loja]
-    if filt_cons != "Todos":
-        df_d = df_d[df_d["CONSULTOR"] == filt_cons]
-    if filt_prod != "Todos" and "grupo_dashboard" in df_d.columns:
-        df_d = df_d[df_d["grupo_dashboard"] == filt_prod]
+    df_d = _filtrar_detalhamento(df_cancel, "det_cancel")
 
     # KPIs — cancelados liquidos (exclui redigitadas e recuperadas),
     # no layout das sub-abas adjacentes (Valor Total / Ticket Medio /
@@ -321,8 +302,8 @@ def _render_detalhamento_cancelados(df_cancel):
     cols = ["NR_ADE", "DATA_CADASTRO", "LOJA", "CONSULTOR"]
     if "REGIAO" in df_d.columns:
         cols.append("REGIAO")
-    cols += [
-        "TIPO_PRODUTO", "TIPO OPER.", "VALOR",
+    cols += _COLS_PRODUTO + [
+        "TIPO OPER.", "VALOR",
         "SUB_STATUS", "STATUS_PAG", "BANCO", "CLASSIFICACAO",
     ]
 
@@ -333,7 +314,9 @@ def _render_detalhamento_cancelados(df_cancel):
         .rename(columns={
             "NR_ADE": "Nº ADE",
             "DATA_CADASTRO": "Data Cadastro",
+            COL_PRODUTO_DETALHADO: "Grupo",
             "TIPO_PRODUTO": "Produto",
+            "SUBTIPO": "Subproduto",
             "TIPO OPER.": "Tipo Operacao",
             "VALOR": "Valor",
             "SUB_STATUS": "Sub-Status",
@@ -490,7 +473,9 @@ def _render_busca_ade(df, df_analise, df_cancelados):
     if not resultados:
         return
 
-    df_all = pd.concat(resultados, ignore_index=True)
+    df_all = adicionar_produto_detalhado(
+        pd.concat(resultados, ignore_index=True)
+    )
 
     busca = st.text_input(
         "Buscar por Nº ADE",
@@ -515,7 +500,7 @@ def _render_busca_ade(df, df_analise, df_cancelados):
     cols_base = ["NR_ADE", "Status", "_DATA", "LOJA", "CONSULTOR"]
     if "REGIAO" in encontrados.columns:
         cols_base.append("REGIAO")
-    cols_base += ["TIPO_PRODUTO", "TIPO OPER.", "VALOR", "BANCO"]
+    cols_base += _COLS_PRODUTO + ["TIPO OPER.", "VALOR", "BANCO"]
 
     df_res = (
         encontrados[[c for c in cols_base if c in encontrados.columns]]
@@ -523,7 +508,9 @@ def _render_busca_ade(df, df_analise, df_cancelados):
         .rename(columns={
             "NR_ADE": "Nº ADE",
             "_DATA": "Data",
+            COL_PRODUTO_DETALHADO: "Grupo",
             "TIPO_PRODUTO": "Produto",
+            "SUBTIPO": "Subproduto",
             "TIPO OPER.": "Tipo Operacao",
             "VALOR": "Valor",
             "BANCO": "Banco",

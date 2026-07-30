@@ -11,6 +11,10 @@ from src.dashboard.components.tables import (
     exibir_tabela,
 )
 from src.dashboard.formatters import formatar_moeda, formatar_numero
+from src.dashboard.kpis.produtos import (
+    COL_PRODUTO_DETALHADO,
+    adicionar_produto_detalhado,
+)
 
 
 def render_tab_em_analise(df_analise, df_sup):
@@ -101,16 +105,19 @@ def render_tab_em_analise(df_analise, df_sup):
         color="gray",
     )
 
-    if "grupo_dashboard" in df_a.columns:
+    # PACK desmembrado (FGTS / ANT. DE BENEF. / CNC 13º): breakdown sem
+    # meta, entao a granularidade da classificacao vale mais que o grupo.
+    df_a_prod = adicionar_produto_detalhado(df_a)
+    if COL_PRODUTO_DETALHADO in df_a_prod.columns:
         df_prod = (
-            df_a[df_a["grupo_dashboard"].notna()]
-            .groupby("grupo_dashboard")
+            df_a_prod[df_a_prod[COL_PRODUTO_DETALHADO].notna()]
+            .groupby(COL_PRODUTO_DETALHADO)
             .agg(
                 Qtd=("VALOR", "count"),
                 Valor=("VALOR", "sum"),
             )
             .reset_index()
-            .rename(columns={"grupo_dashboard": "Produto"})
+            .rename(columns={COL_PRODUTO_DETALHADO: "Produto"})
             .sort_values("Valor", ascending=False)
         )
         df_prod["Ticket Medio"] = df_prod.apply(

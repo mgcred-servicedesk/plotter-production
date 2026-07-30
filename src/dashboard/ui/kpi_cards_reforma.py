@@ -18,6 +18,7 @@ from src.dashboard.formatters import (
     formatar_moeda_compacta,
     formatar_percentual,
 )
+from src.config.settings import PACK_LABEL_AGREGADO
 from src.dashboard.permissions import pode_ver
 from src.dashboard.ui.colors import (
     get_status_full,
@@ -482,7 +483,7 @@ def _display_name_produto(produto: str) -> str:
         "CLT": "CLT",
         "SAQUE": "Saque",
         "CONSIGNADO": "Consignado",
-        "FGTS_ANT_BEN_CNC13": "FGTS/Ant.Ben./13º",
+        "FGTS_ANT_BEN_CNC13": PACK_LABEL_AGREGADO,
     }
     return nomes.get(produto, produto)
 
