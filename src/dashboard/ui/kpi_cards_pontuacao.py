@@ -242,8 +242,11 @@ def render_cards_mix_pts(mix_pontos: List[Dict]) -> None:
         )
 
         cards_html.append(
+            # Mesmo regime do carrossel de Produtos MIX em
+            # ``kpi_cards_reforma``: grow 1 / shrink 0 para preencher a
+            # linha em telas largas sem perder o scroll nas estreitas.
             f'<div class="mg-kpi-context" style="'
-            f'min-width:clamp(180px, 20%, 260px); flex-shrink:0; '
+            f'flex:1 0 clamp(180px, 20%, 260px); max-width:340px; '
             f'scroll-snap-align:start;">'
             f'<div class="mg-kpi-ctx-label">{nome}</div>'
             f'<div class="mg-kpi-ctx-valor">{_fmt_pts(pontos)}</div>'

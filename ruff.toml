@@ -1,0 +1,24 @@
+# Configuracao do Ruff.
+#
+# Motivo de existir: ate o ruff 0.15 o projeto rodava sem config e
+# dependia do conjunto default de regras (E4, E7, E9, F). O ruff 0.16
+# ampliou esse default e o mesmo codigo, sem nenhuma alteracao, passou
+# a acusar 635 violacoes — 470 delas so de modernizacao de anotacao de
+# tipo (UP006 `Dict`->`dict`, UP045 `Optional[X]`->`X | None`).
+#
+# Declarar `select` explicitamente desacopla o gate de lint da versao
+# do ruff: `ruff check` volta a significar a mesma coisa antes e depois
+# de um upgrade da ferramenta. Sem isso, subir o ruff vira mudanca de
+# escopo disfarcada.
+#
+# Adotar regras novas (UP*, C408, BLE001, DTZ005, SIM*, ...) e decisao
+# deliberada: acrescente a regra aqui e trate as violacoes na mesma
+# tarefa. Nao mexa neste arquivo "de passagem" durante outro trabalho.
+#
+# Todo o resto (line-length 88, target-version inferido, excludes
+# default) fica no padrao do ruff de proposito — o objetivo aqui e
+# congelar o comportamento que o projeto ja tinha, nao introduzir
+# convencao nova.
+
+[lint]
+select = ["E4", "E7", "E9", "F"]

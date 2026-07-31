@@ -1411,32 +1411,46 @@ def main():
 
         # ── Navegacao principal ───────────────────
 
-        # Monta abas conforme a matriz de permissoes
+        # Monta abas conforme a matriz de permissoes.
+        # Icones sao Material Symbols (:material/<nome>:), nao Bootstrap:
+        # a navegacao usa st.pills, que renderiza markdown no rotulo.
         abas_disponiveis = [
-            ("tab_produtos", "Produtos", "tags-fill"),
-            ("tab_regioes", "Regioes", "map-fill"),
-            ("tab_rankings_lojas", "Rankings", "trophy-fill"),
-            ("tab_analiticos", "Analiticos", "bar-chart-fill"),
-            ("tab_evolucao", "Evolucao", "graph-up-arrow"),
-            ("tab_em_analise", "Em Analise", "clock-history"),
-            ("tab_detalhes", "Detalhes", "table"),
-            ("tab_pagamentos_online", "Pagamentos Online", "lightning-charge-fill"),
-            ("tab_gestao", "Gestao", "funnel-fill"),
+            ("tab_produtos", "Produtos", "sell"),
+            ("tab_regioes", "Regioes", "map"),
+            ("tab_rankings_lojas", "Rankings", "emoji_events"),
+            ("tab_analiticos", "Analiticos", "bar_chart"),
+            ("tab_evolucao", "Evolucao", "trending_up"),
+            ("tab_em_analise", "Em Analise", "schedule"),
+            ("tab_detalhes", "Detalhes", "table_chart"),
+            ("tab_pagamentos_online", "Pagamentos Online", "bolt"),
+            ("tab_gestao", "Gestao", "filter_alt"),
         ]
-        tab_items = [
-            sac.TabsItem(label=rotulo, icon=icone)
-            for chave, rotulo, icone in abas_disponiveis
+        rotulos_visiveis = [
+            rotulo
+            for chave, rotulo, _icone in abas_disponiveis
             if pode_ver(chave, role)
         ]
+        icones_aba = {rotulo: icone for _c, rotulo, icone in abas_disponiveis}
 
-        if not tab_items:
+        if not rotulos_visiveis:
             st.warning("Nenhuma aba disponivel para seu perfil.")
             return
 
-        tab = sac.tabs(
-            items=tab_items,
-            align="center",
-            variant="outline",
+        # Navegacao em st.pills (nao sac.tabs): o button group nativo tem
+        # flex-wrap, entao as abas quebram em varias linhas quando nao
+        # cabem na largura, em vez de sumirem. O sac.tabs roda dentro de
+        # um iframe e o CSS da propria lib esconde o botao de overflow
+        # (.ant-tabs-nav-more{display:none}), tornando as abas que
+        # transbordam inacessiveis em telas estreitas.
+        # `required=True` impede desselecionar e cair sem nenhuma aba.
+        tab = st.pills(
+            "Navegacao principal",
+            options=rotulos_visiveis,
+            default=rotulos_visiveis[0],
+            required=True,
+            format_func=lambda r: f":material/{icones_aba[r]}: {r}",
+            label_visibility="collapsed",
+            key="nav_principal",
         )
 
         if tab == "Produtos":

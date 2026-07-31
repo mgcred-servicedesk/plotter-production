@@ -19,22 +19,61 @@ sac.divider(label="Analise de Produtos", icon="bar-chart-line", align="left", co
 - `color`: `"blue"` (primário), `"gray"` (secundário/tabela), `"green"`, `"orange"`.
 - `icon`: Bootstrap Icons (`bar-chart-line`, `box`, `geo-alt`, `trophy`, `heart-pulse`, `shop`, `people`, `table`, …).
 
-### Tabs — navegação primária
+### Tabs — sub-navegação dentro de uma aba
 
 ```python
 tab = sac.tabs(
     items=[
-        sac.TabsItem(label="Produtos", icon="box"),
-        sac.TabsItem(label="Regioes",  icon="geo-alt"),
-        sac.TabsItem(label="Rankings", icon="trophy"),
+        sac.TabsItem(label="Lojas",       icon="shop"),
+        sac.TabsItem(label="Consultores", icon="people"),
     ],
-    align="center",        # "start" em sub-tabs
+    align="start",
     variant="outline",
     use_container_width=True,
+)
+```
+
+⚠️ **Não usar `sac.tabs` na navegação primária.** O `sac` roda dentro de
+um iframe e o CSS empacotado na lib tem
+`.ant-tabs-nav-more{display:none}` — o botão de overflow do antd está
+escondido, então as abas que não cabem na largura ficam **inacessíveis**
+(não apenas cortadas). CSS do documento pai não atravessa o iframe, logo
+não há correção possível do lado do app. Use `sac.tabs` apenas onde o
+número de itens é pequeno e estável.
+
+### Navegação primária — `st.pills`
+
+A nav principal do `app.py` usa `st.pills`, não `sac.tabs`:
+
+```python
+tab = st.pills(
+    "Navegacao principal",
+    options=rotulos_visiveis,
+    default=rotulos_visiveis[0],
+    required=True,                       # nunca cair sem aba selecionada
+    format_func=lambda r: f":material/{icones_aba[r]}: {r}",
+    label_visibility="collapsed",
+    key="nav_principal",
 )
 if tab == "Produtos":
     ...
 ```
+
+- O button group nativo tem `flex-wrap: wrap` — as abas **quebram em
+  linhas** em vez de sumirem quando não cabem.
+- Retorna o rótulo selecionado, então o **render é lazy** (só o branch
+  ativo executa). `st.tabs` nativo **não** serve aqui: renderiza o
+  conteúdo de todas as abas no mesmo rerun.
+- Ícones são Material Symbols (`:material/<nome>:`), não Bootstrap.
+  Nomes válidos: `streamlit.material_icon_names.ALL_MATERIAL_ICONS`.
+- Estilo em `assets/dashboard_style.css`, escopado por
+  `.st-key-nav_principal` (classe que o Streamlit gera para widgets com
+  `key`).
+- ⚠️ O flex container **não** é o `[data-testid="stButtonGroup"]` (esse
+  é só o wrapper label + grupo), e sim o `> div` filho. Para centralizar
+  as pills: `justify-content: center` + `margin-inline: auto` **nesse
+  filho**. Não use `width="stretch"` para isso — o wrapper de cada botão
+  vira `width: 100%` e cada pill cai numa linha.
 
 ### Segmented — sub-seleção dentro de uma aba
 
@@ -202,3 +241,45 @@ Aliases `.mg-prod-card--accent-teal/indigo` redirecionados para
 Sparklines: helper `_sparkline_svg(values, width=180, height=36)`
 retorna SVG inline. Usa classes `.mg-spark-line/area/dot` que herdam
 `--mg-primary`.
+
+### Responsividade dos cards — use `cqi`, não `vw`
+
+`st.columns` só empilha abaixo de **640px de viewport**
+(`breakpoints.columns` do Streamlit) — e é media query de *viewport*,
+não de container. Entre 640px e ~1200px as colunas apenas encolhem, sem
+empilhar. Por isso:
+
+- `.mg-prod-card`, `.mg-kpi-hero` e `.mg-kpi-context` declaram
+  `container-type: inline-size` (nome `kpi-card`).
+- Tipografia dentro deles usa `clamp(min, Ncqi, max)` — escala pela
+  largura **do card**. Nunca `vw`: superdimensiona dentro de coluna
+  estreita ou do carrossel `#mg-mix-scroll`.
+- **Calibre o coeficiente `cqi` por largura de card real.** Converter
+  `vw → cqi` mantendo o número encolhe o texto em telas grandes (o card
+  é muito mais estreito que o viewport). Régua do projeto: reproduzir o
+  tamanho desejado na largura de card de uma tela grande (~510px para 3
+  cards hero, ~395px para 4 cards de contexto, em ~1620px de conteúdo) e
+  deixar o `max` acima disso, para o texto acompanhar o card em
+  monitores maiores.
+- **`cqi` mede o *content box* do container**, não o border box —
+  desconte o `padding` do card ao calibrar (o `.mg-kpi-context` tem
+  18/20px, e menos nos breakpoints).
+- **Quando a mesma classe serve larguras muito diferentes, use
+  `calc(fixo + Ncqi)`, não `Ncqi` puro.** `.mg-kpi-context` aparece em
+  três regimes: linha `flex:1` (~390–530px), carrossel Produtos MIX
+  (~240–340px) e cards de dimensão em `detalhes` (`max-width:300px`).
+  Com coeficiente puro, calibrar para um regime trava os outros no
+  `min` do `clamp`. A parcela fixa é o piso legível; o `cqi` é o
+  crescimento.
+- **Media query de viewport anula container query.** Um
+  `@media (max-width:1024px){ .x { font-size: 12px } }` sobrescreve o
+  `clamp(..., cqi, ...)` e prende o texto no valor fixo. Se o
+  breakpoint precisa mesmo reduzir, reduza mantendo a fórmula fluida.
+- Grids em HTML custom usam
+  `repeat(auto-fit, minmax(min(Npx, 100%), 1fr))`, não `repeat(N, 1fr)`.
+- `div[data-testid="column"]` também é container (`kpi-col`), usado
+  pelas regras `@container` de `[data-testid="stMetric"]`.
+
+**Markdown não é processado dentro de bloco HTML bruto.** Em
+`st.markdown(..., unsafe_allow_html=True)` ou `st.html`, use
+`<strong>`; `**negrito**` aparece com os asteriscos literais.
