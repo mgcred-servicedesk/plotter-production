@@ -58,6 +58,7 @@ CSS_RESUMO = """
 .mg-status-text { font-size: 18px; font-weight: 700; color: var(--mg-text); }
 .mg-info-row {
     display: flex;
+    flex-wrap: wrap;
     gap: 24px;
     padding: 12px 16px;
     background: var(--mg-hover-bg);
@@ -129,8 +130,16 @@ CSS_RESUMO = """
     gap: 10px;
     margin-bottom: 16px;
 }
-.mg-metric-grid-3 { grid-template-columns: repeat(3, 1fr); }
-.mg-metric-grid-2 { grid-template-columns: repeat(2, 1fr); }
+/* auto-fit + minmax: as colunas reduzem de 3 -> 2 -> 1 conforme a
+   largura disponivel, sem depender de media query de viewport
+   (st.columns so empilha abaixo de 640px de viewport). O min() evita
+   overflow quando o container e mais estreito que o minimo. */
+.mg-metric-grid-3 {
+    grid-template-columns: repeat(auto-fit, minmax(min(160px, 100%), 1fr));
+}
+.mg-metric-grid-2 {
+    grid-template-columns: repeat(auto-fit, minmax(min(200px, 100%), 1fr));
+}
 .mg-metric-item {
     background: var(--mg-hover-bg);
     border-radius: 10px;

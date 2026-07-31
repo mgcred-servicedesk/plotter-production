@@ -616,8 +616,16 @@ def render_cards_produto_mix(
             else "#EF4444"
         )
         cards_html.append(
+            # `flex:1 0 <basis>` (grow 1, shrink 0): em telas largas os
+            # cards crescem e ocupam a linha toda — antes ficavam presos
+            # em 260px e sobrava espaco vazio, o que tambem espremia a
+            # tipografia (que escala por cqi). Shrink 0 preserva o
+            # carrossel: em telas estreitas eles mantem a base e o
+            # container rola. `max-width` evita o card gigante quando ha
+            # poucos produtos no MIX.
             f'<div class="mg-kpi-context" style="'
-            f'min-width:clamp(180px, 20%, 260px); flex-shrink:0; scroll-snap-align:start;">'
+            f'flex:1 0 clamp(180px, 20%, 260px); max-width:340px; '
+            f'scroll-snap-align:start;">'
             f'<div class="mg-kpi-ctx-label">{nome}</div>'
             f'<div class="mg-kpi-ctx-valor">{formatar_moeda(valor)}</div>'
             f'<div class="mg-kpi-ctx-sub">'
@@ -704,7 +712,10 @@ def render_cards_aceleradores(
         else:
             val_comp = int(round(float(prod.get("ritmo_diario", 0) or 0)))
         cards_html.append(
-            f'<div class="mg-kpi-context" style="flex: 1;">'
+            # `flex:1 1 220px` + wrap na linha: com 4 aceleradores lado a
+            # lado, abaixo de ~1000px cada card caia para menos de 200px
+            # e a tipografia (que escala por cqi) travava no piso.
+            f'<div class="mg-kpi-context" style="flex:1 1 220px; min-width:0;">'
             f'<div class="mg-kpi-ctx-label">{nome}</div>'
             f'<div class="mg-kpi-ctx-valor">{qtd:,}</div>'
             f'<div class="mg-kpi-ctx-sub">'
@@ -715,7 +726,8 @@ def render_cards_aceleradores(
         )
 
     st.markdown(
-        '<div style="display:flex; gap:clamp(10px,1.2vw,20px); align-items:stretch;">'
+        '<div style="display:flex; flex-wrap:wrap; '
+        'gap:clamp(10px,1.2vw,20px); align-items:stretch;">'
         + "".join(cards_html)
         + "</div>",
         unsafe_allow_html=True,

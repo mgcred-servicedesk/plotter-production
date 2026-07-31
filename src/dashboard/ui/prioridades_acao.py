@@ -1697,42 +1697,54 @@ def render_prioridades_acao(
     st.markdown("---")
 
     # Gerar mensagem de ação sugerida
+    # Os itens abaixo sao injetados dentro de um bloco HTML bruto
+    # (st.markdown com unsafe_allow_html), onde markdown NAO e
+    # processado — o destaque precisa ser <strong>, senao os asteriscos
+    # aparecem literalmente na tela.
     acoes = []
     if prioridades_prod:
         top_prod = prioridades_prod[0]
         acoes.append(
-            f"Focar em **{_nome_produto(top_prod['produto'])}** "
+            f"Focar em <strong>{_nome_produto(top_prod['produto'])}</strong> "
             f"(falta de {formatar_moeda(top_prod['gap_valor'])})"
         )
     if _eh_gerente:
         if prioridades_loja:
             top_loja = prioridades_loja[0]
             acoes.append(
-                f"Atuar na loja **{top_loja['loja']}** ({formatar_percentual(top_loja['perc_ating'])} da meta)"
+                f"Atuar na loja <strong>{top_loja['loja']}</strong> "
+                f"({formatar_percentual(top_loja['perc_ating'])} da meta)"
             )
         if prioridades_consultor:
             top_cons = prioridades_consultor[0]
             acoes.append(
-                f"Apoiar **{top_cons['consultor']}** ({formatar_percentual(top_cons['perc_media'])} da média da loja)"
+                f"Apoiar <strong>{top_cons['consultor']}</strong> "
+                f"({formatar_percentual(top_cons['perc_media'])} "
+                f"da média da loja)"
             )
     elif _eh_supervisor:
         if prioridades_consultor:
             top_cons = prioridades_consultor[0]
             acoes.append(
-                f"Apoiar **{top_cons['consultor']}** ({formatar_percentual(top_cons['perc_media'])} da média da loja)"
+                f"Apoiar <strong>{top_cons['consultor']}</strong> "
+                f"({formatar_percentual(top_cons['perc_media'])} "
+                f"da média da loja)"
             )
     elif _eh_consultor:
         pland = planejamento_consultor
         if pland["meta_diaria_necessaria"] > 0 and pland["du_restantes"] > 0:
             acoes.append(
-                f"Produzir **{formatar_moeda(pland['meta_diaria_necessaria'])}/DU** "
-                f"nos próximos {pland['du_restantes']} dias úteis para fechar o gap"
+                f"Produzir <strong>"
+                f"{formatar_moeda(pland['meta_diaria_necessaria'])}/DU"
+                f"</strong> nos próximos {pland['du_restantes']} "
+                f"dias úteis para fechar o gap"
             )
         if pland["pipeline"]:
             top_pipe = pland["pipeline"][0]
             s = "s" if top_pipe["qtd"] != 1 else ""
             acoes.append(
-                f"Acionar pipeline de **{_nome_produto(top_pipe['produto'])}**: "
+                f"Acionar pipeline de <strong>"
+                f"{_nome_produto(top_pipe['produto'])}</strong>: "
                 f"{top_pipe['qtd']} contrato{s} em análise "
                 f"({formatar_moeda(top_pipe['valor'])})"
             )
@@ -1740,12 +1752,14 @@ def render_prioridades_acao(
         if prioridades_reg:
             top_reg = prioridades_reg[0]
             acoes.append(
-                f"Apoiar região **{top_reg['regiao']}** ({formatar_percentual(top_reg['perc_ating'])} da meta)"
+                f"Apoiar região <strong>{top_reg['regiao']}</strong> "
+                f"({formatar_percentual(top_reg['perc_ating'])} da meta)"
             )
         if prioridades_loja:
             top_loja = prioridades_loja[0]
             acoes.append(
-                f"Atuar na loja **{top_loja['loja']}** ({formatar_percentual(top_loja['perc_ating'])} da meta)"
+                f"Atuar na loja <strong>{top_loja['loja']}</strong> "
+                f"({formatar_percentual(top_loja['perc_ating'])} da meta)"
             )
 
     if acoes:

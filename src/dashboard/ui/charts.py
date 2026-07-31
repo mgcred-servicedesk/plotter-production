@@ -18,6 +18,34 @@ from src.dashboard.formatters import formatar_moeda, formatar_numero
 from src.dashboard.ui.theme import CHART_COLORS, chart_theme
 
 
+def _altura_por_conteudo(
+    base: int,
+    n_itens: int,
+    por_item: int = 26,
+    minimo: int = 320,
+) -> int:
+    """Altura do grafico derivada da quantidade de itens plotados.
+
+    O Plotly nao le media query: a altura vem do ``layout.height``
+    definido aqui, no servidor. E o servidor nao conhece a largura do
+    viewport (o Streamlit nao expoe isso sem dependencia client-side),
+    entao a altura escala pelo que de fato exige espaco vertical — o
+    numero de categorias/series. Antes eram valores fixos (640px), que
+    ocupavam a tela inteira num notebook de 768px de altura mesmo
+    quando havia poucos produtos ou regioes.
+
+    Args:
+        base: Altura maxima, usada quando ha muitos itens.
+        n_itens: Categorias/series plotadas.
+        por_item: Altura adicional por item.
+        minimo: Piso, para o grafico nao ficar ilegivel.
+
+    Returns:
+        Altura em px entre ``minimo`` e ``base``.
+    """
+    return max(minimo, min(base, 260 + por_item * max(n_itens, 1)))
+
+
 def _template():
     """Configuracao base para graficos Plotly."""
     ct = chart_theme()
@@ -290,7 +318,11 @@ def criar_grafico_produtos(
     )
 
     fig.update_layout(
-        height=640,
+        # 2x2 subplots: precisa de mais respiro que os graficos simples,
+        # mas so quando ha produtos suficientes para justificar.
+        height=_altura_por_conteudo(
+            640, len(df_produtos), por_item=34, minimo=420
+        ),
         showlegend=True,
         title_text="Analise Completa de Produtos",
         bargap=0.2,
@@ -402,7 +434,9 @@ def criar_grafico_evolucao(df_evolucao, kpis, ano=None, mes=None):
         )
 
     fig.update_layout(
-        height=640,
+        # Serie temporal: a altura nao cresce com o numero de dias, so
+        # precisa caber numa tela de 768px junto do resto da pagina.
+        height=520,
         showlegend=True,
         hovermode="x unified",
         autosize=True,
@@ -459,7 +493,7 @@ def criar_grafico_regional(df_regioes):
     )
 
     fig.update_layout(
-        height=460,
+        height=_altura_por_conteudo(460, len(df_regioes), por_item=22),
         showlegend=False,
         title_text="Analise por Regiao",
         bargap=0.25,
@@ -490,7 +524,7 @@ def criar_grafico_media_regiao(df_media):
         title="Media de Pontos por Consultor por Regiao",
         xaxis_title="Regiao",
         yaxis_title="Pontos Medio",
-        height=400,
+        height=_altura_por_conteudo(400, len(df_media), por_item=20),
         bargap=0.3,
         autosize=True,
     )

@@ -530,6 +530,90 @@ table tbody tr:hover td {
     color: var(--mg-primary) !important;
 }
 
+/* ── Navegacao principal (st.pills) ──────────────── */
+/*
+ * Substitui sac.tabs na navegacao primaria (app.py). O button group
+ * nativo ja tem flex-wrap, entao as abas quebram em varias linhas em
+ * vez de sumirem quando nao cabem na largura — comportamento que o
+ * sac.tabs nao entrega (roda em iframe e o CSS da lib esconde o botao
+ * de overflow .ant-tabs-nav-more).
+ * Escopo pela classe .st-key-<key> gerada pelo Streamlit para widgets
+ * com `key`, para nao afetar outros button groups no futuro.
+ */
+.st-key-nav_principal [data-testid="stButtonGroup"] {
+    margin-bottom: var(--mg-space-lg);
+}
+
+/*
+ * O flex container das pills NAO e o [data-testid="stButtonGroup"] —
+ * esse e so o wrapper (label + grupo). O flex real e o div filho (Root
+ * do baseweb), que o Streamlit estiliza com width:auto e
+ * max-width:fit-content. Dai:
+ *   - margin-inline:auto centraliza o bloco quando tudo cabe numa linha
+ *     (largura fit-content);
+ *   - justify-content:center centraliza cada linha quando as pills
+ *     quebram (ai o fit-content passa a ocupar a largura disponivel),
+ *     inclusive a ultima linha incompleta.
+ * Nao usar width="stretch" no st.pills para isso: o wrapper de cada
+ * botao passa a width:100% e cada pill vai para uma linha.
+ */
+.st-key-nav_principal [data-testid="stButtonGroup"] > div {
+    justify-content: center;
+    max-width: 100%;
+    margin-inline: auto;
+    gap: var(--mg-space-sm);
+}
+
+.st-key-nav_principal [data-testid="stBaseButton-pills"],
+.st-key-nav_principal [data-testid="stBaseButton-pillsActive"] {
+    border-radius: var(--mg-radius-md);
+    font-weight: 600;
+    font-size: 0.85rem;
+    padding: 0.45rem 0.9rem;
+    border: 1px solid var(--mg-border);
+    background: var(--mg-surface);
+    transition:
+        background-color 0.18s ease,
+        color 0.18s ease,
+        border-color 0.18s ease;
+}
+
+.st-key-nav_principal [data-testid="stBaseButton-pills"],
+.st-key-nav_principal [data-testid="stBaseButton-pills"] p {
+    color: var(--mg-text-muted) !important;
+}
+
+.st-key-nav_principal [data-testid="stBaseButton-pills"]:hover {
+    border-color: var(--mg-border-strong);
+}
+
+.st-key-nav_principal [data-testid="stBaseButton-pills"]:hover p {
+    color: var(--mg-text) !important;
+}
+
+.st-key-nav_principal [data-testid="stBaseButton-pillsActive"] {
+    background: var(--mg-primary-soft);
+    border-color: var(--mg-primary);
+}
+
+.st-key-nav_principal [data-testid="stBaseButton-pillsActive"],
+.st-key-nav_principal [data-testid="stBaseButton-pillsActive"] p {
+    color: var(--mg-primary) !important;
+}
+
+/* Telas estreitas: pills compactas para caber mais por linha */
+@media (max-width: 768px) {
+    .st-key-nav_principal [data-testid="stButtonGroup"] > div {
+        gap: var(--mg-space-xs);
+    }
+
+    .st-key-nav_principal [data-testid="stBaseButton-pills"],
+    .st-key-nav_principal [data-testid="stBaseButton-pillsActive"] {
+        font-size: 0.78rem;
+        padding: 0.35rem 0.6rem;
+    }
+}
+
 /* ── Ant Design: tabs (sac.tabs) ─────────────────── */
 .ant-tabs,
 .ant-tabs-nav,
@@ -1388,6 +1472,12 @@ div[data-testid="column"]:nth-child(4) [data-testid="stMetric"] {
         border-color 0.18s ease;
     position: relative;
     overflow: hidden;
+    /* O card e seu proprio container de consulta: a tipografia abaixo
+       escala com a largura do card (cqi), nao com a do viewport. Sem
+       isso, em colunas estreitas (st.columns so empilha abaixo de
+       640px de viewport) o valor era cortado pelo overflow:hidden. */
+    container-type: inline-size;
+    container-name: kpi-card;
 }
 
 .mg-prod-card:hover {
@@ -1427,7 +1517,9 @@ div[data-testid="column"]:nth-child(4) [data-testid="stMetric"] {
 }
 
 .mg-prod-card--hero .mg-prod-value {
-    font-size: 2rem;
+    /* Reproduz os 2rem antigos num card hero de ~810px (peso 2 de 4 em
+       ~1620px) e cresce a partir dai. */
+    font-size: clamp(1.5rem, 4cqi, 2.6rem);
     margin-bottom: 0.6rem;
 }
 
@@ -1451,6 +1543,8 @@ div[data-testid="column"]:nth-child(4) [data-testid="stMetric"] {
     align-items: center;
     justify-content: space-between;
     margin-bottom: 0.25rem;
+    gap: var(--mg-space-xs);
+    min-width: 0;
 }
 
 .mg-prod-name {
@@ -1459,6 +1553,12 @@ div[data-testid="column"]:nth-child(4) [data-testid="stMetric"] {
     text-transform: uppercase;
     letter-spacing: 0.08em;
     color: var(--mg-text-muted);
+    /* Em card estreito o nome cede espaco ao badge (que e nowrap) em
+       vez de empurra-lo para fora do card. */
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 .mg-prod-badge {
@@ -1491,7 +1591,13 @@ div[data-testid="column"]:nth-child(4) [data-testid="stMetric"] {
 }
 
 .mg-prod-value {
-    font-size: 1.55rem;
+    /* Escala com a largura do card (container kpi-card). Antes era fixo
+       em 1.55rem: valores longos (R$ 4.553.469,09) eram truncados com
+       reticencias em coluna estreita e, em tela grande, ficavam
+       pequenos demais para o tamanho do card. O coeficiente reproduz
+       1.55rem num card de ~395px (4 colunas em ~1620px de conteudo) e
+       so entao cresce ate o teto. */
+    font-size: clamp(1.05rem, 6.3cqi, 2rem);
     font-weight: 700;
     color: var(--mg-text);
     letter-spacing: -0.025em;
@@ -1793,8 +1899,15 @@ div[data-testid="column"]:nth-child(4) [data-testid="stMetric"] {
 .mg-kpi-hero {
     background: var(--mg-surface);
     border-radius: var(--mg-radius-xl);
-    padding: clamp(20px, 2vw, 36px) clamp(24px, 2.5vw, 44px);
+    /* Padding resolve contra o container ancestral (a coluna); as
+       fontes internas resolvem contra o proprio card.
+       Coeficientes calibrados para reproduzir os valores antigos (em
+       vw) na largura de card de uma tela grande (~510px, 3 cards em
+       ~1620px de conteudo). */
+    padding: clamp(20px, 7cqi, 36px) clamp(24px, 8.6cqi, 44px);
     text-align: center;
+    container-type: inline-size;
+    container-name: kpi-card;
     box-shadow: var(--mg-shadow-md);
     border: 1px solid var(--mg-border);
     transition: transform 0.2s ease, box-shadow 0.2s ease;
@@ -1810,7 +1923,7 @@ div[data-testid="column"]:nth-child(4) [data-testid="stMetric"] {
 }
 
 .mg-kpi-label {
-    font-size: clamp(11px, 0.85vw, 14px);
+    font-size: clamp(11px, 2.75cqi, 14px);
     font-weight: 500;
     text-transform: uppercase;
     letter-spacing: 0.8px;
@@ -1819,7 +1932,7 @@ div[data-testid="column"]:nth-child(4) [data-testid="stMetric"] {
 }
 
 .mg-kpi-valor {
-    font-size: clamp(26px, 3vw, 52px);
+    font-size: clamp(26px, 10.2cqi, 52px);
     font-weight: 700;
     color: var(--mg-text);
     line-height: 1.1;
@@ -1838,12 +1951,12 @@ div[data-testid="column"]:nth-child(4) [data-testid="stMetric"] {
 }
 
 .mg-kpi-gap {
-    font-size: clamp(20px, 2vw, 30px);
+    font-size: clamp(20px, 5.9cqi, 30px);
     color: var(--mg-danger);
 }
 
 .mg-kpi-sub {
-    font-size: clamp(13px, 1vw, 15px);
+    font-size: clamp(13px, 2.9cqi, 15px);
     color: var(--mg-text-muted);
     margin-top: 8px;
 }
@@ -1859,6 +1972,12 @@ div[data-testid="column"]:nth-child(4) [data-testid="stMetric"] {
     flex-direction: column;
     justify-content: flex-start;
     box-sizing: border-box;
+    /* Usado tanto em st.columns quanto no carrossel #mg-mix-scroll
+       (cards de 180-260px). Como container, a tipografia escala pela
+       largura real do card em ambos os contextos — antes usava vw e
+       superdimensionava dentro do carrossel. */
+    container-type: inline-size;
+    container-name: kpi-card;
 }
 
 .mg-kpi-context:hover {
@@ -1885,8 +2004,20 @@ div[data-testid="column"]:nth-child(4) [data-testid="stMetric"] {
     border-color: var(--mg-primary, #2563eb);
 }
 
+/*
+ * Tipografia base + fluida: `calc(fixo + Ncqi)`, nao `Ncqi` puro.
+ * O .mg-kpi-context aparece em tres regimes de largura muito
+ * diferentes (Aceleradores/contexto com flex:1 ~390-530px; carrossel
+ * Produtos MIX limitado a ~240-340px; cards de dimensao em
+ * detalhes com max-width:300px). Com coeficiente puro, calibrar para
+ * um regime esmaga o outro contra o `min` do clamp. A parcela fixa
+ * garante o piso legivel nos cards estreitos e o `cqi` faz o texto
+ * crescer nos largos.
+ * Lembrete: `cqi` mede o *content box* do container — desconte o
+ * padding (18px 20px, menor nos breakpoints) ao calibrar.
+ */
 .mg-kpi-ctx-label {
-    font-size: clamp(11px, 0.85vw, 13px);
+    font-size: clamp(11px, calc(10px + 0.9cqi), 15px);
     font-weight: 500;
     text-transform: uppercase;
     color: var(--mg-text-muted);
@@ -1894,13 +2025,13 @@ div[data-testid="column"]:nth-child(4) [data-testid="stMetric"] {
 }
 
 .mg-kpi-ctx-valor {
-    font-size: clamp(18px, 1.8vw, 28px);
+    font-size: clamp(20px, calc(18px + 4.2cqi), 34px);
     font-weight: 600;
     color: var(--mg-text);
 }
 
 .mg-kpi-ctx-sub {
-    font-size: clamp(12px, 0.85vw, 14px);
+    font-size: clamp(12px, calc(11px + 0.9cqi), 16px);
     color: var(--mg-text-muted);
     margin-top: 6px;
     line-height: 1.4;
@@ -1936,8 +2067,11 @@ div[data-testid="column"]:nth-child(4) [data-testid="stMetric"] {
         padding: 14px 16px;
     }
 
+    /* Mantem o sub menor que no desktop, mas continua fluido: um
+       `font-size: 12px` fixo aqui anulava o clamp por cqi e prendia o
+       texto no piso mesmo em cards largos de tablet. */
     .mg-kpi-ctx-sub {
-        font-size: 12px;
+        font-size: clamp(12px, calc(10.5px + 0.8cqi), 14px);
     }
 }
 

@@ -37,15 +37,20 @@ CSS_CARDS = """
     margin-bottom: 14px;
     box-shadow: var(--mg-shadow-sm);
     display: grid;
-    grid-template-columns: 1fr auto;
+    /* auto-fit: em card estreito as duas colunas viram uma so, em vez
+       do valor (fonte grande) espremer o titulo. O card e seu proprio
+       container de consulta para as regras @container abaixo. */
+    grid-template-columns: repeat(auto-fit, minmax(min(240px, 100%), 1fr));
     align-items: center;
     gap: 16px;
+    container-type: inline-size;
 }
 .mg-pago-title {
     font-size: 18px;
     font-weight: 700;
     color: var(--mg-text);
     display: flex;
+    flex-wrap: wrap;
     align-items: baseline;
     gap: 10px;
 }
@@ -69,7 +74,7 @@ CSS_CARDS = """
     margin-top: 6px;
 }
 .mg-pago-valor {
-    font-size: 28px;
+    font-size: clamp(20px, 4cqi, 28px);
     font-weight: 700;
     color: var(--mg-text);
     text-align: right;
@@ -80,6 +85,14 @@ CSS_CARDS = """
     color: var(--mg-text-muted);
     text-align: right;
     margin-top: 4px;
+}
+/* Card estreito: grid ja colapsou para uma coluna, entao o valor
+   alinha a esquerda junto com o resto do conteudo. */
+@container (max-width: 500px) {
+    .mg-pago-valor,
+    .mg-pago-ticket {
+        text-align: left;
+    }
 }
 </style>
 """
