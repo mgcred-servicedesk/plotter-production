@@ -25,6 +25,25 @@ textColor = "#1F2937"
 [server]
 headless = true
 
+[client]
+# Desliga o botao CSV nativo da toolbar de st.dataframe/st.data_editor
+# e o copiar-para-clipboard (Streamlit 1.60+).
+#
+# NAO afeta os exports do projeto, que sao st.download_button:
+# `botao_exportar_csv` (components/tables.py) e o export proprio de
+# tabs/gestao_consultores.py. Esses continuam funcionando.
+#
+# Motivo: nao e seguranca — o botao da toolbar baixa o DataFrame que
+# ja passou pelo RLS antes do render, o mesmo dado que esta na tela.
+# E padronizacao: toda tabela ganhava um download implicito que ninguem
+# decidiu oferecer, no formato default do Streamlit (virgula, sem BOM),
+# que corrompe acento no Excel pt-BR. Os exports deliberados usam
+# `sep=";"`, `decimal=","` e UTF-8 com BOM.
+#
+# Custo aceito: o copiar-para-clipboard das tabelas cai junto, e a
+# opcao e app-wide (nao da para liberar em tabela especifica).
+disableDataExport = true
+
 [browser]
 gatherUsageStats = false
 

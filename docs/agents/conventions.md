@@ -16,6 +16,26 @@
 - Linhas em branco entre definições top-level.
 - Type hints onde prático; docstrings em funções públicas.
 
+### Lint — `ruff.toml` fixa o conjunto de regras
+
+`ruff.toml` declara `[lint] select = ["E4", "E7", "E9", "F"]`. Isso
+**não** é preferência estética: é o que desacopla o gate de lint da
+versão da ferramenta. Sem `select` explícito, o `ruff` usa o default
+dele — e quando o default mudou (0.15 → 0.16), o mesmo código passou a
+acusar 635 violações sem que uma linha tivesse mudado.
+
+Consequências práticas:
+
+- `ruff check src/ app.py` significa a mesma coisa antes e depois de um
+  upgrade do ruff. Subir a ferramenta deixa de ser mudança de escopo
+  disfarçada.
+- Adotar regra nova (`UP*`, `C408`, `BLE001`, `DTZ005`, `SIM*`, …) é
+  tarefa deliberada: acrescente ao `select` **e** trate as violações no
+  mesmo trabalho. Nunca alargue o `select` de passagem.
+- Anotações de tipo antigas (`Dict`, `List`, `Optional[X]`) continuam
+  aceitas — `UP006`/`UP045` estão fora do `select` por decisão, não por
+  esquecimento. São ~470 ocorrências no código.
+
 ## Nomenclatura por sufixo
 
 | Sufixo | Significado |
