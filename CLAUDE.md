@@ -43,15 +43,9 @@ sua aprovação, delega cada uma ao subagente do domínio. Tarefa trivial (uma
 linha, ajuste de texto, correção óbvia de domínio único) **não** passa pelo
 orquestrador — vai direto ao subagente ou é feita inline.
 
-**Subagentes especializados** (`subagent_type` no Agent/Task tool):
-
-| Domínio | `subagent_type` |
-|---|---|
-| Testes pytest, fixtures, cobertura | `test-automation-specialist` |
-| Streamlit UI, componentes, estilos | `streamlit-ui-specialist` |
-| Regras de negócio, KPIs, pontuação | `business-rules-kpi-expert` |
-| Supabase access, views, RPCs, cache | `data-layer-supabase` |
-| Migrações Supabase, schema, RLS | `supabase-schema-rls` |
+**Subagentes especializados** (`subagent_type` no Agent/Task tool): catálogo
+completo (domínio → `subagent_type`) em
+[`docs/agents/subagents/README.md`](docs/agents/subagents/README.md).
 
 Regras: **um subagente por domínio por subtarefa**; cada um segue o RPI
 ([`docs/agents/rpi-workflow.md`](docs/agents/rpi-workflow.md)) e lê os docs do
