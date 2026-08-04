@@ -11,7 +11,13 @@ Exporta:
     + CSS custom properties + deteccao de preferencia.
   - ``carregar_estilos_customizados()`` — injeta o CSS
     design system de ``assets/dashboard_style.css``.
+  - ``ocultar_widgets_nativos()`` — esconde menu/deploy/status
+    nativos do Streamlit.
+  - ``render_overlay_fresh_login()`` — overlay de transicao
+    exibido no primeiro run pos-login.
 """
+
+import html
 
 import streamlit as st
 
@@ -430,3 +436,91 @@ def carregar_estilos_customizados() -> None:
         )
     except FileNotFoundError:
         pass
+
+
+def ocultar_widgets_nativos() -> None:
+    """Oculta widgets nativos do Streamlit (menu, deploy, animacao).
+
+    Esconde os widgets **individualmente** — nunca o
+    ``[data-testid="stHeader"]`` inteiro, pois o botao de reabrir a
+    sidebar (``stExpandSidebarButton``) e renderizado dentro dele;
+    esconde-lo junto deixa a sidebar sem forma de reabrir depois de
+    colapsada.
+
+    Quem decide *para quem* ocultar e o chamador (``app.py`` aplica
+    apenas a nao-admins) — este modulo nao conhece perfil.
+    """
+    st.markdown(
+        """<style>
+        [data-testid="stMainMenu"],
+        [data-testid="stAppDeployButton"],
+        [data-testid="stStatusWidget"] { display: none !important; }
+        </style>""",
+        unsafe_allow_html=True,
+    )
+
+
+def render_overlay_fresh_login(nome: str) -> None:
+    """Overlay de transicao para login recem-efetuado.
+
+    Cobre o viewport inteiro (``position:fixed``, ``z-index:9999``)
+    desde o inicio do run pos-login, ocultando qualquer residuo do
+    formulario enquanto a sidebar e o skeleton carregam. A animacao
+    CSS faz o fade-out automatico apos ~0.9 s, revelando o conteudo
+    abaixo — nao ha rerun nem estado a limpar depois.
+
+    ``nome`` (primeiro nome do usuario) e escapado antes de entrar
+    no HTML. O chamador decide *quando* exibir, consumindo a flag
+    ``_fresh_login`` de ``st.session_state``.
+    """
+    st.markdown(
+        f"""
+        <style>
+        .mg-fresh-overlay {{
+            position: fixed;
+            inset: 0;
+            background: var(--mg-secondary-bg, #f9fafc);
+            z-index: 9999;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            gap: 0.75rem;
+            animation: mg-fresh-out 0.35s ease 0.9s forwards;
+        }}
+        @keyframes mg-fresh-out {{
+            to {{ opacity: 0; pointer-events: none; visibility: hidden; }}
+        }}
+        .mg-fresh-check {{
+            width: 56px;
+            height: 56px;
+            background: #22c55e;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: #fff;
+            font-size: 1.5rem;
+            font-weight: 700;
+            box-shadow: 0 4px 16px rgba(34,197,94,0.3);
+        }}
+        .mg-fresh-name {{
+            font-size: 1.05rem;
+            font-weight: 600;
+            color: var(--mg-text, #1a1a2e);
+            margin: 0;
+        }}
+        .mg-fresh-sub {{
+            font-size: 0.82rem;
+            color: var(--mg-text-secondary, rgba(26,26,46,0.55));
+            margin: 0;
+        }}
+        </style>
+        <div class="mg-fresh-overlay">
+            <div class="mg-fresh-check">&#10003;</div>
+            <p class="mg-fresh-name">Bem-vindo, {html.escape(nome)}!</p>
+            <p class="mg-fresh-sub">Carregando dashboard&hellip;</p>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )

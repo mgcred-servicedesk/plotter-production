@@ -174,6 +174,14 @@ em `src/dashboard/ui/theme.py`:
 - `aplicar_tema()` — injeta variáveis CSS `--mg-*` e `--st-*`, sincroniza
   tema nativo do Streamlit.
 - `carregar_estilos_customizados()` — carrega `assets/dashboard_style.css`.
+- `ocultar_widgets_nativos()` — esconde menu ⋮, botão de deploy e status
+  widget. Esconde os três **individualmente**: ocultar
+  `[data-testid="stHeader"]` inteiro leva junto o
+  `stExpandSidebarButton` e deixa a sidebar sem como reabrir. Quem
+  decide *para quem* ocultar é o chamador (`app.py` aplica a não-admins).
+- `render_overlay_fresh_login(nome)` — overlay de transição pós-login
+  (fade-out por animação CSS, sem rerun). O chamador consome a flag
+  `_fresh_login` de `st.session_state`; o módulo não conhece perfil.
 - `CHART_COLORS` / `_CHART_THEME` / `_NATIVE_THEME` — paletas para Plotly
   e tema nativo. Todas OKLCH-aproximadas em hex (Streamlit não suporta
   `oklch()` em `config.toml`).

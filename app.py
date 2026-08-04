@@ -12,7 +12,6 @@ Frontend: streamlit-antd-components para navegacao,
 tabelas via st.dataframe, CSS design system customizado.
 """
 
-import html
 import logging
 import sys
 import warnings
@@ -103,6 +102,8 @@ from src.dashboard.ui.theme import (
     aplicar_tema,
     carregar_estilos_customizados,
     get_theme,
+    ocultar_widgets_nativos,
+    render_overlay_fresh_login,
 )
 from src.dashboard.ui.theme_claro_avancado import aplicar_tema_claro_avancado
 from src.dashboard.user_mgmt import render_pagina_usuarios
@@ -225,80 +226,18 @@ def main():
         return
 
     # Oculta widgets nativos do Streamlit (deploy, animação, menu ⋮)
-    # apenas para não-admins. Esconde os widgets individualmente — nunca
-    # o [data-testid="stHeader"] inteiro, pois o botão de reabrir a
-    # sidebar (stExpandSidebarButton) é renderizado dentro dele; escondê-lo
-    # junto deixa a sidebar sem forma de reabrir depois de colapsada.
+    # apenas para não-admins. O motivo de esconder os widgets um a um,
+    # e nao o header inteiro, esta no docstring de ocultar_widgets_nativos.
     _perfil_logado = (usuario_logado() or {}).get("perfil")
     if _perfil_logado != "admin":
-        st.markdown(
-            """<style>
-            [data-testid="stMainMenu"],
-            [data-testid="stAppDeployButton"],
-            [data-testid="stStatusWidget"] { display: none !important; }
-            </style>""",
-            unsafe_allow_html=True,
-        )
+        ocultar_widgets_nativos()
 
-    # Overlay de transição para login recém-efetuado.
-    # Cobre o viewport inteiro (position:fixed, z-index:9999) desde o
-    # início do run pós-login, ocultando qualquer resíduo do formulário
-    # enquanto a sidebar e o skeleton carregam. A animação CSS faz o
-    # fade-out automático após ~0.9 s, revelando o conteúdo abaixo.
+    # Overlay de transição para login recém-efetuado. A flag e consumida
+    # aqui (pop): o overlay some sozinho por animação CSS, sem rerun.
     if st.session_state.pop("_fresh_login", False):
         _user = usuario_logado()
         _nome = (_user.get("nome", "").split()[0]) if _user else ""
-        st.markdown(
-            f"""
-            <style>
-            .mg-fresh-overlay {{
-                position: fixed;
-                inset: 0;
-                background: var(--mg-secondary-bg, #f9fafc);
-                z-index: 9999;
-                display: flex;
-                flex-direction: column;
-                align-items: center;
-                justify-content: center;
-                gap: 0.75rem;
-                animation: mg-fresh-out 0.35s ease 0.9s forwards;
-            }}
-            @keyframes mg-fresh-out {{
-                to {{ opacity: 0; pointer-events: none; visibility: hidden; }}
-            }}
-            .mg-fresh-check {{
-                width: 56px;
-                height: 56px;
-                background: #22c55e;
-                border-radius: 50%;
-                display: flex;
-                align-items: center;
-                justify-content: center;
-                color: #fff;
-                font-size: 1.5rem;
-                font-weight: 700;
-                box-shadow: 0 4px 16px rgba(34,197,94,0.3);
-            }}
-            .mg-fresh-name {{
-                font-size: 1.05rem;
-                font-weight: 600;
-                color: var(--mg-text, #1a1a2e);
-                margin: 0;
-            }}
-            .mg-fresh-sub {{
-                font-size: 0.82rem;
-                color: var(--mg-text-secondary, rgba(26,26,46,0.55));
-                margin: 0;
-            }}
-            </style>
-            <div class="mg-fresh-overlay">
-                <div class="mg-fresh-check">&#10003;</div>
-                <p class="mg-fresh-name">Bem-vindo, {html.escape(_nome)}!</p>
-                <p class="mg-fresh-sub">Carregando dashboard&hellip;</p>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
+        render_overlay_fresh_login(_nome)
 
     with st.sidebar:
         # ── Logo ocupa toda a largura ──

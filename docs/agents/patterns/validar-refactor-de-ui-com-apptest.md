@@ -42,6 +42,13 @@ diffar a saída. Diff vazio é a evidência.
   valor dos widgets; `sha1` + tamanho do markdown (o HTML é longo e o
   hash já detecta qualquer alteração); e as chaves de `session_state`
   que o componente escreve.
+- Emitir **dois** hashes por markdown: o cru e um normalizado
+  (`re.sub(r"\s+", " ", txt)`). Mover um bloco de CSS/HTML muda o nível
+  de aninhamento e, portanto, a indentação do literal — o hash cru
+  acusa, o normalizado prova que o payload é o mesmo. Ver "Armadilha"
+  abaixo. Normalizar também o `mtime` que
+  `carregar_estilos_customizados()` embute (`/* CSS v<mtime> */`): a
+  worktree do baseline tem `mtime` próprio e geraria ruído garantido.
 - Imprimir `at.exception` — vazio é parte do critério de aceite.
 - Sujar o `session_state` de propósito quando houver branch de limpeza
   (ex.: `_vc_sel_ant` diferente da seleção força `_limpar_filtros_ui`),
@@ -93,6 +100,32 @@ done
 git worktree remove "$SP/baseline" --force
 ```
 
+## Armadilha: o dedent do `st.markdown` é condicional
+
+Ao mover um `st.markdown` para menos níveis de indentação, o hash cru
+muda **ou não** conforme a primeira linha do literal:
+
+```python
+"""<style>            # linha 1 sem indentação => prefixo comum = 0
+    .x { ... }        # dedent é no-op, a indentação sobrevive no hash
+</style>"""
+
+f"""                  # literal começa com \n => todas as linhas têm
+    <style>           # prefixo comum; o dedent remove tudo e o hash
+    .x { ... }        # fica idêntico entre as duas versões
+"""
+```
+
+Por isso o diff de uma extração pode acusar **um** bloco e não outro,
+mesmo os dois tendo sido movidos juntos. Não é regressão: confirme com o
+hash normalizado e, se quiser prova byte a byte, extraia o literal antigo
+com `ast` de `git show HEAD:<arquivo>` e compare com o que a função nova
+emite (monkeypatch de `st.markdown` para capturar o argumento):
+
+```python
+antigo.replace(" " * 12, " " * 8) == novo   # True => só indentação mudou
+```
+
 ## Quando NÃO usar
 
 - Mudança que **deve** alterar o render (novo card, nova aba): aí o diff
@@ -106,8 +139,11 @@ git worktree remove "$SP/baseline" --force
 
 - Aplicado em: [src/dashboard/ui/sidebar.py](../../../src/dashboard/ui/sidebar.py)
   (extração de 8 funções de sidebar de `app.py`)
-- Commit relacionado: `f5c5e38` — refactor(ui): extrai componentes de
+- Commit relacionado: `c7230c9` — refactor(ui): extrai componentes de
   sidebar de app.py para ui/sidebar.py (ST-01)
+- Reaplicado em: [src/dashboard/ui/theme.py](../../../src/dashboard/ui/theme.py)
+  (ST-02 — extração dos dois blocos de CSS/HTML inline de `main()`;
+  origem da seção "Armadilha" acima)
 - Doc complementar: [docs/agents/ui-components.md](../ui-components.md),
   [docs/agents/rls.md](../rls.md)
 
@@ -115,4 +151,5 @@ git worktree remove "$SP/baseline" --force
 
 **Autor (agente):** Claude Code (`ui-dash`, via `task-orchestrator`)
 **Criado em:** 2026-08-04
-**Última revisão:** 2026-08-04 por Claude Code
+**Última revisão:** 2026-08-04 por Claude Code (ST-02 — hash normalizado
+e armadilha do dedent)
