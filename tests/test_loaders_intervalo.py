@@ -13,9 +13,11 @@ from datetime import date
 import pandas as pd
 import pytest
 
+from src.dashboard import loaders
 from src.dashboard.loaders import (
     CAMPO_CADASTRO,
     CAMPO_PAGAMENTO,
+    carregar_contratos_pagos_intervalo,
     filtrar_por_intervalo,
     meses_do_intervalo,
 )
@@ -141,3 +143,58 @@ class TestFiltrarPorIntervalo:
             df_datas, date(2026, 5, 1), date(2026, 5, 2), CAMPO_PAGAMENTO
         )
         assert len(df_datas) == antes
+
+
+@pytest.mark.unit
+class TestCarregarContratosPagosIntervalo:
+    """``categoria_id`` NULL no banco (migration 061) tambem precisa do
+    fallback no caminho de periodo livre, nao so no mes da sidebar.
+
+    Regressao: CLT (TIPO_PRODUTO) chega com ``categoria_codigo`` vazio
+    quando o ETL renomeia o tipo e nao backfilla ``categoria_id`` — sem
+    o fallback, o filtro por ``categoria_codigo`` (CONSIG_PRIV) na aba
+    de Gestao nao casa nenhuma linha e a producao de CLT no periodo
+    personalizado aparece zerada mesmo havendo vendas.
+    """
+
+    CATEGORIAS = pd.DataFrame({
+        "codigo": ["CONSIG_PRIV"],
+        "grupo_dashboard": ["CLT"],
+        "grupo_meta": ["CLT"],
+        "conta_valor": [True],
+        "conta_pontuacao": [True],
+    })
+
+    def _mes(self, mes, ano, consultor, data):
+        return pd.DataFrame({
+            "CONSULTOR": [consultor],
+            "TIPO_PRODUTO": ["CLT"],
+            "categoria_codigo": [None],
+            "grupo_dashboard": [None],
+            "conta_valor": [None],
+            "VALOR": [1000.0],
+            "DATA": pd.to_datetime([data]),
+        })
+
+    def test_preenche_categoria_no_periodo_personalizado(self, monkeypatch):
+        monkeypatch.setattr(
+            loaders, "carregar_categorias", lambda: self.CATEGORIAS
+        )
+        por_mes = {
+            (1, 2026): self._mes(1, 2026, "A", "2026-01-16"),
+            (2, 2026): self._mes(2, 2026, "B", "2026-02-26"),
+        }
+        monkeypatch.setattr(
+            loaders,
+            "carregar_contratos_pagos",
+            lambda mes, ano: por_mes.get((mes, ano), pd.DataFrame()),
+        )
+
+        df, aviso = carregar_contratos_pagos_intervalo(
+            date(2026, 1, 1), date(2026, 2, 28), CAMPO_PAGAMENTO
+        )
+
+        assert aviso == ""
+        assert len(df) == 2
+        assert set(df["categoria_codigo"]) == {"CONSIG_PRIV"}
+        assert set(df["grupo_dashboard"]) == {"CLT"}

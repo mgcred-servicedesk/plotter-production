@@ -478,6 +478,7 @@ def carregar_contratos_pagos_intervalo(
         return pd.DataFrame(), "Nenhum contrato pago nos meses do intervalo."
 
     df = pd.concat(partes, ignore_index=True)
+    df = _preencher_categoria_fallback(df)
     return filtrar_por_intervalo(df, data_ini, data_fim, campo), ""
 
 
