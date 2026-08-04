@@ -5,14 +5,22 @@ Testes dos KPIs gerais e helpers compartilhados
 Inclui os helpers ``excluir_supervisores`` / ``contar_consultores``,
 reusados pelos demais módulos KPI. ``calcular_kpis_gerais`` depende de
 ``calcular_dias_uteis`` → usa a fixture ``sem_feriados``.
+
+``TestObterKpisPeriodo`` cobre a composição + cache manual de
+``obter_kpis_periodo`` (miss/hit/invalidação por escopo — a fronteira de
+RLS entre perfis); a correção interna de cada ``calcular_*`` já está
+coberta pelas classes acima, não é reexercitada ali.
 """
 from datetime import datetime, timedelta
 
 import pandas as pd
 import pytest
 
+from src.dashboard.kpis import gerais as kpis_gerais_module
 from src.dashboard.kpis.gerais import (
     JANELA_PIPELINE_DIAS,
+    KpisPeriodo,
+    _chave_kpis,
     calcular_assertividade_consultores,
     calcular_kpis_analise,
     calcular_kpis_cancelados,
@@ -25,6 +33,7 @@ from src.dashboard.kpis.gerais import (
     contar_consultores,
     excluir_supervisores,
     filtrar_janela_recente,
+    obter_kpis_periodo,
     separar_cancelados_liquidos,
 )
 from src.shared.dias_uteis import calcular_dias_uteis
@@ -523,3 +532,216 @@ class TestCalcularKpisQtdProdutos:
         emissao = next(r for r in res if r["produto"] == "EMISSAO")
         # qtd_org = 3, normalizado por 3 → media_ref = 1.0
         assert emissao["media_ref"] == pytest.approx(1.0)
+
+
+@pytest.mark.unit
+class TestObterKpisPeriodo:
+    """``obter_kpis_periodo`` compõe os sete cálculos do período e memoiza
+    o resultado em ``session_state['_kpis_cache']`` sob a chave de
+    ``_chave_kpis`` — a fronteira de RLS entre perfis (ver docstring de
+    ``_chave_kpis``). Cobre miss/hit/invalidação por escopo e a forma do
+    valor retornado; os ``calcular_*`` internos já têm suas próprias
+    classes de teste acima.
+    """
+
+    _MES, _ANO, _DIA_ATUAL, _DU_DECORRIDOS = 6, 2026, 16, 10
+
+    # df_metas_produto fixo (só LOJA "A"): a soma de componentes do MIX em
+    # calcular_kpis_gerais NÃO é filtrada por LOJA, então o valor é o mesmo
+    # em qualquer cenário — as funções que SÃO filtradas por LOJA
+    # (metas_prod_diarias/kpis_qtd) simplesmente zeram para lojas ausentes
+    # aqui, sem erro.
+    def _df_metas_produto(self):
+        return pd.DataFrame({
+            "LOJA": ["A"],
+            "CNC": [3000.0],
+            "CLT": [0.0],
+            "SAQUE": [2000.0],
+            "CONSIGNADO": [0.0],
+            "FGTS_ANT_BENEF_13": [0.0],
+            "EMISSAO": [5.0],
+            "SUPER_CONTA": [3.0],
+            "BMG_MED": [2.0],
+            "VIDA_FAMILIAR": [1.0],
+        })
+
+    def _df_a(self):
+        """Escopo A: lojas A/B, regiões R1/R2. total_vendas = 1800."""
+        return pd.DataFrame({
+            "LOJA": ["A", "A", "B"],
+            "REGIAO": ["R1", "R1", "R2"],
+            "CONSULTOR": ["João", "Maria", "Pedro"],
+            "categoria_codigo": ["CNC", "SAQUE", "CNC"],
+            "VALOR": [1000.0, 500.0, 300.0],
+            "pontos": [100.0, 50.0, 30.0],
+            "is_super_conta": [False, False, False],
+            "is_emissao_cartao": [False, False, False],
+            "is_bmg_med": [False, False, False],
+            "is_seguro_vida": [False, False, False],
+            "DATA": pd.to_datetime(
+                ["2026-06-01", "2026-06-01", "2026-06-02"]
+            ),
+        })
+
+    def _df_b(self):
+        """Escopo B: loja C, região R3. total_vendas = 9999 (não colide
+        com o total de A)."""
+        return pd.DataFrame({
+            "LOJA": ["C"],
+            "REGIAO": ["R3"],
+            "CONSULTOR": ["Ana"],
+            "categoria_codigo": ["SAQUE"],
+            "VALOR": [9999.0],
+            "pontos": [999.0],
+            "is_super_conta": [False],
+            "is_emissao_cartao": [False],
+            "is_bmg_med": [False],
+            "is_seguro_vida": [False],
+            "DATA": pd.to_datetime(["2026-06-03"]),
+        })
+
+    def _kwargs(self, session_state, df, perfil_efetivo, df_full=None):
+        """Monta os kwargs completos de ``obter_kpis_periodo``.
+
+        ``df_full`` default é o escopo A: representa a base PRE-RLS da
+        organização inteira, que não muda conforme o escopo do chamador
+        (só ``df`` — o recorte já filtrado por RLS — muda entre perfis).
+        """
+        return dict(
+            session_state=session_state,
+            mes=self._MES,
+            ano=self._ANO,
+            role="gerente_comercial",
+            perfil_efetivo=perfil_efetivo,
+            df=df,
+            df_metas=pd.DataFrame(
+                {"META_PRATA": [10000.0], "META_OURO": [20000.0]}
+            ),
+            df_metas_produto=self._df_metas_produto(),
+            df_analise=pd.DataFrame({
+                "VALOR": [200.0],
+                "SUBTIPO": ["OUTRO"],
+                "TIPO OPER.": ["OUTRO"],
+            }),
+            df_cancelados=pd.DataFrame(
+                {"VALOR": [100.0], "CLASSIFICACAO": ["liquido"]}
+            ),
+            df_sup=pd.DataFrame(columns=["SUPERVISOR"]),
+            df_full=self._df_a() if df_full is None else df_full,
+            df_sup_full=pd.DataFrame(columns=["SUPERVISOR"]),
+            dia_atual=self._DIA_ATUAL,
+            du_decorridos=self._DU_DECORRIDOS,
+        )
+
+    def test_cache_miss_dispara_calculo_e_grava_estado(self, sem_feriados):
+        ss = {}
+        perfil = {"perfil": "gerente_comercial", "escopo": ["R1", "R2"]}
+        resultado = obter_kpis_periodo(**self._kwargs(ss, self._df_a(), perfil))
+
+        chave_esperada = _chave_kpis(
+            self._MES, self._ANO, "gerente_comercial", perfil, ss
+        )
+        assert ss.get("_kpis_chave") == chave_esperada
+        assert resultado.kpis["total_vendas"] == pytest.approx(1800.0)
+        assert ss["_kpis_cache"]["kpis"]["total_vendas"] == pytest.approx(1800.0)
+
+    def test_cache_hit_nao_recalcula(self, monkeypatch, sem_feriados):
+        """Segunda chamada com a MESMA chave não deve re-executar os
+        cálculos pesados nem substituir o dict de cache."""
+        original = kpis_gerais_module.calcular_kpis_gerais
+        chamadas = []
+
+        def _espiao(*args, **kwargs):
+            chamadas.append(1)
+            return original(*args, **kwargs)
+
+        monkeypatch.setattr(kpis_gerais_module, "calcular_kpis_gerais", _espiao)
+
+        ss = {}
+        perfil = {"perfil": "gerente_comercial", "escopo": ["R1", "R2"]}
+        kwargs = self._kwargs(ss, self._df_a(), perfil)
+
+        resultado_1 = obter_kpis_periodo(**kwargs)
+        assert len(chamadas) == 1
+        cache_id_apos_miss = id(ss["_kpis_cache"])
+
+        resultado_2 = obter_kpis_periodo(**kwargs)
+        assert len(chamadas) == 1  # não recalculou na segunda chamada
+        assert id(ss["_kpis_cache"]) == cache_id_apos_miss  # mesmo dict
+        assert resultado_1 == resultado_2
+
+    def test_mudanca_escopo_invalida_e_recalcula(self, sem_feriados):
+        """Dois gerentes com o MESMO role, escopos diferentes — o caso
+        mais próximo de um vazamento de RLS entre perfis (ver docstring
+        de ``_chave_kpis``: role sozinho não separa dois gerentes)."""
+        ss = {}
+        perfil_a = {"perfil": "gerente_comercial", "escopo": ["R1", "R2"]}
+        perfil_b = {"perfil": "gerente_comercial", "escopo": ["R3"]}
+
+        resultado_a = obter_kpis_periodo(**self._kwargs(ss, self._df_a(), perfil_a))
+        assert resultado_a.kpis["total_vendas"] == pytest.approx(1800.0)
+        chave_apos_a = ss["_kpis_chave"]
+
+        resultado_b = obter_kpis_periodo(**self._kwargs(ss, self._df_b(), perfil_b))
+        assert ss["_kpis_chave"] != chave_apos_a
+
+        # B não pode herdar o total cacheado de A.
+        assert resultado_b.kpis["total_vendas"] == pytest.approx(9999.0)
+        assert resultado_b.kpis["total_vendas"] != resultado_a.kpis["total_vendas"]
+        # E o resultado já retornado para A permanece intacto (NamedTuple
+        # imutável — não é uma view do dict de cache que B sobrescreveu).
+        assert resultado_a.kpis["total_vendas"] == pytest.approx(1800.0)
+
+    def test_campos_do_kpis_periodo(self, sem_feriados):
+        ss = {}
+        perfil = {"perfil": "gerente_comercial", "escopo": ["R1", "R2"]}
+        resultado = obter_kpis_periodo(**self._kwargs(ss, self._df_a(), perfil))
+
+        assert resultado._fields == (
+            "kpis", "kpis_analise", "kpis_cancel", "medias",
+            "metas_prod_diarias", "medias_organizacao", "kpis_qtd",
+            "daily_pago",
+        )
+        assert isinstance(resultado.kpis, dict)
+        assert isinstance(resultado.kpis_analise, dict)
+        assert isinstance(resultado.kpis_cancel, dict)
+        assert isinstance(resultado.medias, dict)
+        assert isinstance(resultado.metas_prod_diarias, list)
+        assert isinstance(resultado.medias_organizacao, dict)
+        assert isinstance(resultado.kpis_qtd, list)
+        # _df_a tem 2 dias distintos de DATA → serie com >= 2 pontos
+        assert isinstance(resultado.daily_pago, list)
+        assert resultado.daily_pago == pytest.approx([1500.0, 300.0])
+
+        # meta_global_valor/perc_ating_valor/gap_valor são adicionados por
+        # obter_kpis_periodo (não por calcular_kpis_gerais isolado) — meta
+        # em VALOR (R$), via meta_mix, distinta de meta_prata (PONTOS).
+        assert resultado.kpis["meta_global_valor"] == pytest.approx(5000.0)
+        assert resultado.kpis["perc_ating_valor"] == pytest.approx(1800 / 5000 * 100)
+        assert resultado.kpis["gap_valor"] == pytest.approx(5000 - 1800)
+
+    def test_meta_global_valor_zero_nao_gera_erro_de_divisao(self, sem_feriados):
+        """``meta_mix = 0`` (sem metas de produto) não pode gerar
+        ZeroDivisionError em ``perc_ating_valor`` — guard explícito na
+        composição (linhas 1104-1112 de ``gerais.py``)."""
+        ss = {}
+        perfil = {"perfil": "gerente_comercial", "escopo": ["R1", "R2"]}
+        kwargs = self._kwargs(ss, self._df_a(), perfil)
+        kwargs["df_metas_produto"] = pd.DataFrame()
+
+        resultado = obter_kpis_periodo(**kwargs)
+        assert resultado.kpis["meta_global_valor"] == 0
+        assert resultado.kpis["perc_ating_valor"] == 0
+        assert resultado.kpis["gap_valor"] == 0
+
+    def test_cache_mantem_dict_com_as_8_chaves_do_kpis_periodo(self, sem_feriados):
+        """O botão "Atualizar Dados" faz ``pop`` de ``_kpis_cache`` — o
+        formato dict (não o NamedTuple) precisa continuar valendo."""
+        ss = {}
+        perfil = {"perfil": "gerente_comercial", "escopo": ["R1", "R2"]}
+        obter_kpis_periodo(**self._kwargs(ss, self._df_a(), perfil))
+
+        cache = ss["_kpis_cache"]
+        assert isinstance(cache, dict)
+        assert set(cache.keys()) == set(KpisPeriodo._fields)
+        assert len(cache) == 8
