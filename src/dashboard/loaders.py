@@ -24,6 +24,7 @@ from typing import Callable, Dict, List, Optional, Tuple
 import pandas as pd
 import streamlit as st
 
+from src.config.settings import NOMES_DISPLAY_PRODUTO
 from src.config.supabase_client import get_supabase_client
 from src.dashboard.rls import _obter_perfil_efetivo
 
@@ -187,6 +188,28 @@ def carregar_categorias() -> pd.DataFrame:
         .execute()
     )
     return pd.DataFrame(resp.data or [])
+
+
+def aplicar_nomes_display_produto(frame: pd.DataFrame) -> pd.DataFrame:
+    """Troca as chaves internas de ``grupo_dashboard`` pelo rotulo de UI.
+
+    ``NOMES_DISPLAY_PRODUTO`` mapeia a chave de dados (ex: ``PACK``) para
+    o nome amigavel exibido na interface, sem alterar nada no banco. A
+    troca acontece na fronteira de carga — antes de qualquer calculo ou
+    renderizacao — para que todos os agrupamentos e joins por produto
+    usem um vocabulario unico.
+
+    Aplicavel a qualquer frame que exponha ``grupo_dashboard``: contratos
+    pagos, em analise, cancelados e a propria tabela de ``categorias``.
+    Nao muta o frame recebido — devolve copia (via ``assign``) quando ha
+    o que renomear e o proprio objeto quando nao ha (vazio ou sem a
+    coluna).
+    """
+    if frame.empty or "grupo_dashboard" not in frame.columns:
+        return frame
+    return frame.assign(
+        grupo_dashboard=frame["grupo_dashboard"].replace(NOMES_DISPLAY_PRODUTO)
+    )
 
 
 def _preencher_categoria_fallback(df: pd.DataFrame) -> pd.DataFrame:

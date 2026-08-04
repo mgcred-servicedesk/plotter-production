@@ -25,7 +25,6 @@ import streamlit_antd_components as sac
 
 sys.path.insert(0, str(Path(__file__).parent))
 
-from src.config.settings import NOMES_DISPLAY_PRODUTO
 from src.dashboard.auth import (
     fazer_logout,
     tela_login,
@@ -53,6 +52,7 @@ from src.dashboard.pages.detalhes_cards import (
     render_detalhe_media_loja,
 )
 from src.dashboard.loaders import (
+    aplicar_nomes_display_produto,
     carregar_categorias,
     carregar_consultores_ativos,
     carregar_consultores_cadastro,
@@ -897,21 +897,10 @@ def main():
         # Substitui chaves internas (ex: 'PACK') pelo label
         # amigavel antes de qualquer calculo ou renderizacao.
         # Aplica em todos os DFs que expoe grupo_dashboard.
-        def _aplicar_nomes_display(frame: pd.DataFrame) -> pd.DataFrame:
-            if frame.empty or "grupo_dashboard" not in frame.columns:
-                return frame
-            return frame.assign(
-                grupo_dashboard=frame["grupo_dashboard"].replace(NOMES_DISPLAY_PRODUTO)
-            )
-
-        df = _aplicar_nomes_display(df)
-        categorias = categorias.copy()
-        if "grupo_dashboard" in categorias.columns:
-            categorias["grupo_dashboard"] = categorias["grupo_dashboard"].replace(
-                NOMES_DISPLAY_PRODUTO
-            )
-        df_analise = _aplicar_nomes_display(df_analise)
-        df_cancelados = _aplicar_nomes_display(df_cancelados)
+        df = aplicar_nomes_display_produto(df)
+        categorias = aplicar_nomes_display_produto(categorias)
+        df_analise = aplicar_nomes_display_produto(df_analise)
+        df_cancelados = aplicar_nomes_display_produto(df_cancelados)
 
         # ── Diagnostico de pontuacao ─────────────
         diag = st.session_state.get("_diag_pontuacao")
@@ -1435,7 +1424,7 @@ def main():
             ano_ant = ano if mes > 1 else ano - 1
 
             # Cache local do df_ant_full pos-RLS+filtros: evita repetir
-            # _aplicar_nomes_display + aplicar_rls + _aplicar_filtros_ui
+            # aplicar_nomes_display_produto + aplicar_rls + _aplicar_filtros_ui
             # a cada rerun da aba (ex: hover/clique em outros widgets).
             # Invalidado por mudanca de periodo, perfil ou filtros UI.
             chave_ant = (
@@ -1449,7 +1438,7 @@ def main():
             if st.session_state.get("_df_ant_chave") != chave_ant:
                 try:
                     _df_ant, _, _ = consolidar_dados(mes_ant, ano_ant)
-                    _df_ant = _aplicar_nomes_display(_df_ant)
+                    _df_ant = aplicar_nomes_display_produto(_df_ant)
                     # Aplica o mesmo escopo de perfil e filtros de UI do mês
                     # atual, para que a curva do mês anterior no gráfico
                     # acumulado represente a mesma granularidade (região /
@@ -1488,7 +1477,7 @@ def main():
             if st.session_state.get("_df_ano_ant_chave") != chave_yoy:
                 try:
                     _df_yoy, _, _ = consolidar_dados(mes, ano_yoy)
-                    _df_yoy = _aplicar_nomes_display(_df_yoy)
+                    _df_yoy = aplicar_nomes_display_produto(_df_yoy)
                     _df_yoy = aplicar_rls(_df_yoy)
                     if (
                         st.session_state.get("ui_filtro_lojas")

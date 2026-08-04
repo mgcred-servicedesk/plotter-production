@@ -10,12 +10,14 @@ import pandas as pd
 import pytest
 
 from src.dashboard import loaders
+from src.config.settings import PACK_LABEL_AGREGADO
 from src.dashboard.loaders import (
     _colapsar_cadastro_recente,
     _mes_apuracao_seguinte,
     _preencher_categoria_fallback,
     _reanexar_regiao,
     _status_consultor_ativo,
+    aplicar_nomes_display_produto,
     carregar_universo_lojas,
 )
 
@@ -110,6 +112,53 @@ class TestReanexarRegiao:
         out = _reanexar_regiao(pivot, fonte)
         assert len(out) == 1
         assert out["REGIAO"].iloc[0] == "R1"
+
+
+@pytest.mark.unit
+class TestAplicarNomesDisplayProduto:
+    """Chave interna de grupo_dashboard -> rotulo de UI.
+
+    Mesmo helper para contratos (pagos/analise/cancelados) e para a
+    tabela de categorias, que tambem expoe grupo_dashboard.
+    """
+
+    def test_renomeia_chave_mapeada(self):
+        df = pd.DataFrame({"grupo_dashboard": ["PACK", "CNC", "PACK"]})
+        out = aplicar_nomes_display_produto(df)
+        assert list(out["grupo_dashboard"]) == [
+            PACK_LABEL_AGREGADO, "CNC", PACK_LABEL_AGREGADO,
+        ]
+
+    def test_nao_muta_o_original(self):
+        df = pd.DataFrame({"grupo_dashboard": ["PACK"]})
+        aplicar_nomes_display_produto(df)
+        assert df["grupo_dashboard"].iloc[0] == "PACK"
+
+    def test_preserva_demais_colunas_e_indice(self):
+        df = pd.DataFrame(
+            {"grupo_dashboard": ["PACK"], "VALOR": [100.0]}, index=[7],
+        )
+        out = aplicar_nomes_display_produto(df)
+        assert list(out.columns) == ["grupo_dashboard", "VALOR"]
+        assert list(out.index) == [7]
+        assert out["VALOR"].iloc[0] == 100.0
+
+    def test_df_vazio_ou_sem_coluna_passa_direto(self):
+        assert aplicar_nomes_display_produto(pd.DataFrame()).empty
+        df = pd.DataFrame({"VALOR": [100.0]})
+        assert list(aplicar_nomes_display_produto(df).columns) == ["VALOR"]
+
+    def test_categorias_tratadas_como_qualquer_frame(self):
+        # carregar_categorias() traz grupo_dashboard na mesma chave
+        # interna dos contratos — precisa do mesmo vocabulario.
+        categorias = pd.DataFrame({
+            "codigo": ["ANT_BENEF", "CNC"],
+            "grupo_dashboard": ["PACK", "CNC"],
+            "conta_valor": [True, True],
+        })
+        out = aplicar_nomes_display_produto(categorias)
+        assert list(out["grupo_dashboard"]) == [PACK_LABEL_AGREGADO, "CNC"]
+        assert list(out["codigo"]) == ["ANT_BENEF", "CNC"]
 
 
 @pytest.mark.unit
