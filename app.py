@@ -26,7 +26,6 @@ import streamlit_antd_components as sac
 sys.path.insert(0, str(Path(__file__).parent))
 
 from src.dashboard.auth import (
-    fazer_logout,
     tela_login,
     usuario_logado,
 )
@@ -55,7 +54,6 @@ from src.dashboard.loaders import (
     carregar_consultores_cadastro,
     carregar_contratos_pagos_intervalo,
     carregar_digitacao_diaria_detalhe,
-    carregar_lojas_ativas,
     carregar_lojas_regioes,
     carregar_universo_lojas,
     carregar_metas_produto_consultor,
@@ -92,13 +90,19 @@ from src.dashboard.ui.kpi_cards import (  # noqa: F401  (re-exports: criar_cards
 from src.dashboard.ui.kpi_cards_reforma import render_kpis_reforma
 from src.dashboard.ui.prioridades_acao import render_prioridades_acao
 from src.dashboard.ui.resumo_executivo import render_resumo_executivo
+from src.dashboard.ui.sidebar import (
+    aplicar_filtros_ui,
+    filtrar_metas_ui,
+    render_sidebar_filtros_perfil,
+    render_sidebar_usuario,
+    render_sidebar_visualizar_como,
+    render_theme_toggle,
+)
 from src.dashboard.ui.skeleton import render_skeleton
 from src.dashboard.ui.theme import (
     aplicar_tema,
     carregar_estilos_customizados,
     get_theme,
-    get_theme_mode,
-    set_theme_mode,
 )
 from src.dashboard.ui.theme_claro_avancado import aplicar_tema_claro_avancado
 from src.dashboard.user_mgmt import render_pagina_usuarios
@@ -116,374 +120,6 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded",
 )
-
-
-# ══════════════════════════════════════════════════════
-# SIDEBAR
-# ══════════════════════════════════════════════════════
-
-
-def _render_theme_toggle() -> None:
-    """Segmented 3-state: light / system / dark.
-
-    Renderiza tres botoes horizontais estilo macOS. O
-    botao correspondente ao ``theme_mode`` atual recebe
-    ``type='primary'``. Ao clicar, persiste via
-    ``set_theme_mode`` e rerun.
-    """
-    current = get_theme_mode()
-    opcoes = [
-        ("light", ":material/light_mode:", "Claro"),
-        ("system", ":material/computer:", "Sistema"),
-        ("dark", ":material/dark_mode:", "Escuro"),
-    ]
-    st.markdown(
-        '<div class="mg-theme-seg-wrapper"></div>',
-        unsafe_allow_html=True,
-    )
-    cols = st.columns(3, gap="small")
-    for col, (mode, icon, label) in zip(cols, opcoes):
-        with col:
-            if st.button(
-                icon,
-                key=f"theme_mode_{mode}",
-                help=f"Tema {label}",
-                width="stretch",
-            ):
-                if mode != current:
-                    set_theme_mode(mode)
-                    st.rerun()
-
-
-def _render_sidebar_usuario():
-    """Informacoes do usuario e logout."""
-    user = usuario_logado()
-    if not user:
-        return
-
-    # Mapa de perfil -> classe CSS do badge
-    _badge_map = {
-        "admin": ("mg-badge-admin", "Admin"),
-        "gestor": ("mg-badge-gestor", "Gestor"),
-        "gerente_comercial": ("mg-badge-gerente", "Gerente"),
-        "supervisor": ("mg-badge-supervisor", "Supervisor"),
-    }
-    badge_cls, badge_lbl = _badge_map.get(
-        user["perfil"], ("mg-badge-admin", user["perfil"])
-    )
-
-    # Iniciais do usuario para avatar
-    partes = user["nome"].split()
-    iniciais = (
-        (partes[0][0] + partes[-1][0]).upper()
-        if len(partes) > 1
-        else partes[0][:2].upper()
-    )
-
-    escopo_html = ""
-    if user["perfil"] not in ("admin", "gestor") and user.get("escopo"):
-        escopo_txt = ", ".join(user["escopo"])
-        escopo_html = (
-            f'<div class="mg-user-escopo">{html.escape(escopo_txt)}</div>'
-        )
-
-    st.markdown(
-        f'<div class="mg-sidebar-user">'
-        f'<div class="mg-avatar">{html.escape(iniciais)}</div>'
-        f'<div class="mg-user-info">'
-        f'<div class="mg-user-name">{html.escape(user["nome"])}</div>'
-        f'<span class="mg-badge {badge_cls}">{html.escape(badge_lbl)}</span>'
-        f"{escopo_html}"
-        f"</div></div>",
-        unsafe_allow_html=True,
-    )
-
-    st.markdown(
-        '<div class="mg-sidebar-actions"></div>',
-        unsafe_allow_html=True,
-    )
-    col_cfg, col_sair = st.columns(2)
-
-    with col_cfg:
-        icon = ":material/settings:"
-        label = "Config"
-        if user["perfil"] == "admin":
-            icon = ":material/group:"
-            label = "Usuários"
-        if st.button(
-            f"{icon} {label}",
-            width="stretch",
-        ):
-            st.session_state["mostrar_config"] = not st.session_state.get(
-                "mostrar_config", False
-            )
-            st.rerun()
-
-    with col_sair:
-        if st.button(
-            ":material/logout: Sair",
-            width="stretch",
-        ):
-            fazer_logout()
-            st.rerun()
-
-
-def _limpar_filtros_ui() -> None:
-    """Apaga sub-filtros de UI (Loja, Consultor)."""
-    st.session_state.pop("ui_filtro_lojas", None)
-    st.session_state.pop("ui_filtro_consultor", None)
-    st.session_state.pop("_ui_lojas_ant", None)
-
-
-def _aplicar_filtros_ui(df: pd.DataFrame) -> pd.DataFrame:
-    """Aplica filtros granulares de loja/consultor sobre df já com RLS."""
-    lojas = st.session_state.get("ui_filtro_lojas") or []
-    consultor = st.session_state.get("ui_filtro_consultor") or ""
-    if lojas and "LOJA" in df.columns:
-        df = df[df["LOJA"].isin(lojas)].copy()
-    if consultor and "CONSULTOR" in df.columns:
-        df = df[df["CONSULTOR"] == consultor].copy()
-    return df
-
-
-def _filtrar_metas_ui(
-    df_metas: pd.DataFrame, df_f: pd.DataFrame
-) -> pd.DataFrame:
-    """Restringe metas à seleção granular da sidebar (loja/consultor).
-
-    Distinto do RLS de perfil (``aplicar_rls_metas``): aqui o filtro
-    segue a seleção explícita do usuário. Quando ele seleciona lojas,
-    restringe a essas lojas; quando seleciona apenas um consultor,
-    usa as lojas presentes nos dados já filtrados (``df_f``).
-    """
-    if "LOJA" not in df_metas.columns:
-        return df_metas
-    lojas_ui = st.session_state.get("ui_filtro_lojas") or []
-    if lojas_ui:
-        return df_metas[df_metas["LOJA"].isin(lojas_ui)].copy()
-    if "LOJA" in df_f.columns:
-        lojas = df_f["LOJA"].unique()
-        return df_metas[df_metas["LOJA"].isin(lojas)].copy()
-    return df_metas
-
-
-def _render_consultor_subselect(
-    df_source: pd.DataFrame,
-    df_sup: pd.DataFrame,
-    key: str,
-) -> None:
-    """Renderiza o selectbox de consultor e persiste em ui_filtro_consultor.
-
-    Exclui supervisores da lista. Reseta automaticamente se o consultor
-    anterior não está mais nas opções (loja mudou).
-    """
-    supervisores: set = set()
-    if not df_sup.empty and "SUPERVISOR" in df_sup.columns:
-        supervisores = set(df_sup["SUPERVISOR"].dropna())
-
-    consultores = []
-    if "CONSULTOR" in df_source.columns:
-        consultores = sorted(
-            c for c in df_source["CONSULTOR"].dropna().unique() if c not in supervisores
-        )
-
-    if not consultores:
-        st.session_state["ui_filtro_consultor"] = ""
-        return
-
-    opcoes = [""] + consultores
-    atual = st.session_state.get("ui_filtro_consultor", "")
-    idx = opcoes.index(atual) if atual in opcoes else 0
-
-    sel = st.selectbox(
-        "Consultor",
-        opcoes,
-        index=idx,
-        key=key,
-        format_func=lambda x: "Todos" if x == "" else x,
-    )
-    st.session_state["ui_filtro_consultor"] = sel
-
-
-def _render_sidebar_visualizar_como(df_full):
-    """Seletor 'Visualizar como' para admin e gestor.
-
-    Define apenas o perfil simulado e seu escopo de RLS
-    (regiao/loja). A cadeia granular Loja → Consultor é
-    renderizada por _render_sidebar_filtros_perfil, que já
-    considera o perfil efetivo (inclusive o simulado).
-    """
-    user = usuario_logado()
-    if not user or user["perfil"] not in ("admin", "gestor"):
-        return
-
-    st.markdown(
-        '<div class="mg-sim-card">'
-        '<div class="mg-sim-header">'
-        '<span class="mg-sim-icon">👁️</span>'
-        '<span class="mg-sim-title">Visualizar Como</span>'
-        "</div></div>",
-        unsafe_allow_html=True,
-    )
-
-    opcoes = [
-        "Admin (padrao)",
-        "Gerente Comercial",
-        "Supervisor",
-        "Consultor",
-    ]
-    sel = st.selectbox(
-        "Simular perfil",
-        opcoes,
-        key="sel_visualizar_perfil",
-        label_visibility="collapsed",
-    )
-
-    # Limpa sub-filtros granulares ao trocar o perfil simulado
-    if st.session_state.get("_vc_sel_ant") != sel:
-        _limpar_filtros_ui()
-        st.session_state["_vc_sel_ant"] = sel
-
-    if sel == "Admin (padrao)":
-        st.session_state.pop("visualizar_como", None)
-
-    elif sel == "Gerente Comercial":
-        # Regioes ATUAIS (organograma) a partir das lojas ativas —
-        # inclui regioes sem producao no periodo. O escopo simulado e
-        # casado contra REGIAO_ATUAL no aplicar_rls. Uniao com df_full
-        # como fallback.
-        _regs: set[str] = set()
-        _df_ativas = carregar_lojas_ativas()
-        if "REGIAO_ATUAL" in _df_ativas.columns:
-            _regs |= set(_df_ativas["REGIAO_ATUAL"].dropna())
-        _col_reg = (
-            "REGIAO_ATUAL"
-            if "REGIAO_ATUAL" in df_full.columns
-            else "REGIAO"
-        )
-        if _col_reg in df_full.columns:
-            _regs |= set(df_full[_col_reg].dropna())
-        regioes = sorted(r for r in _regs if r)
-        escopo = st.multiselect(
-            "Regioes",
-            regioes,
-            key="sel_visualizar_regioes",
-        )
-        if escopo:
-            st.session_state["visualizar_como"] = {
-                "perfil": "gerente_comercial",
-                "escopo": escopo,
-            }
-        else:
-            st.session_state.pop("visualizar_como", None)
-
-    elif sel == "Supervisor":
-        # Lojas ATIVAS (todas) uniao com as que tem producao no periodo,
-        # p/ simular supervisor mesmo de loja zerada.
-        _lojas: set[str] = set()
-        _df_ativas = carregar_lojas_ativas()
-        if "LOJA" in _df_ativas.columns:
-            _lojas |= set(_df_ativas["LOJA"].dropna())
-        if "LOJA" in df_full.columns:
-            _lojas |= set(df_full["LOJA"].dropna())
-        lojas = sorted(lj for lj in _lojas if lj)
-        escopo = st.multiselect(
-            "Lojas",
-            lojas,
-            key="sel_visualizar_lojas",
-        )
-        if escopo:
-            st.session_state["visualizar_como"] = {
-                "perfil": "supervisor",
-                "escopo": escopo,
-            }
-        else:
-            st.session_state.pop("visualizar_como", None)
-
-    elif sel == "Consultor":
-        consultores = (
-            sorted(df_full["CONSULTOR"].dropna().unique().tolist())
-            if "CONSULTOR" in df_full.columns
-            else []
-        )
-        sel_cons = st.selectbox(
-            "Consultor",
-            [""] + consultores,
-            key="sel_visualizar_consultor",
-            help="Digite parte do nome para filtrar.",
-        )
-        if sel_cons:
-            st.session_state["visualizar_como"] = {
-                "perfil": "consultor",
-                "escopo": [sel_cons],
-            }
-        else:
-            st.session_state.pop("visualizar_como", None)
-
-    # st.rerun() nao e mais necessario aqui: a sidebar agora e
-    # renderizada em main() ANTES de aplicar_rls(), entao o novo
-    # valor de `visualizar_como` ja e respeitado no mesmo rerun
-    # disparado automaticamente pelos widgets (selectbox/multiselect).
-
-
-def _render_sidebar_filtros_perfil(
-    df: pd.DataFrame,
-    df_sup: pd.DataFrame,
-    role: str,
-) -> None:
-    """Filtros granulares Loja → Consultor para Gerente e Supervisor nativos.
-
-    Renderiza dentro do sidebar. Escreve em ui_filtro_lojas e
-    ui_filtro_consultor — os mesmos keys usados por _aplicar_filtros_ui.
-    Não exibe nada para admin/gestor (eles usam o Visualizar Como).
-    """
-    if role not in ("gerente_comercial", "supervisor"):
-        return
-
-    sac.divider(
-        label="Filtrar Por",
-        icon="funnel-fill",
-        align="left",
-        color="blue",
-    )
-
-    if role == "gerente_comercial":
-        # Lojas ATIVAS da regiao do gerente (mesmo zeradas na producao):
-        # tabela lojas -> RLS por REGIAO_ATUAL -> uniao com as que tem
-        # producao no periodo. Assim o gerente enxerga/seleciona toda a
-        # sua carteira, nao apenas quem vendeu.
-        lojas_scope: set[str] = set()
-        _df_ativas = aplicar_rls(carregar_lojas_ativas())
-        if "LOJA" in _df_ativas.columns:
-            lojas_scope |= set(_df_ativas["LOJA"].dropna())
-        if "LOJA" in df.columns:
-            lojas_scope |= set(df["LOJA"].dropna())
-        lojas_disp = sorted(lj for lj in lojas_scope if lj)
-        if not lojas_disp:
-            return
-
-        lojas_ant = st.session_state.get("_ui_lojas_ant") or []
-        lojas_sel = st.multiselect(
-            "Loja",
-            lojas_disp,
-            default=[lj for lj in lojas_ant if lj in lojas_disp],
-            key="sel_filtro_lojas",
-            placeholder="Todas as lojas",
-        )
-        if set(lojas_sel) != set(lojas_ant):
-            st.session_state["ui_filtro_consultor"] = ""
-            st.session_state["_ui_lojas_ant"] = lojas_sel
-        st.session_state["ui_filtro_lojas"] = lojas_sel
-
-        if lojas_sel:
-            df_lojas = df[df["LOJA"].isin(lojas_sel)]
-            _render_consultor_subselect(df_lojas, df_sup, key="sel_filtro_cons_ger")
-        else:
-            st.session_state["ui_filtro_consultor"] = ""
-
-    elif role == "supervisor":
-        _render_consultor_subselect(df, df_sup, key="sel_filtro_cons_sup")
-        st.session_state["ui_filtro_lojas"] = []
 
 
 # ══════════════════════════════════════════════════════
@@ -674,9 +310,9 @@ def main():
         st.image(logo, width="stretch")
 
         # ── Theme mode toggle 3-state (light/system/dark) ──
-        _render_theme_toggle()
+        render_theme_toggle()
 
-        _render_sidebar_usuario()
+        render_sidebar_usuario()
 
         # ── Periodo (colapsavel) ──────────────────────
         with st.expander(
@@ -989,7 +625,7 @@ def main():
         # de st.rerun() explicito). Usa df_full (pre-RLS) para listar
         # todas as regioes/lojas/consultores disponiveis.
         with st.sidebar:
-            _render_sidebar_visualizar_como(df_full)
+            render_sidebar_visualizar_como(df_full)
 
         # ── Perfil efetivo (resolvido APOS Visualizar Como) ──
         from src.dashboard.rls import _obter_perfil_efetivo
@@ -1047,7 +683,7 @@ def main():
         _, du_decorridos, _ = calcular_dias_uteis(ano, mes, dia_atual)
 
         # ── Dados filtrados (RLS ja aplicado) ─────────
-        # Aliases: _aplicar_filtros_ui (abaixo) ja retorna novos
+        # Aliases: aplicar_filtros_ui (abaixo) ja retorna novos
         # DataFrames com .copy() interno, entao manter referencias
         # aqui e suficiente.
         df_f = df
@@ -1061,17 +697,17 @@ def main():
         # Renderizado APOS o RLS porque os filtros granulares de Loja
         # e Consultor devem listar apenas o escopo permitido.
         with st.sidebar:
-            _render_sidebar_filtros_perfil(df_f, df_sup_f, role or "")
+            render_sidebar_filtros_perfil(df_f, df_sup_f, role or "")
 
         # ── Aplicar filtros granulares de UI (pos-RLS) ─
         _ui_lojas = st.session_state.get("ui_filtro_lojas") or []
         _ui_cons = st.session_state.get("ui_filtro_consultor") or ""
         if _ui_lojas or _ui_cons:
-            df_f = _aplicar_filtros_ui(df_f)
-            df_analise_f = _aplicar_filtros_ui(df_analise_f)
-            df_cancelados_f = _aplicar_filtros_ui(df_cancelados_f)
-            df_metas_f = _filtrar_metas_ui(df_metas_f, df_f)
-            df_metas_prod_f = _filtrar_metas_ui(df_metas_prod_f, df_f)
+            df_f = aplicar_filtros_ui(df_f)
+            df_analise_f = aplicar_filtros_ui(df_analise_f)
+            df_cancelados_f = aplicar_filtros_ui(df_cancelados_f)
+            df_metas_f = filtrar_metas_ui(df_metas_f, df_f)
+            df_metas_prod_f = filtrar_metas_ui(df_metas_prod_f, df_f)
 
         render_status_bar(
             len(df_f),
@@ -1104,7 +740,7 @@ def main():
         _consultor_selecionado = bool(st.session_state.get("ui_filtro_consultor"))
         if role == "consultor" or _consultor_selecionado:
             _mpc = carregar_metas_produto_consultor(mes, ano)
-            _mpc = _filtrar_metas_ui(_mpc, df_f)
+            _mpc = filtrar_metas_ui(_mpc, df_f)
             if not _mpc.empty:
                 df_metas_prod_f = _mpc
 
@@ -1397,7 +1033,7 @@ def main():
             ano_ant = ano if mes > 1 else ano - 1
 
             # Cache local do df_ant_full pos-RLS+filtros: evita repetir
-            # aplicar_nomes_display_produto + aplicar_rls + _aplicar_filtros_ui
+            # aplicar_nomes_display_produto + aplicar_rls + aplicar_filtros_ui
             # a cada rerun da aba (ex: hover/clique em outros widgets).
             # Invalidado por mudanca de periodo, perfil ou filtros UI.
             chave_ant = (
@@ -1421,7 +1057,7 @@ def main():
                         st.session_state.get("ui_filtro_lojas")
                         or st.session_state.get("ui_filtro_consultor")
                     ):
-                        _df_ant = _aplicar_filtros_ui(_df_ant)
+                        _df_ant = aplicar_filtros_ui(_df_ant)
                 except Exception as exc:
                     logger.exception(
                         "Falha ao carregar mês anterior (%s/%s)",
@@ -1456,7 +1092,7 @@ def main():
                         st.session_state.get("ui_filtro_lojas")
                         or st.session_state.get("ui_filtro_consultor")
                     ):
-                        _df_yoy = _aplicar_filtros_ui(_df_yoy)
+                        _df_yoy = aplicar_filtros_ui(_df_yoy)
                 except Exception as exc:
                     logger.exception(
                         "Falha ao carregar mesmo mês / ano anterior (%s/%s)",
@@ -1546,13 +1182,13 @@ def main():
             # nada. Passa pelo mesmo recorte de df_f — aplicar_rls
             # (perfil) e os filtros granulares da sidebar — para que a
             # lista nao traga consultor de loja que o usuario filtrou.
-            _univ_cons_gestao = _aplicar_filtros_ui(
+            _univ_cons_gestao = aplicar_filtros_ui(
                 aplicar_rls(carregar_consultores_ativos())
             )
             # Metas por produto de escopo CONSULTOR (alvo individual de
             # cada consultor da loja): sustentam a base "% da meta" nos
             # criterios. Ausentes, a base e ignorada com aviso na aba.
-            _metas_gestao = _filtrar_metas_ui(
+            _metas_gestao = filtrar_metas_ui(
                 carregar_metas_produto_consultor(mes, ano), df_f
             )
 
@@ -1570,7 +1206,7 @@ def main():
                 )
                 if bruto.empty:
                     return bruto, aviso
-                return _aplicar_filtros_ui(aplicar_rls(bruto)), aviso
+                return aplicar_filtros_ui(aplicar_rls(bruto)), aviso
 
             render_tab_gestao(
                 df_f,
