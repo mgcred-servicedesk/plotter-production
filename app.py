@@ -38,6 +38,7 @@ from src.dashboard.kpis.gerais import (
     calcular_medias_organizacao,
     calcular_metas_produto_diarias,
 )
+from src.dashboard.pages.config import render_pagina_config
 from src.dashboard.pages.dashboard_pontuacao import (
     render_dashboard_pontuacao,
 )
@@ -50,10 +51,8 @@ from src.dashboard.pages.detalhes_cards import (
 from src.dashboard.loaders import (
     aplicar_nomes_display_produto,
     carregar_consultores_ativos,
-    carregar_consultores_cadastro,
     carregar_contratos_pagos_intervalo,
     carregar_digitacao_diaria_detalhe,
-    carregar_lojas_regioes,
     carregar_universo_lojas,
     carregar_metas_produto_consultor,
     carregar_pagamentos_online,
@@ -106,8 +105,6 @@ from src.dashboard.ui.theme import (
     render_overlay_fresh_login,
 )
 from src.dashboard.ui.theme_claro_avancado import aplicar_tema_claro_avancado
-from src.dashboard.user_mgmt import render_pagina_usuarios
-from src.dashboard.feriados_mgmt import render_pagina_feriados
 from src.shared.dias_uteis import calcular_dias_uteis
 
 warnings.filterwarnings("ignore", category=FutureWarning)
@@ -361,42 +358,7 @@ def main():
 
     # ── Config: renderiza sem carregar contratos ──────
     if st.session_state.get("mostrar_config"):
-        if st.button("← Voltar ao Dashboard"):
-            st.session_state["mostrar_config"] = False
-            st.rerun()
-
-        user = usuario_logado()
-        lojas_cfg, regioes_cfg = carregar_lojas_regioes()
-        consultores_cfg = carregar_consultores_cadastro()
-
-        if user and user["perfil"] == "admin":
-            sac.divider(
-                label="Gerenciamento de Usuarios",
-                icon="people-fill",
-                align="left",
-                color="blue",
-            )
-            render_pagina_usuarios(
-                regioes=regioes_cfg,
-                lojas=lojas_cfg,
-                consultores=consultores_cfg,
-            )
-
-            sac.divider(
-                label="Gerenciamento de Feriados",
-                icon="calendar2-event-fill",
-                align="left",
-                color="blue",
-            )
-            render_pagina_feriados()
-        else:
-            sac.divider(
-                label="Minha Conta",
-                icon="person-gear",
-                align="left",
-                color="blue",
-            )
-            render_pagina_usuarios()
+        render_pagina_config()
         return
 
     # ── Dashboard: carrega contratos apenas aqui ──────

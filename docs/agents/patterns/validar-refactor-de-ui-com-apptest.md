@@ -50,6 +50,11 @@ diffar a saída. Diff vazio é a evidência.
   `carregar_estilos_customizados()` embute (`/* CSS v<mtime> */`): a
   worktree do baseline tem `mtime` próprio e geraria ruído garantido.
 - Imprimir `at.exception` — vazio é parte do critério de aceite.
+- Ler `at.session_state` com `chave in at.session_state` + indexação.
+  O `SafeSessionState` do `AppTest` **não** expõe `.get()`: a chamada cai
+  no `__getattr__`, vira lookup da chave `"get"` e levanta
+  `AttributeError` no fim do script — depois do inventário já impresso,
+  o que faz o run parecer bem-sucedido no arquivo e falhar no exit code.
 - Sujar o `session_state` de propósito quando houver branch de limpeza
   (ex.: `_vc_sel_ant` diferente da seleção força `_limpar_filtros_ui`),
   e assertar que as chaves sumiram.
@@ -144,6 +149,9 @@ antigo.replace(" " * 12, " " * 8) == novo   # True => só indentação mudou
 - Reaplicado em: [src/dashboard/ui/theme.py](../../../src/dashboard/ui/theme.py)
   (ST-02 — extração dos dois blocos de CSS/HTML inline de `main()`;
   origem da seção "Armadilha" acima)
+- Reaplicado em: [src/dashboard/pages/config.py](../../../src/dashboard/pages/config.py)
+  (ST-06 — extração da página de Config de `main()`; diff vazio nos dois
+  cenários de perfil)
 - Doc complementar: [docs/agents/ui-components.md](../ui-components.md),
   [docs/agents/rls.md](../rls.md)
 
@@ -151,5 +159,5 @@ antigo.replace(" " * 12, " " * 8) == novo   # True => só indentação mudou
 
 **Autor (agente):** Claude Code (`ui-dash`, via `task-orchestrator`)
 **Criado em:** 2026-08-04
-**Última revisão:** 2026-08-04 por Claude Code (ST-02 — hash normalizado
-e armadilha do dedent)
+**Última revisão:** 2026-08-04 por Claude Code (ST-06 — `at.session_state`
+sem `.get()`)
