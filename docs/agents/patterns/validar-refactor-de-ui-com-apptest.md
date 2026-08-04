@@ -50,6 +50,18 @@ diffar a saída. Diff vazio é a evidência.
   `carregar_estilos_customizados()` embute (`/* CSS v<mtime> */`): a
   worktree do baseline tem `mtime` próprio e geraria ruído garantido.
 - Imprimir `at.exception` — vazio é parte do critério de aceite.
+- Exportar `PYTHONHASHSEED=0` nos dois lados. Um `st.json`/`st.code` de
+  dict montado a partir de `set` sai com o mesmo `len` e hash diferente
+  **a cada processo** — a randomização de hash de `str` muda a ordem de
+  iteração. Sem o seed fixo isso vira falso positivo garantido.
+- Para elemento sem `.value` (`UnknownElement` — `plotly_chart` é o
+  caso), hashear `str(node.proto)`. Acessar `.value` levanta `KeyError`
+  (ele procura o id do elemento no `session_state`), então envolver em
+  `try` e cair para o `proto`. E **normalizar o campo `id`**:
+  `id: "$$ID-<hash>-None"` deriva do `active_script_hash`, que depende
+  do **caminho** do `app.py` — a worktree do baseline e a raiz divergem
+  sempre, com `proto_len` idêntico.
+  `re.sub(r'id: "\$\$ID-[^"]*"', 'id: "$$ID"', raw)` resolve.
 - Ler `at.session_state` com `chave in at.session_state` + indexação.
   O `SafeSessionState` do `AppTest` **não** expõe `.get()`: a chamada cai
   no `__getattr__`, vira lookup da chave `"get"` e levanta
@@ -167,6 +179,12 @@ antigo.replace(" " * 12, " " * 8) == novo   # True => só indentação mudou
 - Reaplicado em: [src/dashboard/pages/dashboard_pontuacao.py](../../../src/dashboard/pages/dashboard_pontuacao.py)
   (ST-08 — extração do expander de diagnóstico de pontuação; origem do
   patch de `consolidar_dados` e dos 3 cenários num processo só)
+- Reaplicado em: [src/dashboard/tabs/produtos.py](../../../src/dashboard/tabs/produtos.py)
+  (ST-09 — lazy-load dos meses de comparação movido de `main()` para a
+  aba; origem do `PYTHONHASHSEED=0`, do hash de `proto` para
+  `plotly_chart` e da normalização do campo `id`. A aba alvo era a
+  primeira de `rotulos_visiveis` para todos os perfis, então o `default`
+  do `st.pills` já cai nela — não foi preciso forjar `nav_principal`.)
 - Doc complementar: [docs/agents/ui-components.md](../ui-components.md),
   [docs/agents/rls.md](../rls.md)
 
@@ -174,5 +192,5 @@ antigo.replace(" " * 12, " " * 8) == novo   # True => só indentação mudou
 
 **Autor (agente):** Claude Code (`ui-dash`, via `task-orchestrator`)
 **Criado em:** 2026-08-04
-**Última revisão:** 2026-08-04 por Claude Code (ST-06 — `at.session_state`
-sem `.get()`)
+**Última revisão:** 2026-08-04 por Claude Code (ST-09 —
+`PYTHONHASHSEED=0`, `proto` de `plotly_chart` e normalização do `id`)

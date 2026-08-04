@@ -1,7 +1,12 @@
 """
 Aba Produtos: KPIs, meta diaria e grafico por produto.
+
+Alem do render, este modulo e o dono do carregamento **lazy** dos dois
+meses de comparacao que so esta aba consome (mes anterior e mesmo mes do
+ano anterior). Ver ``_carregar_mes_comparativo``.
 """
 
+import logging
 from typing import Optional
 
 import pandas as pd
@@ -14,13 +19,20 @@ from src.dashboard.kpis.regioes import (
     calcular_evolucao_media_du,
     calcular_heatmap_regiao_produto,
 )
+from src.dashboard.loaders import (
+    aplicar_nomes_display_produto,
+    consolidar_dados,
+)
 from src.dashboard.ui.charts import (
     criar_grafico_produtos,
     criar_heatmap_regiao_produto,
 )
 from src.dashboard.ui.header import chart_card_close, chart_card_open
-from src.dashboard.rls import _obter_perfil_efetivo
-from src.shared.dias_uteis import carregar_feriados
+from src.dashboard.ui.sidebar import aplicar_filtros_ui
+from src.dashboard.rls import _obter_perfil_efetivo, aplicar_rls
+from src.shared.dias_uteis import calcular_dias_uteis, carregar_feriados
+
+logger = logging.getLogger(__name__)
 
 # Regiões excluídas do heatmap comparativo
 _REGIOES_EXCLUIR_HM: frozenset = frozenset({"ALEXANDRE"})
@@ -523,6 +535,89 @@ def _render_produto_regional(
                     )
 
 
+def _chave_mes_comparativo(mes: int, ano: int) -> tuple:
+    """Chave de invalidacao do cache de um mes de comparacao.
+
+    **Fronteira de seguranca entre perfis**, pelo mesmo motivo de
+    ``_chave_kpis`` (kpis/gerais.py): o frame comparativo fica em
+    ``session_state`` e nao e recarregado enquanto esta chave nao muda,
+    entao todo componente que altera o RECORTE dos dados precisa estar
+    aqui. Sao os mesmos seis, na mesma ordem: periodo (``mes``/``ano``),
+    ``perfil`` efetivo (ja considera "Visualizar como"), ``escopo`` do
+    perfil efetivo, filtro granular de lojas (ordenado, para que a mesma
+    selecao em ordem diferente nao invalide o cache a toa) e filtro
+    granular de consultor.
+
+    Alterar esta funcao muda quem ve o que — nao e ajuste cosmetico.
+    """
+    perfil = _obter_perfil_efetivo()
+    return (
+        mes,
+        ano,
+        perfil["perfil"] if perfil else None,
+        tuple(perfil.get("escopo", []) if perfil else []),
+        tuple(sorted(st.session_state.get("ui_filtro_lojas") or [])),
+        st.session_state.get("ui_filtro_consultor") or "",
+    )
+
+
+def _carregar_mes_comparativo(
+    mes: int,
+    ano: int,
+    *,
+    prefixo: str,
+    rotulo: str,
+) -> pd.DataFrame:
+    """Carrega (ou recupera do cache) um mes de comparacao da aba.
+
+    Lazy de proposito: a chamada mora dentro do render desta aba, entao
+    quem fica em outra aba nao paga a query no Supabase nem a
+    consolidacao. O resultado pos-RLS+filtros e memoizado em
+    ``session_state`` sob ``<prefixo>_cache`` / ``<prefixo>_chave``, o
+    que evita repetir a cadeia inteira a cada rerun da aba (hover,
+    clique em outro widget).
+
+    O frame recebe o **mesmo** escopo de perfil e os mesmos filtros de UI
+    do mes atual, para que a curva comparativa no grafico acumulado
+    represente a mesma granularidade (regiao / loja / consultor) que
+    esta sendo visualizada.
+
+    Falha de carga nao derruba a aba: e logada, virada em ``st.warning``
+    visivel e o comparativo cai para um frame vazio (o grafico apenas
+    perde a curva).
+
+    Args:
+        mes / ano: periodo a carregar.
+        prefixo: raiz das duas chaves de ``session_state``
+            (``_df_ant`` para o mes anterior, ``_df_ano_ant`` para o
+            mesmo mes do ano anterior).
+        rotulo: nome do comparativo nas mensagens de log e de aviso.
+    """
+    chave = _chave_mes_comparativo(mes, ano)
+    if st.session_state.get(f"{prefixo}_chave") != chave:
+        try:
+            frame, _, _ = consolidar_dados(mes, ano)
+            frame = aplicar_nomes_display_produto(frame)
+            frame = aplicar_rls(frame)
+            if (
+                st.session_state.get("ui_filtro_lojas")
+                or st.session_state.get("ui_filtro_consultor")
+            ):
+                frame = aplicar_filtros_ui(frame)
+        except Exception as exc:
+            logger.exception(
+                "Falha ao carregar %s (%s/%s)", rotulo, mes, ano,
+            )
+            st.warning(
+                f"Não foi possível carregar o {rotulo} "
+                f"({mes:02d}/{ano}): {exc}"
+            )
+            frame = pd.DataFrame()
+        st.session_state[f"{prefixo}_cache"] = frame
+        st.session_state[f"{prefixo}_chave"] = chave
+    return st.session_state[f"{prefixo}_cache"]
+
+
 def render_tab_produtos(
     df: pd.DataFrame,
     df_metas_produto: pd.DataFrame,
@@ -536,11 +631,33 @@ def render_tab_produtos(
     du_decorridos: int = 0,
     df_full: Optional[pd.DataFrame] = None,
     df_metas_produto_full: Optional[pd.DataFrame] = None,
-    df_ant: Optional[pd.DataFrame] = None,
-    du_dec_ant: int = 0,
-    df_ano_ant: Optional[pd.DataFrame] = None,
 ) -> None:
-    """Renderiza aba de Produtos."""
+    """Renderiza aba de Produtos.
+
+    Os dois meses de comparacao (anterior e YoY) sao carregados **aqui**,
+    nao em ``app.py``: so esta aba os consome, e o custo (query +
+    consolidacao) nao deve ser pago por quem esta em outra aba. Ver
+    ``_carregar_mes_comparativo``.
+    """
+    # ── Meses de comparacao (lazy, so nesta aba) ─────
+    # Antes do primeiro render: um aviso de falha de carga deve aparecer
+    # no topo da aba, como aparecia quando o bloco vivia em `main()`.
+    mes_ant = mes - 1 if mes > 1 else 12
+    ano_ant = ano if mes > 1 else ano - 1
+    df_ant = _carregar_mes_comparativo(
+        mes_ant,
+        ano_ant,
+        prefixo="_df_ant",
+        rotulo="mês anterior",
+    )
+    du_dec_ant = calcular_dias_uteis(ano_ant, mes_ant, 1)[0]
+    df_ano_ant = _carregar_mes_comparativo(
+        mes,
+        ano - 1,
+        prefixo="_df_ano_ant",
+        rotulo="comparativo YoY",
+    )
+
     sac.divider(
         label="Analise de Produtos",
         icon="tags-fill",
@@ -624,8 +741,6 @@ def render_tab_produtos(
             chart_card_close()
 
     _fer_atual = carregar_feriados(mes, ano)
-    mes_ant = mes - 1 if mes > 1 else 12
-    ano_ant = ano if mes > 1 else ano - 1
     _fer_ant = carregar_feriados(mes_ant, ano_ant)
     _fer_ano_ant = carregar_feriados(mes, ano - 1)
     fig = criar_grafico_produtos(

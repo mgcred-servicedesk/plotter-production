@@ -121,6 +121,18 @@ selecionado em `sac.tabs`. Contrato:
 - Renderiza com `sac.divider` → gráfico → divider → tabela.
 - **Não** executa queries nem aplica RLS (já foi feito em `app.py`).
 
+**Exceção — dado que só uma aba consome.** Quando um DataFrame é usado
+por uma única aba, ele é carregado *dentro* dela (lazy), não em
+`app.py`: quem está em outra aba não paga a query nem a consolidação.
+Nesse caso a aba executa a cadeia inteira — `consolidar_dados` →
+`aplicar_nomes_display_produto` → `aplicar_rls` → `aplicar_filtros_ui` —
+e memoiza o resultado em `st.session_state` sob uma chave que **precisa**
+carregar os mesmos seis componentes de `_chave_kpis` (período, perfil
+efetivo, escopo, filtro de lojas ordenado, filtro de consultor): a chave
+é a fronteira entre perfis. Único caso hoje:
+`tabs/produtos.py::_carregar_mes_comparativo` (mês anterior e mesmo mês
+do ano anterior, para as curvas do gráfico acumulado e do heatmap).
+
 ```python
 # src/dashboard/tabs/produtos.py
 def render_tab_produtos(df, df_metas_produto, categorias, ano, mes, dia_atual, df_sup, ...):

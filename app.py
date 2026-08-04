@@ -45,7 +45,6 @@ from src.dashboard.pages.detalhes_cards import (
     render_detalhe_media_loja,
 )
 from src.dashboard.loaders import (
-    aplicar_nomes_display_produto,
     carregar_consultores_ativos,
     carregar_contratos_pagos_intervalo,
     carregar_digitacao_diaria_detalhe,
@@ -56,7 +55,6 @@ from src.dashboard.loaders import (
     carregar_pontuacao_efetiva,
     carregar_reconquista,
     carregar_ultimo_periodo,
-    consolidar_dados,
 )
 from src.dashboard.permissions import pode_ver
 from src.dashboard.rls import (
@@ -417,11 +415,6 @@ def main():
         # efetivo (ver bloco de KPIs abaixo), pois dependem do nível
         # do perfil para definir a granularidade do agrupamento.
 
-        # ── Dados do mês anterior: lazy, só na aba Produtos ─
-        # Carregamento adiado para dentro de `if tab == "Produtos":`.
-        df_ant_full = pd.DataFrame()
-        du_dec_ant = 0
-
         # ── Sidebar fase 1: Visualizar Como (admin/gestor) ──
         # Renderizado ANTES do aplicar_rls para que a mudanca de
         # perfil simulado entre em vigor no mesmo rerun (sem precisar
@@ -746,87 +739,9 @@ def main():
         )
 
         if tab == "Produtos":
-            # Lazy load do mes anterior — so a aba Produtos consome.
-            # Evita query Supabase + consolidacao quando usuario fica
-            # em outras abas.
-            mes_ant = mes - 1 if mes > 1 else 12
-            ano_ant = ano if mes > 1 else ano - 1
-
-            # Cache local do df_ant_full pos-RLS+filtros: evita repetir
-            # aplicar_nomes_display_produto + aplicar_rls + aplicar_filtros_ui
-            # a cada rerun da aba (ex: hover/clique em outros widgets).
-            # Invalidado por mudanca de periodo, perfil ou filtros UI.
-            chave_ant = (
-                mes_ant,
-                ano_ant,
-                role,
-                tuple(perfil_efetivo.get("escopo", []) if perfil_efetivo else []),
-                tuple(sorted(st.session_state.get("ui_filtro_lojas") or [])),
-                st.session_state.get("ui_filtro_consultor") or "",
-            )
-            if st.session_state.get("_df_ant_chave") != chave_ant:
-                try:
-                    _df_ant, _, _ = consolidar_dados(mes_ant, ano_ant)
-                    _df_ant = aplicar_nomes_display_produto(_df_ant)
-                    # Aplica o mesmo escopo de perfil e filtros de UI do mês
-                    # atual, para que a curva do mês anterior no gráfico
-                    # acumulado represente a mesma granularidade (região /
-                    # loja / consultor) que está sendo visualizada.
-                    _df_ant = aplicar_rls(_df_ant)
-                    if (
-                        st.session_state.get("ui_filtro_lojas")
-                        or st.session_state.get("ui_filtro_consultor")
-                    ):
-                        _df_ant = aplicar_filtros_ui(_df_ant)
-                except Exception as exc:
-                    logger.exception(
-                        "Falha ao carregar mês anterior (%s/%s)",
-                        mes_ant, ano_ant,
-                    )
-                    st.warning(
-                        f"Não foi possível carregar o mês anterior "
-                        f"({mes_ant:02d}/{ano_ant}): {exc}"
-                    )
-                    _df_ant = pd.DataFrame()
-                st.session_state["_df_ant_cache"] = _df_ant
-                st.session_state["_df_ant_chave"] = chave_ant
-            df_ant_full = st.session_state["_df_ant_cache"]
-            du_dec_ant = calcular_dias_uteis(ano_ant, mes_ant, 1)[0]
-
-            # Mesmo mês / ano anterior — lazy load com cache próprio.
-            ano_yoy = ano - 1
-            chave_yoy = (
-                mes,
-                ano_yoy,
-                role,
-                tuple(perfil_efetivo.get("escopo", []) if perfil_efetivo else []),
-                tuple(sorted(st.session_state.get("ui_filtro_lojas") or [])),
-                st.session_state.get("ui_filtro_consultor") or "",
-            )
-            if st.session_state.get("_df_ano_ant_chave") != chave_yoy:
-                try:
-                    _df_yoy, _, _ = consolidar_dados(mes, ano_yoy)
-                    _df_yoy = aplicar_nomes_display_produto(_df_yoy)
-                    _df_yoy = aplicar_rls(_df_yoy)
-                    if (
-                        st.session_state.get("ui_filtro_lojas")
-                        or st.session_state.get("ui_filtro_consultor")
-                    ):
-                        _df_yoy = aplicar_filtros_ui(_df_yoy)
-                except Exception as exc:
-                    logger.exception(
-                        "Falha ao carregar mesmo mês / ano anterior (%s/%s)",
-                        mes, ano_yoy,
-                    )
-                    st.warning(
-                        f"Não foi possível carregar o comparativo YoY "
-                        f"({mes:02d}/{ano_yoy}): {exc}"
-                    )
-                    _df_yoy = pd.DataFrame()
-                st.session_state["_df_ano_ant_cache"] = _df_yoy
-                st.session_state["_df_ano_ant_chave"] = chave_yoy
-            df_ano_ant_full = st.session_state["_df_ano_ant_cache"]
-
+            # Os dois meses de comparacao (anterior e YoY) sao carregados
+            # dentro da propria aba: sao lazy — so ela os consome — e o
+            # cache deles vive junto de quem os usa (tabs/produtos.py).
             render_tab_produtos(
                 df_f,
                 df_metas_prod_f,
@@ -840,9 +755,6 @@ def main():
                 du_decorridos=du_decorridos,
                 df_full=df_full,
                 df_metas_produto_full=df_metas_produto_full,
-                df_ant=df_ant_full,
-                du_dec_ant=du_dec_ant,
-                df_ano_ant=df_ano_ant_full,
             )
         elif tab == "Regioes":
             render_tab_regioes(
