@@ -41,6 +41,7 @@ from src.dashboard.kpis.gerais import (
 from src.dashboard.pages.config import render_pagina_config
 from src.dashboard.pages.dashboard_pontuacao import (
     render_dashboard_pontuacao,
+    render_diagnostico_pontuacao,
 )
 from src.dashboard.pages.detalhes_cards import (
     render_detalhe_cancelados,
@@ -412,56 +413,12 @@ def main():
 
         _n_cancel_admin = len(df_cancelados) if _is_admin else 0
 
-        # ── Diagnostico de pontuacao ─────────────
+        # ── Diagnostico de pontuacao (admin) ─────
+        # O expander e ferramenta de suporte: so aparece se a
+        # consolidacao gravou diagnostico E o usuario e admin.
         diag = st.session_state.get("_diag_pontuacao")
         if diag and _is_admin:
-            with st.expander(
-                f"Diagnostico de pontuacao — "
-                f"{diag['com_pontos_mapeados']}/{diag['total_contratos']} "
-                f"contratos com pontos",
-                expanded=False,
-            ):
-                c1, c2, c3 = st.columns(3)
-                c1.metric("Total contratos", diag["total_contratos"])
-                c2.metric("Sem categoria", diag["sem_categoria"])
-                c3.metric("Com pontos", diag["com_pontos_mapeados"])
-
-                st.markdown("**Categorias nos contratos:**")
-                st.code(
-                    ", ".join(c for c in diag["categorias_no_contrato"] if c)
-                    or "(vazio)",
-                )
-
-                st.markdown("**Categorias na pontuacao (RPC):**")
-                st.code(
-                    ", ".join(diag["categorias_na_pontuacao"]) or "(vazio)",
-                )
-
-                st.markdown("**Mapa de pontos:**")
-                st.json(diag["mapa_pontos"])
-
-                # Tipos sem categoria (não mapeados pelo fallback)
-                tipos_sem_cat = diag.get("tipos_sem_categoria", [])
-                if tipos_sem_cat:
-                    st.warning(
-                        f"**{diag['sem_categoria']} contratos sem categoria** "
-                        f"— TIPO_PRODUTO nao mapeado:"
-                    )
-                    st.dataframe(
-                        pd.DataFrame(tipos_sem_cat),
-                        width="stretch",
-                        hide_index=True,
-                    )
-
-                # Categorias sem match
-                cats_contrato = {c for c in diag["categorias_no_contrato"] if c}
-                cats_pontuacao = set(diag["categorias_na_pontuacao"])
-                sem_match = sorted(cats_contrato - cats_pontuacao)
-                if sem_match:
-                    st.warning(
-                        f"**{len(sem_match)} categorias sem pontuacao:** "
-                        + ", ".join(sem_match)
-                    )
+            render_diagnostico_pontuacao(diag)
 
         # Calcular dias uteis do periodo (para usar nos KPIs)
         hoje = datetime.now()

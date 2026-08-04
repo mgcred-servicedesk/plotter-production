@@ -58,6 +58,18 @@ diffar a saída. Diff vazio é a evidência.
 - Sujar o `session_state` de propósito quando houver branch de limpeza
   (ex.: `_vc_sel_ant` diferente da seleção força `_limpar_filtros_ui`),
   e assertar que as chaves sumiram.
+- **Quando a chave é escrita *durante* o run, injetá-la antes do
+  `at.run()` não adianta** — o valor real sobrescreve. É o caso de
+  `_diag_pontuacao`, side-effect de `consolidar_dados`. Patchar a função
+  no módulo (`src.dashboard.loaders.consolidar_dados = wrapper`) antes do
+  run: o call site é lookup de global no mesmo módulo, então o wrapper
+  pega. Para importar `src.*` da árvore certa, dar
+  `sys.path.insert(0, dirname(app.py alvo))` **antes** do primeiro
+  `import src.…` do script.
+- Vários cenários podem dividir **um** processo (um `AppTest` novo por
+  cenário, `session_state` isolado) desde que seja a mesma versão do
+  app — e o `cache_data` fica quente do 2º em diante, o que corta a
+  maior parte do custo de I/O.
 - Rodar a partir da raiz do projeto com as credenciais exportadas
   (`set -a; . .env; set +a`): o `load_dotenv()` da worktree procura a
   partir do arquivo dela e **não** acha o `.env` da raiz.
@@ -152,6 +164,9 @@ antigo.replace(" " * 12, " " * 8) == novo   # True => só indentação mudou
 - Reaplicado em: [src/dashboard/pages/config.py](../../../src/dashboard/pages/config.py)
   (ST-06 — extração da página de Config de `main()`; diff vazio nos dois
   cenários de perfil)
+- Reaplicado em: [src/dashboard/pages/dashboard_pontuacao.py](../../../src/dashboard/pages/dashboard_pontuacao.py)
+  (ST-08 — extração do expander de diagnóstico de pontuação; origem do
+  patch de `consolidar_dados` e dos 3 cenários num processo só)
 - Doc complementar: [docs/agents/ui-components.md](../ui-components.md),
   [docs/agents/rls.md](../rls.md)
 
