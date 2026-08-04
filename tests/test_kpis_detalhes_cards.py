@@ -74,6 +74,69 @@ class TestAplicarContaValor:
         out = aplicar_conta_valor(df)
         assert out["VALOR"].tolist() == [100.0]
 
+    def test_tipo_oper_emissao_zera_valor_mesmo_com_conta_valor_true(self):
+        # Venda Pre-Adesao de produto CONSIG herda categoria conta_valor=True;
+        # a clausula TIPO OPER. zera o valor mesmo assim (regra nova da ST-03).
+        df = pd.DataFrame(
+            {
+                "VALOR": [1000.0, 2000.0, 300.0],
+                "conta_valor": [True, True, True],
+                "TIPO OPER.": [
+                    "CARTÃO BENEFICIO", "Venda Pré-Adesão", "CNC NORMAL",
+                ],
+            }
+        )
+        out = aplicar_conta_valor(df)
+        assert out["VALOR"].tolist() == [0.0, 0.0, 300.0]
+        assert len(out) == 3  # contagem preservada
+        # nao muta o original
+        assert df["VALOR"].tolist() == [1000.0, 2000.0, 300.0]
+
+    def test_tipo_oper_fora_do_conjunto_mantem_valor(self):
+        df = pd.DataFrame(
+            {
+                "VALOR": [500.0],
+                "conta_valor": [True],
+                "TIPO OPER.": ["CNC NORMAL"],
+            }
+        )
+        out = aplicar_conta_valor(df)
+        assert out["VALOR"].tolist() == [500.0]
+
+    def test_conta_valor_e_tipo_oper_sao_clausulas_cumulativas(self):
+        df = pd.DataFrame(
+            {
+                "VALOR": [100.0, 200.0, 300.0],
+                "conta_valor": [False, True, True],
+                "TIPO OPER.": [
+                    "CNC NORMAL", "CARTÃO BENEFICIO", "CNC NORMAL",
+                ],
+            }
+        )
+        out = aplicar_conta_valor(df)
+        # linha 0: zerada pela clausula conta_valor
+        # linha 1: zerada pela clausula TIPO OPER. (emissao)
+        # linha 2: nenhuma clausula bate -> inalterada
+        assert out["VALOR"].tolist() == [0.0, 0.0, 300.0]
+
+    def test_sem_coluna_tipo_oper_inalterado(self):
+        df = pd.DataFrame({"VALOR": [100.0], "conta_valor": [True]})
+        out = aplicar_conta_valor(df)
+        assert out["VALOR"].tolist() == [100.0]
+
+    def test_sem_coluna_valor_retorna_copia_inalterada(self):
+        df = pd.DataFrame(
+            {"conta_valor": [False], "TIPO OPER.": ["CARTÃO BENEFICIO"]}
+        )
+        out = aplicar_conta_valor(df)
+        assert out is not df  # copia defensiva, mesmo sem VALOR
+        assert list(out.columns) == list(df.columns)
+        assert out["conta_valor"].tolist() == [False]
+
+    def test_df_vazio_nao_quebra(self):
+        out = aplicar_conta_valor(pd.DataFrame())
+        assert out.empty
+
 
 # ──────────────────────────────────────────────────────────────────
 # Quadro 1 — Analise

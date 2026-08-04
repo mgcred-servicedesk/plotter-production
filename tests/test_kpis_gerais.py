@@ -6,10 +6,13 @@ Inclui os helpers ``excluir_supervisores`` / ``contar_consultores``,
 reusados pelos demais módulos KPI. ``calcular_kpis_gerais`` depende de
 ``calcular_dias_uteis`` → usa a fixture ``sem_feriados``.
 """
+from datetime import datetime, timedelta
+
 import pandas as pd
 import pytest
 
 from src.dashboard.kpis.gerais import (
+    JANELA_PIPELINE_DIAS,
     calcular_assertividade_consultores,
     calcular_kpis_analise,
     calcular_kpis_cancelados,
@@ -21,6 +24,7 @@ from src.dashboard.kpis.gerais import (
     calcular_oportunidades_perdidas,
     contar_consultores,
     excluir_supervisores,
+    filtrar_janela_recente,
     separar_cancelados_liquidos,
 )
 from src.shared.dias_uteis import calcular_dias_uteis
@@ -50,6 +54,80 @@ class TestHelpers:
 
     def test_contar_consultores_sem_coluna(self):
         assert contar_consultores(pd.DataFrame({"VALOR": [1]}), None) == 0
+
+
+@pytest.mark.unit
+class TestFiltrarJanelaRecente:
+    """``DATA_CADASTRO`` chega ja como datetime do loader (``pd.to_datetime``
+    com ``errors='coerce'``) — a funcao NAO reconverte, entao os testes usam
+    objetos ``datetime`` reais na coluna (nao strings)."""
+
+    _REF = datetime(2026, 6, 30, 12, 0, 0)
+
+    def test_mantem_linhas_dentro_da_janela(self):
+        df = pd.DataFrame({
+            "DATA_CADASTRO": [self._REF, self._REF - timedelta(days=15)],
+            "VALOR": [100.0, 200.0],
+        })
+        out = filtrar_janela_recente(df, referencia=self._REF)
+        assert len(out) == 2
+
+    def test_borda_referencia_menos_30_dias_e_inclusiva(self):
+        borda = self._REF - timedelta(days=JANELA_PIPELINE_DIAS)
+        df = pd.DataFrame({
+            "DATA_CADASTRO": [borda],
+            "VALOR": [100.0],
+        })
+        out = filtrar_janela_recente(df, referencia=self._REF)
+        # corte = referencia - dias, comparacao >= : a borda exata fica
+        assert len(out) == 1
+
+    def test_exclui_fora_da_janela(self):
+        fora = self._REF - timedelta(days=JANELA_PIPELINE_DIAS + 1)
+        df = pd.DataFrame({
+            "DATA_CADASTRO": [fora],
+            "VALOR": [100.0],
+        })
+        out = filtrar_janela_recente(df, referencia=self._REF)
+        assert out.empty
+
+    def test_data_nula_e_excluida(self):
+        df = pd.DataFrame({
+            "DATA_CADASTRO": [pd.NaT, self._REF],
+            "VALOR": [100.0, 200.0],
+        })
+        out = filtrar_janela_recente(df, referencia=self._REF)
+        # NaT >= corte e sempre False -> linha nula nunca entra na janela
+        assert len(out) == 1
+        assert out["VALOR"].tolist() == [200.0]
+
+    def test_parametro_dias_customizado_sobrepoe_default(self):
+        df = pd.DataFrame({
+            "DATA_CADASTRO": [self._REF - timedelta(days=10)],
+            "VALOR": [100.0],
+        })
+        out = filtrar_janela_recente(df, dias=7, referencia=self._REF)
+        assert out.empty
+
+    def test_sem_referencia_usa_now(self):
+        df = pd.DataFrame({
+            "DATA_CADASTRO": [datetime.now()],
+            "VALOR": [100.0],
+        })
+        out = filtrar_janela_recente(df)  # referencia default -> now()
+        assert len(out) == 1
+
+    def test_df_vazio_devolve_copia(self):
+        df = pd.DataFrame(columns=["DATA_CADASTRO", "VALOR"])
+        out = filtrar_janela_recente(df, referencia=self._REF)
+        assert out.empty
+        assert out is not df
+
+    def test_sem_coluna_data_cadastro_devolve_copia(self):
+        df = pd.DataFrame({"VALOR": [100.0]})
+        out = filtrar_janela_recente(df, referencia=self._REF)
+        assert out["VALOR"].tolist() == [100.0]
+        assert out is not df
 
 
 @pytest.fixture
