@@ -590,15 +590,18 @@ def main():
     if not tela_login():
         return
 
-    # Oculta barra nativa do Streamlit (deploy, animação, menu ⋮)
-    # e remove o espaço reservado para ela — apenas para não-admins.
+    # Oculta widgets nativos do Streamlit (deploy, animação, menu ⋮)
+    # apenas para não-admins. Esconde os widgets individualmente — nunca
+    # o [data-testid="stHeader"] inteiro, pois o botão de reabrir a
+    # sidebar (stExpandSidebarButton) é renderizado dentro dele; escondê-lo
+    # junto deixa a sidebar sem forma de reabrir depois de colapsada.
     _perfil_logado = (usuario_logado() or {}).get("perfil")
     if _perfil_logado != "admin":
         st.markdown(
             """<style>
-            [data-testid="stHeader"] { display: none !important; }
-            [data-testid="stAppViewContainer"] { padding-top: 0 !important; }
-            .main .block-container { padding-top: 1rem !important; }
+            [data-testid="stMainMenu"],
+            [data-testid="stAppDeployButton"],
+            [data-testid="stStatusWidget"] { display: none !important; }
             </style>""",
             unsafe_allow_html=True,
         )
