@@ -31,7 +31,6 @@ from src.dashboard.auth import (
     usuario_logado,
 )
 from src.dashboard.components.tables import exibir_tabela
-from src.dashboard.kpis.detalhes_cards import aplicar_conta_valor
 from src.dashboard.kpis.gerais import (
     calcular_kpis_gerais,
     calcular_kpis_analise,
@@ -40,7 +39,6 @@ from src.dashboard.kpis.gerais import (
     calcular_medias_du_por_nivel,
     calcular_medias_organizacao,
     calcular_metas_produto_diarias,
-    filtrar_janela_recente,
 )
 from src.dashboard.pages.dashboard_pontuacao import (
     render_dashboard_pontuacao,
@@ -53,19 +51,16 @@ from src.dashboard.pages.detalhes_cards import (
 )
 from src.dashboard.loaders import (
     aplicar_nomes_display_produto,
-    carregar_categorias,
     carregar_consultores_ativos,
     carregar_consultores_cadastro,
-    carregar_contratos_cancelados,
-    carregar_contratos_em_analise,
     carregar_contratos_pagos_intervalo,
     carregar_digitacao_diaria_detalhe,
     carregar_lojas_ativas,
     carregar_lojas_regioes,
     carregar_universo_lojas,
-    carregar_metas_produto,
     carregar_metas_produto_consultor,
     carregar_pagamentos_online,
+    carregar_periodo_dashboard,
     carregar_pontuacao_efetiva,
     carregar_reconquista,
     carregar_ultimo_periodo,
@@ -858,31 +853,18 @@ def main():
             if _status_obj is not None:
                 _status_obj.update(label=f":shimmer[{label}]")
 
-        _upd_status("Carregando contratos pagos...")
-        df, df_metas, df_sup = consolidar_dados(mes, ano)
-
-        _upd_status("Carregando categorias e metas...")
-        categorias = carregar_categorias()
-        df_metas_produto = carregar_metas_produto(mes, ano)
-
-        _upd_status("Carregando pipeline em analise...")
-        df_analise = carregar_contratos_em_analise(mes, ano)
-
-        _upd_status("Carregando cancelados...")
-        df_cancelados = carregar_contratos_cancelados(mes, ano)
-
-        # Regras do pipeline, identicas para analise e cancelados:
-        # 1. zerar o VALOR do que conta so como quantidade (emissoes
-        #    por conta_valor=False ou por TIPO OPER.);
-        # 2. manter apenas a janela recente de DATA_CADASTRO.
-        # Um unico instante de referencia para os dois DataFrames.
-        _agora_janela = datetime.now()
-        df_analise = filtrar_janela_recente(
-            aplicar_conta_valor(df_analise), referencia=_agora_janela
-        )
-        df_cancelados = filtrar_janela_recente(
-            aplicar_conta_valor(df_cancelados), referencia=_agora_janela
-        )
+        # Carga do periodo: o loader reporta cada etapa via callback e
+        # devolve os frames ja normalizados (regras do pipeline + nomes
+        # de display). A UI de progresso (skeleton/status) fica aqui.
+        (
+            df,
+            df_metas,
+            df_sup,
+            categorias,
+            df_metas_produto,
+            df_analise,
+            df_cancelados,
+        ) = carregar_periodo_dashboard(mes, ano, on_progress=_upd_status)
 
         if _status_obj is not None:
             _status_obj.update(label="Dados carregados", state="complete")
@@ -892,15 +874,6 @@ def main():
             st.session_state["_periodo_carregado"] = _chave_carga
 
         _n_cancel_admin = len(df_cancelados) if _is_admin else 0
-
-        # ── Nomes de display: renomear grupo_dashboard ─
-        # Substitui chaves internas (ex: 'PACK') pelo label
-        # amigavel antes de qualquer calculo ou renderizacao.
-        # Aplica em todos os DFs que expoe grupo_dashboard.
-        df = aplicar_nomes_display_produto(df)
-        categorias = aplicar_nomes_display_produto(categorias)
-        df_analise = aplicar_nomes_display_produto(df_analise)
-        df_cancelados = aplicar_nomes_display_produto(df_cancelados)
 
         # ── Diagnostico de pontuacao ─────────────
         diag = st.session_state.get("_diag_pontuacao")

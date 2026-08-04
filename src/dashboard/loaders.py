@@ -7,8 +7,10 @@ o mes corrente (TTL curto) e outra para o historico
 (TTL longo) — via ``_eh_mes_atual``.
 
 ``consolidar_dados`` aplica as regras de negocio (pontos,
-emissoes, seguros, Super Conta) sobre os contratos pagos
-e e o entrypoint usado pelo ``main`` do dashboard.
+emissoes, seguros, Super Conta) sobre os contratos pagos.
+``carregar_periodo_dashboard`` compoe esse resultado com os
+demais frames do periodo e e o entrypoint usado pelo ``main``
+do dashboard.
 
 O cache lida com side-effects (ex: diagnostico em
 ``session_state``) na funcao wrapper externa, nunca
@@ -19,13 +21,15 @@ side-effects em funcoes cacheadas.
 import logging
 import uuid
 from datetime import datetime
-from typing import Callable, Dict, List, Optional, Tuple
+from typing import Callable, Dict, List, NamedTuple, Optional, Tuple
 
 import pandas as pd
 import streamlit as st
 
 from src.config.settings import NOMES_DISPLAY_PRODUTO
 from src.config.supabase_client import get_supabase_client
+from src.dashboard.kpis.detalhes_cards import aplicar_conta_valor
+from src.dashboard.kpis.gerais import filtrar_janela_recente
 from src.dashboard.rls import _obter_perfil_efetivo
 
 logger = logging.getLogger(__name__)
@@ -1697,6 +1701,106 @@ def _executar_consolidacao(
     )
 
     return df, df_metas, df_supervisores, diag
+
+
+# ══════════════════════════════════════════════════════
+# Carga do periodo do dashboard
+# ══════════════════════════════════════════════════════
+
+
+class DadosPeriodo(NamedTuple):
+    """Conjunto de frames que o dashboard carrega para um (mes, ano).
+
+    NamedTuple (e nao dataclass) para continuar desempacotavel como a
+    tupla que substituiu, sem obrigar o chamador a mudar de estilo:
+    ``df, df_metas, ... = carregar_periodo_dashboard(...)`` segue valido,
+    e ``dados.df_cancelados`` fica disponivel quando o nome ajuda mais que
+    a posicao. Sao sete frames e cinco deles tem o mesmo tipo — posicao
+    sozinha e frageil demais.
+    """
+
+    df: pd.DataFrame
+    df_metas: pd.DataFrame
+    df_sup: pd.DataFrame
+    categorias: pd.DataFrame
+    df_metas_produto: pd.DataFrame
+    df_analise: pd.DataFrame
+    df_cancelados: pd.DataFrame
+
+
+def carregar_periodo_dashboard(
+    mes: int,
+    ano: int,
+    on_progress: Optional[Callable[[str], None]] = None,
+) -> DadosPeriodo:
+    """Carrega e normaliza todos os frames de um periodo do dashboard.
+
+    Orquestra os loaders do periodo (pagos + metas + supervisores,
+    categorias, metas por produto, pipeline em analise e cancelados) e
+    deixa os frames prontos para consumo: regras do pipeline aplicadas e
+    vocabulario de produto ja normalizado.
+
+    ``on_progress``, se informado, e chamado com um rotulo curto antes de
+    cada etapa de carga. A funcao nao conhece Streamlit: quem exibe o
+    progresso (``st.status``, barra, log) decide o formato do rotulo e o
+    ciclo de vida do widget. Sem callback, a carga e silenciosa.
+
+    Nao aplica RLS — o recorte por perfil e responsabilidade do chamador
+    (``aplicar_rls`` / ``aplicar_rls_metas``), que precisa dos frames
+    completos para os snapshots pre-RLS.
+
+    Cache: nenhum aqui. Cada loader chamado ja tem a propria politica de
+    TTL (``_atual`` vs ``_historico``); acrescentar cache nesta camada so
+    duplicaria a chave (mes, ano) com invalidacao mais grossa.
+    """
+
+    def _progresso(label: str) -> None:
+        if on_progress is not None:
+            on_progress(label)
+
+    _progresso("Carregando contratos pagos...")
+    df, df_metas, df_sup = consolidar_dados(mes, ano)
+
+    _progresso("Carregando categorias e metas...")
+    categorias = carregar_categorias()
+    df_metas_produto = carregar_metas_produto(mes, ano)
+
+    _progresso("Carregando pipeline em analise...")
+    df_analise = carregar_contratos_em_analise(mes, ano)
+
+    _progresso("Carregando cancelados...")
+    df_cancelados = carregar_contratos_cancelados(mes, ano)
+
+    # Regras do pipeline, identicas para analise e cancelados:
+    # 1. zerar o VALOR do que conta so como quantidade (emissoes
+    #    por conta_valor=False ou por TIPO OPER.);
+    # 2. manter apenas a janela recente de DATA_CADASTRO.
+    # Um unico instante de referencia para os dois DataFrames.
+    agora_janela = datetime.now()
+    df_analise = filtrar_janela_recente(
+        aplicar_conta_valor(df_analise), referencia=agora_janela
+    )
+    df_cancelados = filtrar_janela_recente(
+        aplicar_conta_valor(df_cancelados), referencia=agora_janela
+    )
+
+    # Nomes de display: substitui as chaves internas de grupo_dashboard
+    # (ex: 'PACK') pelo rotulo amigavel, antes de qualquer calculo ou
+    # renderizacao. Aplica em todos os frames que expoem a coluna.
+    df = aplicar_nomes_display_produto(df)
+    categorias = aplicar_nomes_display_produto(categorias)
+    df_analise = aplicar_nomes_display_produto(df_analise)
+    df_cancelados = aplicar_nomes_display_produto(df_cancelados)
+
+    return DadosPeriodo(
+        df=df,
+        df_metas=df_metas,
+        df_sup=df_sup,
+        categorias=categorias,
+        df_metas_produto=df_metas_produto,
+        df_analise=df_analise,
+        df_cancelados=df_cancelados,
+    )
 
 
 # ══════════════════════════════════════════════════════

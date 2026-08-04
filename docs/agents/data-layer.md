@@ -36,6 +36,7 @@ público). Principais:
 
 | Função | Retorno | Cache `_atual` / `_historico` |
 |---|---|---|
+| `carregar_periodo_dashboard(mes, ano, on_progress=None)` | `DadosPeriodo` (7 frames do período, já normalizados) | — (compõe os loaders abaixo; sem cache próprio) |
 | `consolidar_dados(mes, ano)` | `(df, df_metas, df_sup)` pagos | 30 min / 24 h |
 | `carregar_contratos_em_analise(mes, ano)` | DataFrame pipeline | 30 min / 24 h |
 | `carregar_contratos_cancelados(mes, ano)` | DataFrame cancelados | 30 min / 24 h |
@@ -46,6 +47,15 @@ público). Principais:
 | `carregar_lojas_regioes()` | `(lojas, regioes)` | 24 h |
 | `carregar_consultores_cadastro()` | lista de nomes | 24 h |
 | `carregar_ultimo_periodo()` | `{mes, ano}` mais recente | 24 h |
+
+`carregar_periodo_dashboard` é o entrypoint que o `main()` usa: compõe a
+carga do período inteiro, aplica as regras do pipeline
+(`aplicar_conta_valor` + `filtrar_janela_recente`, mesmo instante de
+referência para análise e cancelados) e normaliza os nomes de display.
+**Não aplica RLS** — devolve os frames completos, porque o `main()`
+precisa dos snapshots pré-RLS. O progresso é reportado por callback
+(`on_progress: Callable[[str], None]`): a camada de dados não conhece
+`st.status`/`st.empty`; quem exibe decide o formato do rótulo.
 
 ### Exemplo — view (paginada por keyset)
 
