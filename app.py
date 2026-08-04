@@ -16,6 +16,7 @@ import html
 import logging
 import sys
 import warnings
+from datetime import datetime
 from pathlib import Path
 
 import pandas as pd
@@ -31,6 +32,7 @@ from src.dashboard.auth import (
     usuario_logado,
 )
 from src.dashboard.components.tables import exibir_tabela
+from src.dashboard.kpis.detalhes_cards import aplicar_conta_valor
 from src.dashboard.kpis.gerais import (
     calcular_kpis_gerais,
     calcular_kpis_analise,
@@ -39,6 +41,7 @@ from src.dashboard.kpis.gerais import (
     calcular_medias_du_por_nivel,
     calcular_medias_organizacao,
     calcular_metas_produto_diarias,
+    filtrar_janela_recente,
 )
 from src.dashboard.pages.dashboard_pontuacao import (
     render_dashboard_pontuacao,
@@ -865,51 +868,21 @@ def main():
         _upd_status("Carregando pipeline em analise...")
         df_analise = carregar_contratos_em_analise(mes, ano)
 
-        # Zerar VALOR de produtos que nao contam
-        # valor (emissoes de cartao, seguros)
-        if not df_analise.empty and "conta_valor" in df_analise.columns:
-            df_analise.loc[
-                df_analise["conta_valor"] == False,  # noqa
-                "VALOR",
-            ] = 0
-        # Zerar emissoes por TIPO OPER. (Venda Pre-Adesao
-        # com produto CONSIG nao tem conta_valor=false)
-        if not df_analise.empty and "TIPO OPER." in df_analise.columns:
-            df_analise.loc[
-                df_analise["TIPO OPER."].isin(
-                    ["CARTÃO BENEFICIO", "Venda Pré-Adesão"]
-                ),
-                "VALOR",
-            ] = 0
-
         _upd_status("Carregando cancelados...")
         df_cancelados = carregar_contratos_cancelados(mes, ano)
-        if not df_cancelados.empty and "conta_valor" in df_cancelados.columns:
-            df_cancelados.loc[
-                df_cancelados["conta_valor"] == False,  # noqa
-                "VALOR",
-            ] = 0
-        if not df_cancelados.empty and "TIPO OPER." in df_cancelados.columns:
-            df_cancelados.loc[
-                df_cancelados["TIPO OPER."].isin(
-                    ["CARTÃO BENEFICIO", "Venda Pré-Adesão"]
-                ),
-                "VALOR",
-            ] = 0
-        # Aplicar filtro de 30 dias para analise e cancelados
-        from datetime import datetime, timedelta
 
-        data_corte = datetime.now() - timedelta(days=30)
-
-        if not df_analise.empty and "DATA_CADASTRO" in df_analise.columns:
-            df_analise = df_analise[
-                df_analise["DATA_CADASTRO"] >= data_corte
-            ].copy()
-
-        if not df_cancelados.empty and "DATA_CADASTRO" in df_cancelados.columns:
-            df_cancelados = df_cancelados[
-                df_cancelados["DATA_CADASTRO"] >= data_corte
-            ].copy()
+        # Regras do pipeline, identicas para analise e cancelados:
+        # 1. zerar o VALOR do que conta so como quantidade (emissoes
+        #    por conta_valor=False ou por TIPO OPER.);
+        # 2. manter apenas a janela recente de DATA_CADASTRO.
+        # Um unico instante de referencia para os dois DataFrames.
+        _agora_janela = datetime.now()
+        df_analise = filtrar_janela_recente(
+            aplicar_conta_valor(df_analise), referencia=_agora_janela
+        )
+        df_cancelados = filtrar_janela_recente(
+            aplicar_conta_valor(df_cancelados), referencia=_agora_janela
+        )
 
         if _status_obj is not None:
             _status_obj.update(label="Dados carregados", state="complete")
@@ -992,8 +965,6 @@ def main():
                     )
 
         # Calcular dias uteis do periodo (para usar nos KPIs)
-        from datetime import datetime
-
         hoje = datetime.now()
         dia_ref = hoje.day if (ano == hoje.year and mes == hoje.month) else 1
         _, du_decorridos, _ = calcular_dias_uteis(ano, mes, dia_ref)

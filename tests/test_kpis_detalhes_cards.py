@@ -13,7 +13,7 @@ import pytest
 from src.config.settings import PACK_LABEL_AGREGADO
 from src.dashboard.kpis.detalhes_cards import (
     COL_PRODUTO_DETALHADO,
-    _aplicar_conta_valor,
+    aplicar_conta_valor,
     _projetar,
     adicionar_produto_detalhado,
     detalhe_analise_pivot,
@@ -58,7 +58,7 @@ class TestAplicarContaValor:
                 "conta_valor": [True, False, True],
             }
         )
-        out = _aplicar_conta_valor(df)
+        out = aplicar_conta_valor(df)
         assert len(out) == 3  # contagem preservada
         assert out["VALOR"].tolist() == [100.0, 0.0, 300.0]
         # nao muta o original
@@ -66,12 +66,12 @@ class TestAplicarContaValor:
 
     def test_sem_coluna_conta_valor_inalterado(self):
         df = pd.DataFrame({"VALOR": [100.0, 200.0]})
-        out = _aplicar_conta_valor(df)
+        out = aplicar_conta_valor(df)
         assert out["VALOR"].tolist() == [100.0, 200.0]
 
     def test_conta_valor_nulo_trata_como_true(self):
         df = pd.DataFrame({"VALOR": [100.0], "conta_valor": [None]})
-        out = _aplicar_conta_valor(df)
+        out = aplicar_conta_valor(df)
         assert out["VALOR"].tolist() == [100.0]
 
 

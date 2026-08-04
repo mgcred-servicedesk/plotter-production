@@ -8,6 +8,7 @@ reusados por ``produtos.py``, ``regioes.py``,
 ``rankings.py``, ``gestao.py`` e ``evolucao.py``.
 """
 
+from datetime import datetime, timedelta
 from typing import Dict, List, Optional
 
 import pandas as pd
@@ -70,6 +71,37 @@ def excluir_lojas_backoffice(df: pd.DataFrame) -> pd.DataFrame:
         df["LOJA"].fillna("").astype(str).str.strip().str.upper()
     )
     return df[~lojas_norm.isin(LOJAS_BACKOFFICE)].copy()
+
+
+# Janela do pipeline: "em analise" e "cancelados" so consideram o que
+# foi cadastrado nos ultimos N dias CORRIDOS (nao uteis). Os dois
+# conjuntos vem do sistema de origem sem expurgo, entao registros
+# antigos e parados distorceriam o pipeline e o churn do periodo.
+JANELA_PIPELINE_DIAS: int = 30
+
+
+def filtrar_janela_recente(
+    df: pd.DataFrame,
+    dias: int = JANELA_PIPELINE_DIAS,
+    referencia: Optional[datetime] = None,
+) -> pd.DataFrame:
+    """Mantem so as linhas com ``DATA_CADASTRO`` nos ultimos ``dias``.
+
+    Corte = ``referencia - dias`` (``referencia`` default ``now()``),
+    comparacao inclusiva (``>=``). ``referencia`` explicita serve para
+    aplicar o MESMO instante a varios DataFrames e para tornar a funcao
+    deterministica em teste.
+
+    ``DATA_CADASTRO`` e datetime garantido pelo loader (``pd.to_datetime``
+    com ``errors='coerce'``); linhas com data nula (``NaT``) nunca
+    satisfazem a comparacao e portanto saem. df vazio ou sem a coluna
+    devolve copia inalterada.
+    """
+    if df.empty or "DATA_CADASTRO" not in df.columns:
+        return df.copy()
+    agora = referencia if referencia is not None else datetime.now()
+    corte = agora - timedelta(days=dias)
+    return df[df["DATA_CADASTRO"] >= corte].copy()
 
 
 # Aceleradores: recortes que contam por QUANTIDADE de contratos, nao

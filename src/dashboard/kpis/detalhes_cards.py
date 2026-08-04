@@ -18,9 +18,10 @@ Convencoes de coluna (verdade = loader / RPCs):
 
 Regras transversais:
 
-- ``conta_valor=False``: zera o VALOR dessas linhas nos breakdowns de
-  analise/cancelados/medias SEM alterar a contagem de registros. A
-  digitacao diaria usa o valor bruto do RPC (nao aplica essa regra).
+- ``conta_valor=False`` (ou ``TIPO OPER.`` de emissao): zera o VALOR
+  dessas linhas nos breakdowns de analise/cancelados/medias SEM alterar
+  a contagem de registros — ver ``aplicar_conta_valor``. A digitacao
+  diaria usa o valor bruto do RPC (nao aplica essa regra).
 - Projecao linear por linha: ``valor / du_decorridos * du_totais``,
   com ``du_decorridos <= 0 -> 0.0``.
 - Medias (quadro 4): ``media = total_do_grupo / qtd_distinta_no_grupo``
@@ -63,17 +64,44 @@ def _projetar(valor: float, du_decorridos: int, du_totais: int) -> float:
     return float(valor) / du_decorridos * du_totais
 
 
-def _aplicar_conta_valor(df: pd.DataFrame) -> pd.DataFrame:
-    """Zera ``VALOR`` das linhas ``conta_valor=False`` (copia defensiva).
+# ──────────────────────────────────────────────────────────────────
+# Regra de negocio compartilhada (usada tambem na carga, em app.py)
+# ──────────────────────────────────────────────────────────────────
+
+
+# Emissoes identificadas pelo ``TIPO OPER.`` do contrato. Contam apenas
+# como quantidade, mas nem sempre chegam com ``conta_valor=False``: uma
+# "Venda Pré-Adesão" de produto CONSIG herda a categoria ``CONSIG_*``,
+# que tem ``conta_valor=True``. Sem esta clausula o valor da emissao
+# inflaria os totais. Ver "Emissão de cartão" em
+# ``docs/agents/business-rules.md``.
+TIPOS_OPER_EMISSAO: frozenset = frozenset(
+    {"CARTÃO BENEFICIO", "Venda Pré-Adesão"}
+)
+
+
+def aplicar_conta_valor(df: pd.DataFrame) -> pd.DataFrame:
+    """Zera o ``VALOR`` do que conta so como quantidade (copia defensiva).
+
+    Duas clausulas cumulativas da mesma regra de negocio ("produtos que
+    nao contam para o total monetario"):
+
+    1. ``conta_valor=False`` na categoria — nulo/ausente vale ``True``;
+    2. ``TIPO OPER.`` em :data:`TIPOS_OPER_EMISSAO` — emissoes que a
+       categoria nao marca (Venda Pré-Adesão de produto CONSIG).
 
     Mantem todas as linhas (a contagem nao muda) — apenas neutraliza o
-    VALOR das categorias que nao contam para o total monetario. Se a
-    coluna ``conta_valor`` nao existir, devolve copia inalterada.
+    VALOR. Cada clausula e ignorada se a coluna correspondente nao
+    existir; sem ``VALOR`` devolve copia inalterada.
     """
     out = df.copy()
-    if "conta_valor" in out.columns and "VALOR" in out.columns:
+    if "VALOR" not in out.columns:
+        return out
+    if "conta_valor" in out.columns:
         nao_conta = ~out["conta_valor"].fillna(True).astype(bool)
         out.loc[nao_conta, "VALOR"] = 0.0
+    if "TIPO OPER." in out.columns:
+        out.loc[out["TIPO OPER."].isin(TIPOS_OPER_EMISSAO), "VALOR"] = 0.0
     return out
 
 
@@ -101,7 +129,7 @@ def _breakdown_por_dimensao(
     if df.empty or dimensao not in df.columns:
         return pd.DataFrame(columns=cols)
 
-    base = _aplicar_conta_valor(df)
+    base = aplicar_conta_valor(df)
     linhas = []
     for chave in sorted(base[dimensao].fillna("OUTROS").unique()):
         grupo = base[base[dimensao].fillna("OUTROS") == chave]
@@ -146,7 +174,7 @@ def _medias_por_dimensao(
     if df.empty or dimensao not in df.columns or coluna_base not in df.columns:
         return pd.DataFrame(columns=cols)
 
-    trabalho = _aplicar_conta_valor(df)
+    trabalho = aplicar_conta_valor(df)
     if base == "consultor":
         trabalho = excluir_supervisores(trabalho, df_supervisores)
     if trabalho.empty:
@@ -287,7 +315,7 @@ def detalhe_analise_pivot(
     ):
         return pd.DataFrame(columns=[linha])
 
-    base = _aplicar_conta_valor(df_analise)
+    base = aplicar_conta_valor(df_analise)
     base[linha] = base[linha].fillna("OUTROS")
     base[coluna] = base[coluna].fillna("OUTROS")
 
@@ -517,7 +545,7 @@ def detalhe_reaproveitamento(df_cancelados: pd.DataFrame) -> pd.DataFrame:
     if df_cancelados.empty:
         return pd.DataFrame(columns=cols)
 
-    base = _aplicar_conta_valor(df_cancelados)
+    base = aplicar_conta_valor(df_cancelados)
 
     linhas = []
 
