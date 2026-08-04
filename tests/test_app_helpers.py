@@ -1,14 +1,20 @@
 """
-Testes dos helpers puros de ``app.py`` (``_ritmo_organizacao``,
-``_serie_diaria_pago``).
+Testes dos helpers puros que sustentam o bloco de KPIs do dashboard
+(``_ritmo_organizacao``, ``_serie_diaria_pago``) e da chave de cache
+(``_chave_kpis``).
 
-``app.py`` importa Streamlit em modo bare; ambos os helpers são puros
-(não chamam ``st.*``).
+Os três nasceram em ``app.py`` e migraram para ``kpis/gerais.py`` junto
+com ``obter_kpis_periodo`` (ST-07): são cálculo puro, não chamam ``st.*``
+— ``_chave_kpis`` recebe o ``session_state`` injetado.
 """
 import pandas as pd
 import pytest
 
-from app import _ritmo_organizacao, _serie_diaria_pago
+from src.dashboard.kpis.gerais import (
+    _chave_kpis,
+    _ritmo_organizacao,
+    _serie_diaria_pago,
+)
 
 
 @pytest.mark.unit
@@ -70,3 +76,67 @@ class TestSerieDiariaPago:
     def test_sem_data_ou_vazio(self):
         assert _serie_diaria_pago(pd.DataFrame({"VALOR": [1.0]})) is None
         assert _serie_diaria_pago(pd.DataFrame()) is None
+
+
+@pytest.mark.unit
+class TestChaveKpis:
+    """A chave de cache e a fronteira entre perfis.
+
+    Se dois recortes diferentes colidirem na mesma chave, o segundo
+    perfil recebe o KPI calculado para o primeiro. Estes testes existem
+    para que essa colisao apareca como falha, e nao em producao.
+    """
+
+    def _ss(self, lojas=None, consultor=None):
+        return {
+            "ui_filtro_lojas": lojas,
+            "ui_filtro_consultor": consultor,
+        }
+
+    def test_composicao_e_ordem(self):
+        chave = _chave_kpis(
+            6,
+            2026,
+            "gerente_comercial",
+            {"perfil": "gerente_comercial", "escopo": ["R1", "R2"]},
+            self._ss(lojas=["B", "A"], consultor="FULANO"),
+        )
+        assert chave == (
+            6, 2026, "gerente_comercial", ("R1", "R2"), ("A", "B"), "FULANO",
+        )
+
+    def test_escopos_distintos_nao_colidem(self):
+        """Dois gerentes tem o mesmo role — so o escopo os separa."""
+        base = self._ss()
+        chave_a = _chave_kpis(
+            6, 2026, "gerente_comercial", {"escopo": ["REGIAO_A"]}, base
+        )
+        chave_b = _chave_kpis(
+            6, 2026, "gerente_comercial", {"escopo": ["REGIAO_B"]}, base
+        )
+        assert chave_a != chave_b
+
+    def test_role_periodo_e_filtros_invalidam(self):
+        args = (6, 2026, "supervisor", {"escopo": ["L1"]})
+        base = _chave_kpis(*args, self._ss())
+        assert base != _chave_kpis(7, 2026, *args[2:], self._ss())
+        assert base != _chave_kpis(6, 2025, *args[2:], self._ss())
+        assert base != _chave_kpis(*args[:2], "consultor", args[3], self._ss())
+        assert base != _chave_kpis(*args, self._ss(lojas=["L1"]))
+        assert base != _chave_kpis(*args, self._ss(consultor="FULANO"))
+
+    def test_lojas_independem_da_ordem_de_selecao(self):
+        args = (6, 2026, "gerente_comercial", {"escopo": ["R1"]})
+        assert _chave_kpis(*args, self._ss(lojas=["A", "B"])) == _chave_kpis(
+            *args, self._ss(lojas=["B", "A"])
+        )
+
+    def test_ausencias_normalizam_sem_colidir_com_valor_real(self):
+        """None/ausente vira ()/"" — e nunca igual a um filtro de fato."""
+        vazio = _chave_kpis(6, 2026, None, None, {})
+        assert vazio == (6, 2026, None, (), (), "")
+        assert vazio == _chave_kpis(6, 2026, None, None, self._ss())
+        # perfil sem chave 'escopo' cai no default [] (nao KeyError)
+        assert _chave_kpis(6, 2026, "admin", {"perfil": "admin"}, {}) == (
+            6, 2026, "admin", (), (), "",
+        )

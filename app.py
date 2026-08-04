@@ -30,13 +30,8 @@ from src.dashboard.auth import (
 )
 from src.dashboard.components.tables import exibir_tabela
 from src.dashboard.kpis.gerais import (
-    calcular_kpis_gerais,
     calcular_kpis_analise,
-    calcular_kpis_cancelados,
-    calcular_kpis_qtd_produtos,
-    calcular_medias_du_por_nivel,
-    calcular_medias_organizacao,
-    calcular_metas_produto_diarias,
+    obter_kpis_periodo,
 )
 from src.dashboard.pages.config import render_pagina_config
 from src.dashboard.pages.dashboard_pontuacao import (
@@ -152,56 +147,6 @@ def _render_aviso_pontuacao_fallback(df_pontos: pd.DataFrame) -> None:
                 }
             )
         )
-
-
-def _ritmo_organizacao(
-    role: str | None,
-    df_f: pd.DataFrame,
-    df_full: pd.DataFrame,
-    df_sup_full: pd.DataFrame,
-) -> tuple[pd.DataFrame | None, int]:
-    """Base e normalizador do ritmo da organizacao (media DU de referencia).
-
-    Para supervisor/consultor, restringe df_full as regioes presentes em
-    df_f e normaliza por nº de lojas (supervisor) ou consultores
-    não-supervisor (consultor). Outros perfis: (None, 1).
-    """
-    if role not in ("supervisor", "consultor") or df_f.empty:
-        return None, 1
-    if "REGIAO" not in df_f.columns:
-        return None, 1
-    regioes = df_f["REGIAO"].dropna().unique()
-    df_reg = df_full[df_full["REGIAO"].isin(regioes)]
-    if df_reg.empty:
-        return None, 1
-    if role == "supervisor" and "LOJA" in df_reg.columns:
-        return df_reg, max(int(df_reg["LOJA"].nunique()), 1)
-    if role == "consultor" and "CONSULTOR" in df_reg.columns:
-        sups = set(
-            df_sup_full["SUPERVISOR"].dropna()
-            if "SUPERVISOR" in df_sup_full.columns
-            else []
-        )
-        n_cons = int(
-            df_reg[~df_reg["CONSULTOR"].isin(sups)]["CONSULTOR"].nunique()
-        )
-        return df_reg, max(n_cons, 1)
-    return df_reg, 1
-
-
-def _serie_diaria_pago(df_f: pd.DataFrame) -> list | None:
-    """Serie diaria de VALOR pago (>= 2 pontos) p/ sparkline; senao None."""
-    if "DATA" not in df_f.columns or df_f.empty:
-        return None
-    df_com_data = df_f.dropna(subset=["DATA"])
-    if df_com_data.empty:
-        return None
-    serie = (
-        df_com_data.groupby(df_com_data["DATA"].dt.date)["VALOR"]
-        .sum()
-        .sort_index()
-    )
-    return serie.tolist() if len(serie) >= 2 else None
 
 
 # ══════════════════════════════════════════════════════
@@ -603,120 +548,37 @@ def main():
                 df_metas_prod_f = _mpc
 
         # ── Calculos de KPIs (memoizados em session_state) ──
-        # Cache local por (mes, ano, regiao, role): troca de aba
-        # nao recalcula. Invalidado pelo botao "Atualizar Dados".
-        chave_kpis = (
-            mes,
-            ano,
-            role,
-            tuple(perfil_efetivo.get("escopo", []) if perfil_efetivo else []),
-            tuple(sorted(st.session_state.get("ui_filtro_lojas") or [])),
-            st.session_state.get("ui_filtro_consultor") or "",
+        # O bloco inteiro (chave de cache + cadeia de calculo) vive em
+        # kpis/gerais.py. A chave e a fronteira entre perfis: mexer nela
+        # muda quem ve o que — ver docstring de `_chave_kpis`.
+        # Frames de trabalho vao POS-RLS+filtros; os `*_full` sao pre-RLS
+        # de proposito (comparativo da organizacao / exclusao de sup).
+        (
+            kpis,
+            kpis_analise,
+            kpis_cancel,
+            medias,
+            metas_prod_diarias,
+            medias_organizacao,
+            kpis_qtd,
+            daily_pago,
+        ) = obter_kpis_periodo(
+            session_state=st.session_state,
+            mes=mes,
+            ano=ano,
+            role=role,
+            perfil_efetivo=perfil_efetivo,
+            df=df_f,
+            df_metas=df_metas_f,
+            df_metas_produto=df_metas_prod_f,
+            df_analise=df_analise_f,
+            df_cancelados=df_cancelados_f,
+            df_sup=df_sup_f,
+            df_full=df_full,
+            df_sup_full=df_sup_full,
+            dia_atual=dia_atual,
+            du_decorridos=du_decorridos,
         )
-        if st.session_state.get("_kpis_chave") != chave_kpis:
-            kpis = calcular_kpis_gerais(
-                df_f,
-                df_metas_f,
-                df_metas_prod_f,
-                ano,
-                mes,
-                dia_atual,
-                df_sup_f,
-            )
-
-            kpis_analise = calcular_kpis_analise(
-                df_analise_f,
-                df_f,
-                du_decorridos,
-            )
-
-            kpis_cancel = calcular_kpis_cancelados(
-                df_cancelados_f,
-                df_f,
-                df_analise_f,
-            )
-
-            medias = calcular_medias_du_por_nivel(
-                df_f,
-                du_decorridos,
-                df_sup_f,
-            )
-
-            metas_prod_diarias = calcular_metas_produto_diarias(
-                df_f,
-                df_metas_prod_f,
-                kpis.get("du_total", 0),
-                du_decorridos,
-            )
-
-            # Meta global em VALOR (R$) = meta_mix do calcular_kpis_gerais.
-            # Diferente de `meta_prata`, que está em PONTOS.
-            meta_global_valor = float(kpis.get("meta_mix", 0) or 0)
-            total_vendas_valor = float(kpis.get("total_vendas", 0) or 0)
-            kpis["meta_global_valor"] = meta_global_valor
-            kpis["perc_ating_valor"] = (
-                (total_vendas_valor / meta_global_valor * 100)
-                if meta_global_valor > 0
-                else 0
-            )
-            kpis["gap_valor"] = max(0, meta_global_valor - total_vendas_valor)
-
-            # Média DU de referência: média da região por loja (supervisor)
-            # ou por consultor (consultor). Para outros perfis, sem referência.
-            _df_org_ritmo, _org_norm = _ritmo_organizacao(
-                role, df_f, df_full, df_sup_full
-            )
-            kpis_qtd = calcular_kpis_qtd_produtos(
-                df_f,
-                df_analise_f,
-                df_metas_prod_f,
-                kpis.get("du_total", 0),
-                du_decorridos,
-                df_org=_df_org_ritmo,
-                org_norm=_org_norm,
-            )
-
-            # ── Médias da organização (pre-RLS, granularidade por perfil) ──
-            # Granularidade acompanha o filtro de UI: se o usuário afunilou
-            # até consultor → granularidade consultor; até loja → supervisor;
-            # sem filtro extra → granularidade nativa do perfil.
-            if _consultor_selecionado:
-                _perfil_media = "consultor"
-            elif _ui_lojas and role == "gerente_comercial":
-                _perfil_media = "supervisor"
-            else:
-                _perfil_media = role
-            medias_organizacao = calcular_medias_organizacao(
-                df_full,
-                du_decorridos=du_decorridos,
-                perfil=_perfil_media,
-                df_sup=df_sup_full,
-            )
-
-            # Serie diaria de valor pago (para sparkline do card hero).
-            daily_pago = _serie_diaria_pago(df_f)
-
-            st.session_state["_kpis_cache"] = {
-                "kpis": kpis,
-                "kpis_analise": kpis_analise,
-                "kpis_cancel": kpis_cancel,
-                "medias": medias,
-                "metas_prod_diarias": metas_prod_diarias,
-                "medias_organizacao": medias_organizacao,
-                "kpis_qtd": kpis_qtd,
-                "daily_pago": daily_pago,
-            }
-            st.session_state["_kpis_chave"] = chave_kpis
-        else:
-            _cached = st.session_state["_kpis_cache"]
-            kpis = _cached["kpis"]
-            kpis_analise = _cached["kpis_analise"]
-            kpis_cancel = _cached["kpis_cancel"]
-            medias = _cached["medias"]
-            metas_prod_diarias = _cached["metas_prod_diarias"]
-            medias_organizacao = _cached["medias_organizacao"]
-            kpis_qtd = _cached["kpis_qtd"]
-            daily_pago = _cached["daily_pago"]
 
         # ── Dispatch: Dashboard de Pontuacao ──────────
         # Quando o toggle esta em 'pontuacao', renderizamos apenas a
