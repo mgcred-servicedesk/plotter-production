@@ -33,7 +33,13 @@ from src.dashboard.components.tables import exibir_tabela
 from src.dashboard.kpis.gerais import (
     calcular_kpis_analise,
     limpar_cache_kpis,
-    obter_kpis_periodo,
+    obter_kpis_gerais_periodo,
+    obter_kpis_pipeline_periodo,
+    obter_kpis_qtd_periodo,
+    obter_medias_organizacao_periodo,
+    obter_medias_periodo,
+    obter_metas_prod_diarias_periodo,
+    serie_diaria_pago,
 )
 from src.dashboard.pages.config import render_pagina_config
 from src.dashboard.pages.dashboard_pontuacao import (
@@ -521,22 +527,20 @@ def main():
             if not _mpc.empty:
                 df_metas_prod_f = _mpc
 
-        # ── Calculos de KPIs (memoizados em session_state) ──
-        # O bloco inteiro (chave de cache + cadeia de calculo) vive em
-        # kpis/gerais.py. A chave e a fronteira entre perfis: mexer nela
-        # muda quem ve o que — ver docstring de `_chave_kpis`.
-        # Frames de trabalho vao POS-RLS+filtros; os `*_full` sao pre-RLS
-        # de proposito (comparativo da organizacao / exclusao de sup).
-        (
-            kpis,
-            kpis_analise,
-            kpis_cancel,
-            medias,
-            metas_prod_diarias,
-            medias_organizacao,
-            kpis_qtd,
-            daily_pago,
-        ) = obter_kpis_periodo(
+        # ── KPIs gerais (memoizados em session_state) ─────
+        # A cadeia de calculo vive em kpis/gerais.py, hoje quebrada em
+        # seis funcoes `obter_*_periodo` independentes (uma por grupo de
+        # KPI). Todas compartilham a MESMA chave de cache, e essa chave e
+        # a fronteira entre perfis: mexer nela muda quem ve o que — ver a
+        # docstring de `_chave_kpis`.
+        #
+        # So o grupo "gerais" e pedido AQUI, porque e o unico de que os
+        # dois early-returns logo abaixo precisam (a view de pontuacao
+        # recebe `kpis`; o drill-down de card le `kpis['du_total']`). Os
+        # outros cinco grupos ficam adiante, no bloco "KPIs restantes".
+        #
+        # Frames de trabalho vao POS-RLS+filtros.
+        kpis = obter_kpis_gerais_periodo(
             session_state=st.session_state,
             mes=mes,
             ano=ano,
@@ -545,13 +549,8 @@ def main():
             df=df_f,
             df_metas=df_metas_f,
             df_metas_produto=df_metas_prod_f,
-            df_analise=df_analise_f,
-            df_cancelados=df_cancelados_f,
-            df_sup=df_sup_f,
-            df_full=df_full,
-            df_sup_full=df_sup_full,
             dia_atual=dia_atual,
-            du_decorridos=du_decorridos,
+            df_sup=df_sup_f,
         )
 
         # ── Dispatch: Dashboard de Pontuacao ──────────
@@ -606,6 +605,84 @@ def main():
                     perfil=role,
                 )
                 return
+
+            # ── KPIs restantes (memoizados em session_state) ──
+            # Deliberadamente DEPOIS dos dois `return` acima (view de
+            # pontuacao e drill-down de card): nenhum dos dois consome
+            # estes grupos, entao calcula-los antes fazia esses caminhos
+            # pagarem pipeline, medias, metas por produto e KPIs de
+            # quantidade a toa. Quebrar `obter_kpis_periodo` em uma
+            # funcao por grupo (ISP) foi o que tornou o adiamento
+            # possivel — juntas, elas eram uma chamada indivisivel.
+            #
+            # Frames de trabalho vao POS-RLS+filtros; os `*_full` sao
+            # pre-RLS de proposito (comparativo da organizacao / exclusao
+            # de supervisores) e deles nao sai nenhuma linha para a tela,
+            # so agregados — ver as docstrings das duas funcoes que os
+            # recebem.
+            kpis_analise, kpis_cancel = obter_kpis_pipeline_periodo(
+                session_state=st.session_state,
+                mes=mes,
+                ano=ano,
+                role=role,
+                perfil_efetivo=perfil_efetivo,
+                df=df_f,
+                df_analise=df_analise_f,
+                df_cancelados=df_cancelados_f,
+                du_decorridos=du_decorridos,
+            )
+            medias = obter_medias_periodo(
+                session_state=st.session_state,
+                mes=mes,
+                ano=ano,
+                role=role,
+                perfil_efetivo=perfil_efetivo,
+                df=df_f,
+                du_decorridos=du_decorridos,
+                df_sup=df_sup_f,
+            )
+            medias_organizacao = obter_medias_organizacao_periodo(
+                session_state=st.session_state,
+                mes=mes,
+                ano=ano,
+                role=role,
+                perfil_efetivo=perfil_efetivo,
+                df_full=df_full,
+                du_decorridos=du_decorridos,
+                df_sup_full=df_sup_full,
+            )
+            metas_prod_diarias = obter_metas_prod_diarias_periodo(
+                session_state=st.session_state,
+                mes=mes,
+                ano=ano,
+                role=role,
+                perfil_efetivo=perfil_efetivo,
+                df=df_f,
+                df_metas=df_metas_f,
+                df_metas_produto=df_metas_prod_f,
+                df_sup=df_sup_f,
+                dia_atual=dia_atual,
+                du_decorridos=du_decorridos,
+            )
+            kpis_qtd = obter_kpis_qtd_periodo(
+                session_state=st.session_state,
+                mes=mes,
+                ano=ano,
+                role=role,
+                perfil_efetivo=perfil_efetivo,
+                df=df_f,
+                df_metas=df_metas_f,
+                df_metas_produto=df_metas_prod_f,
+                df_sup=df_sup_f,
+                df_analise=df_analise_f,
+                df_full=df_full,
+                df_sup_full=df_sup_full,
+                dia_atual=dia_atual,
+                du_decorridos=du_decorridos,
+            )
+            # Sem cache: calculo puro e barato sobre um frame ja em
+            # memoria (ver docstring de `serie_diaria_pago`).
+            daily_pago = serie_diaria_pago(df_f)
 
             # KPIs Principais Reformulados
             # (3 principais + contexto + MIX + Aceleradores
