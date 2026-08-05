@@ -8,10 +8,13 @@ KPI antigos nem dos loaders Excel.
 
 Comando: `streamlit run app.py`
 
-Após a refatoração (`refactor-kpis`), `app.py` é um **orquestrador fino**
-(~1440 linhas): autentica, monta sidebar, carrega dados, aplica RLS,
-calcula KPIs e delega render para `src/dashboard/tabs/*`. Toda lógica
-pesada vive em `src/dashboard/{loaders,kpis,ui,tabs,pages}/`.
+Após a refatoração SOLID/SRP de 2026-08 (`refactor/app-py-solid-fase1`),
+`app.py` é um **orquestrador fino** (~824 linhas): autentica, monta sidebar
+(via `ui/sidebar.py`), carrega dados do período numa chamada
+(`loaders.py::carregar_periodo_dashboard`), aplica RLS, calcula KPIs numa
+chamada (`kpis/gerais.py::obter_kpis_periodo`) e delega render para
+`src/dashboard/{tabs,pages}/*`. Toda lógica pesada vive em
+`src/dashboard/{loaders,kpis,ui,tabs,pages}/`.
 
 Features novas vão **sempre** para `app.py` na raiz. Os antigos
 `dashboard*.py` e o pipeline Excel/PDF (`src/reports/`,
@@ -50,7 +53,11 @@ src/
       produtos.py, regioes.py, rankings.py, analiticos.py, evolucao.py,
       em_analise.py, detalhes.py, consultor.py, pagamentos_online.py
     ui/                        ← componentes visuais
-      theme.py                 ← sistema de temas (CHART_THEME, CSS vars, aplicar_tema)
+      sidebar.py                ← render_theme_toggle, render_sidebar_usuario,
+                                   render_sidebar_visualizar_como, render_sidebar_filtros_perfil,
+                                   aplicar_filtros_ui, filtrar_metas_ui
+      theme.py                 ← sistema de temas (CHART_THEME, CSS vars, aplicar_tema),
+                                   ocultar_widgets_nativos, render_overlay_fresh_login
       theme_claro_avancado.py  ← variante de tema claro
       header.py                ← render_header, render_status_bar
       kpi_cards.py             ← cards de KPIs principais, metas e quantidade
@@ -62,7 +69,9 @@ src/
     components/
       tables.py                ← exibir_tabela()
     pages/
-      dashboard_pontuacao.py   ← dashboard de pontuação
+      dashboard_pontuacao.py   ← dashboard de pontuação + render_diagnostico_pontuacao
+      config.py                ← render_pagina_config() (usuários/feriados p/ admin, "Minha Conta" p/ demais)
+      detalhes_cards.py         ← render_detalhe_* + render_drilldown_card() (dispatch dos 4 cards)
 database/
   migrations/                  ← migrations numeradas (001…)
   schema.sql
@@ -76,14 +85,24 @@ configuracao/                  ← planilhas auxiliares (HC, lojas, supervisores
 
 1. `tela_login()` → gate de autenticação.
 2. `carregar_estilos_customizados()` + `aplicar_tema()` (de `ui/theme.py`).
-3. Sidebar monta período (ano/mês) e opções de admin.
-4. `consolidar_dados(mes, ano)` (em `loaders.py`) → `df, df_metas, df_sup` pagos.
-5. `carregar_contratos_em_analise` / `_cancelados` + filtro 30 dias por `DATA_CADASTRO`.
-6. **RLS** imediatamente após o load (ver [rls.md](rls.md)).
-7. Cálculos: `calcular_kpis_gerais`, `_analise`, `_cancelados`, `_qtd_produtos`,
-   `medias_du_por_nivel`, `metas_produto_diarias`.
-8. `pode_ver(chave, role)` (de `permissions.py`) decide quais abas/cards renderizam.
-9. `render_tab_*` é despachado conforme o item selecionado em `sac.tabs`.
+3. Sidebar (`ui/sidebar.py`) monta período (ano/mês) e opções de admin.
+4. `carregar_periodo_dashboard(mes, ano, on_progress=...)` (em `loaders.py`) — uma
+   chamada que encapsula `consolidar_dados` (pagos) + categorias + metas de produto +
+   `carregar_contratos_em_analise`/`_cancelados`, já aplicando `aplicar_conta_valor`
+   (`kpis/detalhes_cards.py`), `filtrar_janela_recente` (30 dias, `kpis/gerais.py`) e
+   `aplicar_nomes_display_produto` (`loaders.py`). Devolve o NamedTuple `DadosPeriodo`.
+5. **RLS** imediatamente após o load (ver [rls.md](rls.md)).
+6. `obter_kpis_periodo(...)` (em `kpis/gerais.py`) — uma chamada que calcula
+   `calcular_kpis_gerais`, `_analise`, `_cancelados`, `_qtd_produtos`,
+   `medias_du_por_nivel`, `metas_produto_diarias` e memoiza o resultado em
+   `st.session_state` por `(mes, ano, role, escopo, filtros de UI)`.
+7. `pode_ver(chave, role)` (de `permissions.py`) decide quais abas/cards renderizam.
+8. `render_tab_*` é despachado conforme o item selecionado em `st.pills` (não
+   `sac.tabs` — trocado para evitar abas inacessíveis por overflow em telas estreitas).
+   A aba "Produtos" carrega comparativos (mês anterior/YoY) só quando selecionada,
+   via helpers internos de `tabs/produtos.py`.
+9. Drill-down de cards (`?card=<key>` ou clique) é despachado por
+   `pages/detalhes_cards.py::render_drilldown_card`.
 
 ## Banco de dados (Supabase)
 
