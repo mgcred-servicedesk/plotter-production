@@ -14,13 +14,18 @@ PRODUTOS_EMISSAO = ['EMISSAO', 'EMISSAO CC', 'EMISSAO CB']
 # inglês-only (o locale do BaseWeb/date-fns vem cravado no bundle do
 # Streamlit, sem API que o alcance), então as datas que o usuário
 # confere são escritas por extenso pela própria aplicação.
-# NOTA: `src/dashboard/ui/header.py` e `app.py` ainda mantêm cópias
-# locais deste dicionário — migrar quando alguma delas for tocada.
+# Forma minúscula: usada no meio de frase ("2 de março de 2026").
 MESES_PT = {
     1: 'janeiro', 2: 'fevereiro', 3: 'março', 4: 'abril',
     5: 'maio', 6: 'junho', 7: 'julho', 8: 'agosto',
     9: 'setembro', 10: 'outubro', 11: 'novembro', 12: 'dezembro',
 }
+
+# Forma capitalizada: usada como rótulo isolado (breadcrumb do header,
+# selectbox de mês da sidebar). DERIVADA de `MESES_PT` de propósito —
+# as duas leituras nunca podem divergir na grafia (o dicionário inline
+# que vivia em `app.py` escrevia "Marco" sem cedilha).
+MESES_PT_TITULO = {n: nome.capitalize() for n, nome in MESES_PT.items()}
 
 # Desmembramento do grupo 'PACK' nas suas três categorias. A chave é o
 # `categoria_codigo` (verdade dos contratos / RPCs); o valor é o rótulo

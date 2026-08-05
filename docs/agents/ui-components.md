@@ -46,6 +46,20 @@ número de itens é pequeno e estável.
 A nav principal do `app.py` usa `st.pills`, não `sac.tabs`:
 
 ```python
+# Fonte de verdade única das abas: permissao + rotulo + icone + render.
+registro_abas = (
+    _AbaNav("tab_produtos", "Produtos", "sell",
+            lambda: render_tab_produtos(df_f, ...)),
+    _AbaNav("tab_rankings_lojas", "Rankings", "emoji_events",
+            _render_rankings),          # def local: tem statements
+    ...
+)
+rotulos_visiveis = [
+    aba.rotulo for aba in registro_abas if pode_ver(aba.permissao, role)
+]
+icones_aba = {aba.rotulo: aba.icone for aba in registro_abas}
+renders_aba = {aba.rotulo: aba.render for aba in registro_abas}
+
 tab = st.pills(
     "Navegacao principal",
     options=rotulos_visiveis,
@@ -55,9 +69,23 @@ tab = st.pills(
     label_visibility="collapsed",
     key="nav_principal",
 )
-if tab == "Produtos":
-    ...
+
+_render_aba = renders_aba.get(tab)       # sem else: chave fora do
+if _render_aba is not None:              # registro nao renderiza nada
+    _render_aba()
 ```
+
+- **Aba nova = uma entrada no registro** (+ a chave em
+  `permissions.MATRIZ`). Não existe `if/elif` de despacho para manter em
+  sincronia — era a duplicação que o registro matou.
+- O `render` é um **callable de aridade zero**: closure sobre os frames
+  já carregados em `main()`. Só o da aba selecionada executa, então
+  loader próprio de aba (Rankings, Pagamentos Online, Gestao) continua
+  sendo pago só por quem abre a aba. Quando o preparo precisa de
+  *statements*, a entrada aponta para um `def` local em vez de lambda.
+- O `st.pills` **descarta** valor de `session_state` fora de `options` e
+  cai no `default` — o gate de perfil é `rotulos_visiveis`, e `tab` só
+  assume rótulo visível.
 
 - O button group nativo tem `flex-wrap: wrap` — as abas **quebram em
   linhas** em vez de sumirem quando não cabem.
@@ -112,14 +140,27 @@ Exceção: fora de renderers de tab (ex.: breakdowns rápidos em
 Cada aba é uma função pública `render_tab_*` em `src/dashboard/tabs/*.py`
 (um arquivo por aba: `produtos.py`, `regioes.py`, `rankings.py`,
 `analiticos.py`, `evolucao.py`, `em_analise.py`, `detalhes.py`,
-`consultor.py`). `app.py` importa e despacha conforme o item
-selecionado em `sac.tabs`. Contrato:
+`pagamentos_online.py`, `gestao_consultores.py`). `app.py` importa e
+despacha pelo registro de abas (acima), conforme o rótulo que o
+`st.pills` devolve. Contrato:
 
 - Recebe todos os DataFrames já filtrados (pós-RLS) e os parâmetros de período.
 - Chama funções de `src/dashboard/kpis/*.py` para KPIs e
   `src/dashboard/ui/charts.py` para figuras.
 - Renderiza com `sac.divider` → gráfico → divider → tabela.
 - **Não** executa queries nem aplica RLS (já foi feito em `app.py`).
+
+**Exceção — dado que só uma aba consome.** Quando um DataFrame é usado
+por uma única aba, ele é carregado *dentro* dela (lazy), não em
+`app.py`: quem está em outra aba não paga a query nem a consolidação.
+Nesse caso a aba executa a cadeia inteira — `consolidar_dados` →
+`aplicar_nomes_display_produto` → `aplicar_rls` → `aplicar_filtros_ui` —
+e memoiza o resultado em `st.session_state` sob uma chave que **precisa**
+carregar os mesmos seis componentes de `_chave_kpis` (período, perfil
+efetivo, escopo, filtro de lojas ordenado, filtro de consultor): a chave
+é a fronteira entre perfis. Único caso hoje:
+`tabs/produtos.py::_carregar_mes_comparativo` (mês anterior e mesmo mês
+do ano anterior, para as curvas do gráfico acumulado e do heatmap).
 
 ```python
 # src/dashboard/tabs/produtos.py
@@ -135,8 +176,8 @@ def render_tab_produtos(df, df_metas_produto, categorias, ano, mes, dia_atual, d
 ```
 
 Gating de render é centralizado em `src/dashboard/permissions.py`:
-`app.py` só inclui uma aba em `sac.tabs` se `pode_ver(chave, role)`
-retorna `True`.
+`app.py` só inclui uma aba nas `options` do `st.pills` se
+`pode_ver(aba.permissao, role)` retorna `True`.
 
 ## Messages
 
@@ -174,6 +215,14 @@ em `src/dashboard/ui/theme.py`:
 - `aplicar_tema()` — injeta variáveis CSS `--mg-*` e `--st-*`, sincroniza
   tema nativo do Streamlit.
 - `carregar_estilos_customizados()` — carrega `assets/dashboard_style.css`.
+- `ocultar_widgets_nativos()` — esconde menu ⋮, botão de deploy e status
+  widget. Esconde os três **individualmente**: ocultar
+  `[data-testid="stHeader"]` inteiro leva junto o
+  `stExpandSidebarButton` e deixa a sidebar sem como reabrir. Quem
+  decide *para quem* ocultar é o chamador (`app.py` aplica a não-admins).
+- `render_overlay_fresh_login(nome)` — overlay de transição pós-login
+  (fade-out por animação CSS, sem rerun). O chamador consome a flag
+  `_fresh_login` de `st.session_state`; o módulo não conhece perfil.
 - `CHART_COLORS` / `_CHART_THEME` / `_NATIVE_THEME` — paletas para Plotly
   e tema nativo. Todas OKLCH-aproximadas em hex (Streamlit não suporta
   `oklch()` em `config.toml`).

@@ -11,6 +11,12 @@ entram no calculo de pontos.
 
 Permissoes: respeita ``pode_ver('cards_gerenciais', role)``, igual
 ao dashboard de vendas.
+
+Alem da pagina, o modulo hospeda ``render_diagnostico_pontuacao`` — o
+expander admin-only que audita o mapeamento categoria -> PTS. Nao e uma
+pagina (renderiza inline, sem substituir o dashboard), mas mora aqui por
+tema: e sobre a mesma pontuacao. Se outros diagnosticos surgirem, vale
+promover a um modulo proprio.
 """
 
 from typing import Dict, Optional
@@ -104,3 +110,71 @@ def render_dashboard_pontuacao(
         df_sup=df_sup,
         perfil=perfil or "",
     )
+
+
+def render_diagnostico_pontuacao(diag: Dict) -> None:
+    """Renderiza o expander de diagnostico do mapeamento de pontuacao.
+
+    Audita quantos contratos receberam pontos, quais categorias
+    aparecem nos contratos vs. na RPC de pontuacao, o mapa
+    categoria -> PTS, os TIPO_PRODUTO que ficaram sem categoria e as
+    categorias sem match. E ferramenta de suporte, nao KPI.
+
+    Quem decide *quando* exibir (diagnostico presente e perfil admin)
+    e o chamador (``app.py``); a funcao apenas renderiza.
+
+    Args:
+        diag: dict gravado em ``st.session_state['_diag_pontuacao']``
+            por ``consolidar_dados``. Chaves consumidas aqui:
+            ``total_contratos``, ``sem_categoria``,
+            ``com_pontos_mapeados``, ``categorias_no_contrato``,
+            ``categorias_na_pontuacao``, ``mapa_pontos`` e
+            ``tipos_sem_categoria`` (opcional).
+    """
+    with st.expander(
+        f"Diagnostico de pontuacao — "
+        f"{diag['com_pontos_mapeados']}/{diag['total_contratos']} "
+        f"contratos com pontos",
+        expanded=False,
+    ):
+        c1, c2, c3 = st.columns(3)
+        c1.metric("Total contratos", diag["total_contratos"])
+        c2.metric("Sem categoria", diag["sem_categoria"])
+        c3.metric("Com pontos", diag["com_pontos_mapeados"])
+
+        st.markdown("**Categorias nos contratos:**")
+        st.code(
+            ", ".join(c for c in diag["categorias_no_contrato"] if c)
+            or "(vazio)",
+        )
+
+        st.markdown("**Categorias na pontuacao (RPC):**")
+        st.code(
+            ", ".join(diag["categorias_na_pontuacao"]) or "(vazio)",
+        )
+
+        st.markdown("**Mapa de pontos:**")
+        st.json(diag["mapa_pontos"])
+
+        # Tipos sem categoria (não mapeados pelo fallback)
+        tipos_sem_cat = diag.get("tipos_sem_categoria", [])
+        if tipos_sem_cat:
+            st.warning(
+                f"**{diag['sem_categoria']} contratos sem categoria** "
+                f"— TIPO_PRODUTO nao mapeado:"
+            )
+            st.dataframe(
+                pd.DataFrame(tipos_sem_cat),
+                width="stretch",
+                hide_index=True,
+            )
+
+        # Categorias sem match
+        cats_contrato = {c for c in diag["categorias_no_contrato"] if c}
+        cats_pontuacao = set(diag["categorias_na_pontuacao"])
+        sem_match = sorted(cats_contrato - cats_pontuacao)
+        if sem_match:
+            st.warning(
+                f"**{len(sem_match)} categorias sem pontuacao:** "
+                + ", ".join(sem_match)
+            )
