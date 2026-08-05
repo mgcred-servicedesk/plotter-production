@@ -1,10 +1,11 @@
 """
 Testes dos helpers puros que sustentam o bloco de KPIs do dashboard
-(``_ritmo_organizacao``, ``_serie_diaria_pago``) e da chave de cache
+(``_ritmo_organizacao``, ``serie_diaria_pago``) e da chave de cache
 (``_chave_kpis``).
 
 Os três nasceram em ``app.py`` e migraram para ``kpis/gerais.py`` junto
-com ``obter_kpis_periodo`` (ST-07): são cálculo puro, não chamam ``st.*``
+com o bloco de KPIs do período (ST-07 — hoje decomposto na família
+``obter_*_periodo``): são cálculo puro, não chamam ``st.*``
 — ``_chave_kpis`` recebe o ``session_state`` injetado.
 """
 import pandas as pd
@@ -13,7 +14,7 @@ import pytest
 from src.dashboard.kpis.gerais import (
     _chave_kpis,
     _ritmo_organizacao,
-    _serie_diaria_pago,
+    serie_diaria_pago,
 )
 
 
@@ -64,18 +65,18 @@ class TestSerieDiariaPago:
             ),
             "VALOR": [100.0, 50.0, 200.0],
         })
-        assert _serie_diaria_pago(df) == [150.0, 200.0]
+        assert serie_diaria_pago(df) == [150.0, 200.0]
 
     def test_um_dia_retorna_none(self):
         df = pd.DataFrame({
             "DATA": pd.to_datetime(["2026-06-01"]),
             "VALOR": [100.0],
         })
-        assert _serie_diaria_pago(df) is None
+        assert serie_diaria_pago(df) is None
 
     def test_sem_data_ou_vazio(self):
-        assert _serie_diaria_pago(pd.DataFrame({"VALOR": [1.0]})) is None
-        assert _serie_diaria_pago(pd.DataFrame()) is None
+        assert serie_diaria_pago(pd.DataFrame({"VALOR": [1.0]})) is None
+        assert serie_diaria_pago(pd.DataFrame()) is None
 
 
 @pytest.mark.unit
