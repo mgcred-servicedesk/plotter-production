@@ -8,12 +8,15 @@ KPI antigos nem dos loaders Excel.
 
 Comando: `streamlit run app.py`
 
-Após a refatoração SOLID/SRP de 2026-08 (`refactor/app-py-solid-fase1`),
-`app.py` é um **orquestrador fino** (~824 linhas): autentica, monta sidebar
-(via `ui/sidebar.py`), carrega dados do período numa chamada
-(`loaders.py::carregar_periodo_dashboard`), aplica RLS, calcula KPIs numa
-chamada (`kpis/gerais.py::obter_kpis_periodo`) e delega render para
-`src/dashboard/{tabs,pages}/*`. Toda lógica pesada vive em
+Após a refatoração SOLID de 2026-08 (`refactor/app-py-solid-fase1`, SRP +
+OCP), `app.py` é um **orquestrador fino** (~864 linhas): autentica, monta
+sidebar (via `ui/sidebar.py`, incluindo o seletor de Período), carrega
+dados do período numa chamada (`loaders.py::carregar_periodo_dashboard`),
+aplica RLS, pede os KPIs a **seis funções independentes por grupo**
+(`kpis/gerais.py::obter_*_periodo`, ver "Fluxo de carregamento" abaixo) e
+despacha render das abas via um
+**registro único** (`_AbaNav`, ver [ui-components.md](ui-components.md))
+para `src/dashboard/{tabs,pages}/*`. Toda lógica pesada vive em
 `src/dashboard/{loaders,kpis,ui,tabs,pages}/`.
 
 Features novas vão **sempre** para `app.py` na raiz. Os antigos
@@ -42,8 +45,10 @@ src/
     user_mgmt.py               ← render_pagina_usuarios()
     feriados_mgmt.py           ← render_pagina_feriados()
     kpis/                      ← cálculo de KPIs por domínio
-      gerais.py                ← calcular_kpis_gerais, _analise, _cancelados,
-                                 _qtd_produtos, medias_du_por_nivel, metas_produto_diarias
+      gerais.py                ← cálculo puro (calcular_kpis_gerais, _analise, _cancelados,
+                                 _qtd_produtos, medias_du_por_nivel, metas_produto_diarias)
+                                 + as 6 fachadas cacheadas obter_*_periodo consumidas por
+                                 app.py, serie_diaria_pago (pura) e limpar_cache_kpis
       produtos.py              ← KPIs por produto (PRODUTOS_DASHBOARD)
       regioes.py               ← evolução MoM D.U., análise por produto/região
       rankings.py              ← rankings de lojas, supervisores, consultores
@@ -55,7 +60,7 @@ src/
     ui/                        ← componentes visuais
       sidebar.py                ← render_theme_toggle, render_sidebar_usuario,
                                    render_sidebar_visualizar_como, render_sidebar_filtros_perfil,
-                                   aplicar_filtros_ui, filtrar_metas_ui
+                                   aplicar_filtros_ui, filtrar_metas_ui, render_periodo
       theme.py                 ← sistema de temas (CHART_THEME, CSS vars, aplicar_tema),
                                    ocultar_widgets_nativos, render_overlay_fresh_login
       theme_claro_avancado.py  ← variante de tema claro
@@ -85,22 +90,52 @@ configuracao/                  ← planilhas auxiliares (HC, lojas, supervisores
 
 1. `tela_login()` → gate de autenticação.
 2. `carregar_estilos_customizados()` + `aplicar_tema()` (de `ui/theme.py`).
-3. Sidebar (`ui/sidebar.py`) monta período (ano/mês) e opções de admin.
+3. Sidebar (`ui/sidebar.py::render_periodo`) monta período (ano/mês) e opções de admin.
 4. `carregar_periodo_dashboard(mes, ano, on_progress=...)` (em `loaders.py`) — uma
    chamada que encapsula `consolidar_dados` (pagos) + categorias + metas de produto +
    `carregar_contratos_em_analise`/`_cancelados`, já aplicando `aplicar_conta_valor`
    (`kpis/detalhes_cards.py`), `filtrar_janela_recente` (30 dias, `kpis/gerais.py`) e
    `aplicar_nomes_display_produto` (`loaders.py`). Devolve o NamedTuple `DadosPeriodo`.
 5. **RLS** imediatamente após o load (ver [rls.md](rls.md)).
-6. `obter_kpis_periodo(...)` (em `kpis/gerais.py`) — uma chamada que calcula
-   `calcular_kpis_gerais`, `_analise`, `_cancelados`, `_qtd_produtos`,
-   `medias_du_por_nivel`, `metas_produto_diarias` e memoiza o resultado em
-   `st.session_state` por `(mes, ano, role, escopo, filtros de UI)`.
+6. **KPIs em dois pontos** (em `kpis/gerais.py`). Não é mais uma chamada só:
+   `obter_kpis_periodo` foi decomposta em **seis** funções `obter_*_periodo`
+   independentes, cada uma com o seu par `_<grupo>_cache` / `_<grupo>_chave`
+   em `st.session_state`, todas invalidadas pela mesma `_chave_kpis`
+   `(mes, ano, role, escopo, filtros de UI)`. `app.py` as chama assim:
+
+   6a. **Logo após o RLS** — só `obter_kpis_gerais_periodo(...)` → `kpis`.
+       É o único grupo de que os dois early-returns seguintes precisam.
+
+   6b. **Os dois early-returns** — `dashboard_view == "pontuacao"`
+       (`render_dashboard_pontuacao`, recebe só `kpis`) e `card_page`
+       setado (`render_drilldown_card`, lê só `kpis["du_total"]`). Ambos
+       renderizam e dão `return`.
+
+   6c. **Só depois deles** — os cinco grupos restantes
+       (`obter_kpis_pipeline_periodo` → `KpisPipeline(kpis_analise,
+       kpis_cancel)`, `obter_medias_periodo`,
+       `obter_medias_organizacao_periodo`,
+       `obter_metas_prod_diarias_periodo`, `obter_kpis_qtd_periodo`) mais
+       `serie_diaria_pago(df_f)` (puro, sem cache), que alimentam
+       `render_kpis_reforma` / `render_resumo_executivo` /
+       `render_prioridades_acao`.
+
+   A ordem é deliberada: enquanto a chamada era única e indivisível, a view
+   de pontuação e o drill-down de card pagavam pipeline, médias, metas por
+   produto e KPIs de quantidade sem consumir nenhum deles. Ver
+   [progress/2026-08-05-kpis-periodo-isp-call-site.md](progress/2026-08-05-kpis-periodo-isp-call-site.md).
+
+   `limpar_cache_kpis(session_state)` é o ponto único que esquece os seis
+   pares de chaves — **função `obter_*_periodo` nova entra lá na mesma
+   tarefa em que nasce.**
 7. `pode_ver(chave, role)` (de `permissions.py`) decide quais abas/cards renderizam.
-8. `render_tab_*` é despachado conforme o item selecionado em `st.pills` (não
-   `sac.tabs` — trocado para evitar abas inacessíveis por overflow em telas estreitas).
-   A aba "Produtos" carrega comparativos (mês anterior/YoY) só quando selecionada,
-   via helpers internos de `tabs/produtos.py`.
+8. `render_tab_*` é despachado por um **registro único de abas** (`_AbaNav`
+   NamedTuple em `app.py`, ver [ui-components.md](ui-components.md)) conforme
+   o item selecionado em `st.pills` (não `sac.tabs` — trocado para evitar
+   abas inacessíveis por overflow em telas estreitas). Adicionar/remover uma
+   aba é uma entrada nesse registro, não um `if/elif`. A aba "Produtos"
+   carrega comparativos (mês anterior/YoY) só quando selecionada, via
+   helpers internos de `tabs/produtos.py`.
 9. Drill-down de cards (`?card=<key>` ou clique) é despachado por
    `pages/detalhes_cards.py::render_drilldown_card`.
 

@@ -937,8 +937,13 @@ def _ritmo_organizacao(
     return df_reg, 1
 
 
-def _serie_diaria_pago(df_f: pd.DataFrame) -> list | None:
-    """Serie diaria de VALOR pago (>= 2 pontos) p/ sparkline; senao None."""
+def serie_diaria_pago(df_f: pd.DataFrame) -> list | None:
+    """Serie diaria de VALOR pago (>= 2 pontos) p/ sparkline; senao None.
+
+    Publica e SEM cache, ao contrario das ``obter_*_periodo``: e calculo
+    puro e barato sobre um frame ja em memoria (um ``groupby`` por dia),
+    nao justifica mais um par de chaves em ``session_state``.
+    """
     if "DATA" not in df_f.columns or df_f.empty:
         return None
     df_com_data = df_f.dropna(subset=["DATA"])
@@ -950,27 +955,6 @@ def _serie_diaria_pago(df_f: pd.DataFrame) -> list | None:
         .sort_index()
     )
     return serie.tolist() if len(serie) >= 2 else None
-
-
-class KpisPeriodo(NamedTuple):
-    """Bloco de KPIs de um periodo, na ordem em que o dashboard os usa.
-
-    NamedTuple pelo mesmo motivo de ``DadosPeriodo`` (loaders): sao oito
-    valores e quatro deles sao ``Dict`` — posicao sozinha seria fragil.
-    Desempacota como tupla e permite acesso por nome quando ajuda.
-
-    Os campos espelham EXATAMENTE as chaves gravadas em
-    ``session_state['_kpis_cache']`` (ver ``obter_kpis_periodo``).
-    """
-
-    kpis: Dict
-    kpis_analise: Dict
-    kpis_cancel: Dict
-    medias: Dict
-    metas_prod_diarias: List[Dict]
-    medias_organizacao: Dict[str, float]
-    kpis_qtd: List[Dict]
-    daily_pago: Optional[list]
 
 
 def _chave_kpis(
@@ -1016,7 +1000,7 @@ def _chave_kpis(
     )
 
 
-def obter_kpis_periodo(
+def obter_kpis_gerais_periodo(
     *,
     session_state: MutableMapping[str, Any],
     mes: int,
@@ -1026,44 +1010,31 @@ def obter_kpis_periodo(
     df: pd.DataFrame,
     df_metas: pd.DataFrame,
     df_metas_produto: pd.DataFrame,
-    df_analise: pd.DataFrame,
-    df_cancelados: pd.DataFrame,
-    df_sup: pd.DataFrame,
-    df_full: pd.DataFrame,
-    df_sup_full: pd.DataFrame,
     dia_atual: Optional[int],
-    du_decorridos: int,
-) -> KpisPeriodo:
-    """Calcula (ou recupera do cache) todos os KPIs do periodo.
+    df_sup: pd.DataFrame,
+) -> Dict:
+    """KPIs gerais do periodo (valor, pontos, metas, DU) — com cache.
 
-    Memoiza o bloco inteiro em ``session_state`` sob a chave de
-    ``_chave_kpis``: trocar de aba ou mexer num widget que nao afeta o
-    recorte nao recalcula nada. Enquanto a chave nao muda, o resultado
-    anterior e devolvido como esta.
+    Envolve ``calcular_kpis_gerais`` e acrescenta o trio de VALOR
+    (``meta_global_valor`` / ``perc_ating_valor`` / ``gap_valor``), que
+    nao existe no calculo puro: e derivacao de apresentacao, feita aqui
+    desde a extracao de ``app.py``.
 
-    **Escopo dos frames — contrato de seguranca.** Os frames "de
-    trabalho" (``df``, ``df_metas``, ``df_metas_produto``,
-    ``df_analise``, ``df_cancelados``, ``df_sup``) devem chegar JA
-    recortados pelo perfil (``aplicar_rls``) e pelos filtros granulares
-    da sidebar — esta funcao nao aplica RLS. Os dois ``*_full`` sao,
-    de proposito, PRE-RLS: ``df_full`` e a base de comparacao da
-    organizacao (media da empresa e ritmo regional de referencia) e
-    ``df_sup_full`` e a lista global de supervisores usada so para
-    EXCLUSAO (nunca exibida). Deles nao sai nenhuma linha para a tela:
-    somente medias e contagens agregadas.
+    **Escopo dos frames.** Todos chegam JA recortados pelo perfil
+    (``aplicar_rls``) e pelos filtros da sidebar — esta funcao nao
+    aplica RLS. Nenhum frame pre-RLS entra aqui.
+
+    Cache em ``session_state`` sob ``_kpis_gerais_cache`` /
+    ``_kpis_gerais_chave``, invalidado por ``_chave_kpis``.
 
     ``session_state`` e injetado em vez de importado: nenhum modulo de
     ``kpis/`` importa Streamlit no topo, e assim a funcao pode ser
     exercitada em teste com um ``dict`` comum — basta suportar
     ``.get`` / ``[]`` / ``[]=``.
-
-    O cache continua sendo gravado como ``dict`` (mesmas oito chaves de
-    ``KpisPeriodo``) para que o pop de ``_kpis_cache``/``_kpis_chave``
-    feito pelo botao "Atualizar Dados" siga valendo sem mudanca.
     """
     chave = _chave_kpis(mes, ano, role, perfil_efetivo, session_state)
 
-    if session_state.get("_kpis_chave") != chave:
+    if session_state.get("_kpis_gerais_chave") != chave:
         kpis = calcular_kpis_gerais(
             df,
             df_metas,
@@ -1072,31 +1043,6 @@ def obter_kpis_periodo(
             mes,
             dia_atual,
             df_sup,
-        )
-
-        kpis_analise = calcular_kpis_analise(
-            df_analise,
-            df,
-            du_decorridos,
-        )
-
-        kpis_cancel = calcular_kpis_cancelados(
-            df_cancelados,
-            df,
-            df_analise,
-        )
-
-        medias = calcular_medias_du_por_nivel(
-            df,
-            du_decorridos,
-            df_sup,
-        )
-
-        metas_prod_diarias = calcular_metas_produto_diarias(
-            df,
-            df_metas_produto,
-            kpis.get("du_total", 0),
-            du_decorridos,
         )
 
         # Meta global em VALOR (R$) = meta_mix do calcular_kpis_gerais.
@@ -1111,25 +1057,149 @@ def obter_kpis_periodo(
         )
         kpis["gap_valor"] = max(0, meta_global_valor - total_vendas_valor)
 
-        # Média DU de referência: média da região por loja (supervisor)
-        # ou por consultor (consultor). Para outros perfis, sem referência.
-        _df_org_ritmo, _org_norm = _ritmo_organizacao(
-            role, df, df_full, df_sup_full
-        )
-        kpis_qtd = calcular_kpis_qtd_produtos(
-            df,
+        session_state["_kpis_gerais_cache"] = kpis
+        session_state["_kpis_gerais_chave"] = chave
+
+    return session_state["_kpis_gerais_cache"]
+
+
+class KpisPipeline(NamedTuple):
+    """Os dois blocos do pipeline de contratos: em analise e cancelados.
+
+    NamedTuple pelo mesmo motivo de ``DadosPeriodo`` (loaders): sao dois
+    ``Dict`` e posicao sozinha seria fragil. Desempacota como tupla e
+    permite acesso por nome quando ajuda.
+
+    Os campos espelham EXATAMENTE as chaves gravadas em
+    ``session_state['_kpis_pipeline_cache']``.
+    """
+
+    kpis_analise: Dict
+    kpis_cancel: Dict
+
+
+def obter_kpis_pipeline_periodo(
+    *,
+    session_state: MutableMapping[str, Any],
+    mes: int,
+    ano: int,
+    role: Optional[str],
+    perfil_efetivo: Optional[dict],
+    df: pd.DataFrame,
+    df_analise: pd.DataFrame,
+    df_cancelados: pd.DataFrame,
+    du_decorridos: int,
+) -> KpisPipeline:
+    """KPIs do pipeline — "Em Analise" e "Cancelados" — com cache.
+
+    Os dois andam juntos de proposito: nenhum consumidor pede so um
+    deles, ``calcular_kpis_cancelados`` ja depende de ``df_analise``, e
+    separa-los criaria dois pares de chaves de cache para dado sempre
+    consumido em bloco — sem ganho real de ISP.
+
+    **Escopo dos frames.** Todos chegam JA recortados pelo perfil
+    (``aplicar_rls``) e pelos filtros da sidebar. Nenhum frame pre-RLS
+    entra aqui.
+
+    Cache em ``session_state`` sob ``_kpis_pipeline_cache`` /
+    ``_kpis_pipeline_chave``, invalidado por ``_chave_kpis``.
+
+    O cache e gravado como ``dict`` e o ``KpisPipeline`` construido na
+    saida (precedente da ST-07): cache remanescente de sessao viva com
+    formato antigo falha alto em vez de virar ``AttributeError`` mudo.
+    """
+    chave = _chave_kpis(mes, ano, role, perfil_efetivo, session_state)
+
+    if session_state.get("_kpis_pipeline_chave") != chave:
+        kpis_analise = calcular_kpis_analise(
             df_analise,
-            df_metas_produto,
-            kpis.get("du_total", 0),
+            df,
             du_decorridos,
-            df_org=_df_org_ritmo,
-            org_norm=_org_norm,
         )
 
-        # ── Médias da organização (pre-RLS, granularidade por perfil) ──
-        # Granularidade acompanha o filtro de UI: se o usuário afunilou
-        # até consultor → granularidade consultor; até loja → supervisor;
-        # sem filtro extra → granularidade nativa do perfil.
+        kpis_cancel = calcular_kpis_cancelados(
+            df_cancelados,
+            df,
+            df_analise,
+        )
+
+        session_state["_kpis_pipeline_cache"] = {
+            "kpis_analise": kpis_analise,
+            "kpis_cancel": kpis_cancel,
+        }
+        session_state["_kpis_pipeline_chave"] = chave
+
+    return KpisPipeline(**session_state["_kpis_pipeline_cache"])
+
+
+def obter_medias_periodo(
+    *,
+    session_state: MutableMapping[str, Any],
+    mes: int,
+    ano: int,
+    role: Optional[str],
+    perfil_efetivo: Optional[dict],
+    df: pd.DataFrame,
+    du_decorridos: int,
+    df_sup: pd.DataFrame,
+) -> Dict:
+    """Medias por DU e por nivel (regiao/loja/consultor) — com cache.
+
+    **Escopo dos frames — POS-RLS.** ``df`` e ``df_sup`` chegam ja
+    recortados pelo perfil e pelos filtros da sidebar: sao as medias
+    do que o usuario enxerga. A comparacao com a organizacao inteira
+    e outra funcao (``obter_medias_organizacao_periodo``), separada
+    justamente para que o call site deixe explicito qual das duas toca
+    dado fora do escopo do perfil.
+
+    Cache em ``session_state`` sob ``_medias_cache`` /
+    ``_medias_chave``, invalidado por ``_chave_kpis``.
+    """
+    chave = _chave_kpis(mes, ano, role, perfil_efetivo, session_state)
+
+    if session_state.get("_medias_chave") != chave:
+        session_state["_medias_cache"] = calcular_medias_du_por_nivel(
+            df,
+            du_decorridos,
+            df_sup,
+        )
+        session_state["_medias_chave"] = chave
+
+    return session_state["_medias_cache"]
+
+
+def obter_medias_organizacao_periodo(
+    *,
+    session_state: MutableMapping[str, Any],
+    mes: int,
+    ano: int,
+    role: Optional[str],
+    perfil_efetivo: Optional[dict],
+    df_full: pd.DataFrame,
+    du_decorridos: int,
+    df_sup_full: pd.DataFrame,
+) -> Dict[str, float]:
+    """Medias da organizacao inteira (base de comparacao) — com cache.
+
+    **Escopo dos frames — PRE-RLS, de proposito.** ``df_full`` e a base
+    da organizacao (media da empresa) e ``df_sup_full`` e a lista global
+    de supervisores usada so para EXCLUSAO (nunca exibida). Deles nao
+    sai NENHUMA linha para a tela: somente medias e contagens agregadas.
+    Esta funcao existe separada de ``obter_medias_periodo`` por isso —
+    ter as duas no mesmo call site torna obvio, em auditoria, qual delas
+    recebe dado fora do escopo do perfil.
+
+    A granularidade da media acompanha o filtro de UI: se o usuario
+    afunilou ate consultor → granularidade consultor; ate loja →
+    supervisor; sem filtro extra → granularidade nativa do perfil.
+
+    Cache em ``session_state`` sob ``_medias_organizacao_cache`` /
+    ``_medias_organizacao_chave``, invalidado por ``_chave_kpis`` — que
+    ja inclui os dois filtros de UI lidos aqui.
+    """
+    chave = _chave_kpis(mes, ano, role, perfil_efetivo, session_state)
+
+    if session_state.get("_medias_organizacao_chave") != chave:
         if session_state.get("ui_filtro_consultor"):
             _perfil_media = "consultor"
         elif (
@@ -1139,44 +1209,185 @@ def obter_kpis_periodo(
             _perfil_media = "supervisor"
         else:
             _perfil_media = role
-        medias_organizacao = calcular_medias_organizacao(
-            df_full,
-            du_decorridos=du_decorridos,
-            perfil=_perfil_media,
-            df_sup=df_sup_full,
+
+        session_state["_medias_organizacao_cache"] = (
+            calcular_medias_organizacao(
+                df_full,
+                du_decorridos=du_decorridos,
+                perfil=_perfil_media,
+                df_sup=df_sup_full,
+            )
+        )
+        session_state["_medias_organizacao_chave"] = chave
+
+    return session_state["_medias_organizacao_cache"]
+
+
+def obter_metas_prod_diarias_periodo(
+    *,
+    session_state: MutableMapping[str, Any],
+    mes: int,
+    ano: int,
+    role: Optional[str],
+    perfil_efetivo: Optional[dict],
+    df: pd.DataFrame,
+    df_metas: pd.DataFrame,
+    df_metas_produto: pd.DataFrame,
+    df_sup: pd.DataFrame,
+    dia_atual: Optional[int],
+    du_decorridos: int,
+) -> List[Dict]:
+    """Meta diaria restante por produto — com cache.
+
+    **Sobre ``df_metas`` / ``df_sup`` / ``dia_atual``:** nao entram no
+    calculo desta funcao. Existem na assinatura porque o ``du_total``
+    de que ela depende so e produzido dentro do grupo "gerais", e a
+    forma escolhida de obte-lo e chamar
+    ``obter_kpis_gerais_periodo`` internamente (chamada barata: mesmo
+    ``session_state`` e mesma ``_chave_kpis``, entao se ``app.py`` ja a
+    chamou neste rerun e cache hit). A alternativa — receber
+    ``du_total`` pronto por parametro — deixaria o call site com um
+    contrato de ordem implicito ("chame gerais antes"), que e
+    exatamente o acoplamento que a decomposicao quis remover. Trade-off
+    consciente: parametros a mais aqui, autossuficiencia la.
+
+    **Escopo dos frames.** Todos POS-RLS. Nenhum frame pre-RLS entra.
+
+    Cache em ``session_state`` sob ``_metas_prod_diarias_cache`` /
+    ``_metas_prod_diarias_chave``, invalidado por ``_chave_kpis``.
+    """
+    chave = _chave_kpis(mes, ano, role, perfil_efetivo, session_state)
+
+    if session_state.get("_metas_prod_diarias_chave") != chave:
+        kpis = obter_kpis_gerais_periodo(
+            session_state=session_state,
+            mes=mes,
+            ano=ano,
+            role=role,
+            perfil_efetivo=perfil_efetivo,
+            df=df,
+            df_metas=df_metas,
+            df_metas_produto=df_metas_produto,
+            dia_atual=dia_atual,
+            df_sup=df_sup,
         )
 
-        # Serie diaria de valor pago (para sparkline do card hero).
-        daily_pago = _serie_diaria_pago(df)
+        session_state["_metas_prod_diarias_cache"] = (
+            calcular_metas_produto_diarias(
+                df,
+                df_metas_produto,
+                kpis.get("du_total", 0),
+                du_decorridos,
+            )
+        )
+        session_state["_metas_prod_diarias_chave"] = chave
 
-        session_state["_kpis_cache"] = {
-            "kpis": kpis,
-            "kpis_analise": kpis_analise,
-            "kpis_cancel": kpis_cancel,
-            "medias": medias,
-            "metas_prod_diarias": metas_prod_diarias,
-            "medias_organizacao": medias_organizacao,
-            "kpis_qtd": kpis_qtd,
-            "daily_pago": daily_pago,
-        }
-        session_state["_kpis_chave"] = chave
+    return session_state["_metas_prod_diarias_cache"]
 
-    return KpisPeriodo(**session_state["_kpis_cache"])
+
+def obter_kpis_qtd_periodo(
+    *,
+    session_state: MutableMapping[str, Any],
+    mes: int,
+    ano: int,
+    role: Optional[str],
+    perfil_efetivo: Optional[dict],
+    df: pd.DataFrame,
+    df_metas: pd.DataFrame,
+    df_metas_produto: pd.DataFrame,
+    df_sup: pd.DataFrame,
+    df_analise: pd.DataFrame,
+    df_full: pd.DataFrame,
+    df_sup_full: pd.DataFrame,
+    dia_atual: Optional[int],
+    du_decorridos: int,
+) -> List[Dict]:
+    """KPIs de QUANTIDADE por produto (com ritmo de referencia) — cache.
+
+    **Escopo dos frames — mistura POS e PRE-RLS, por regra de negocio.**
+    ``df`` / ``df_analise`` / ``df_metas_produto`` chegam POS-RLS. Ja
+    ``df_full`` e ``df_sup_full`` sao PRE-RLS de proposito: alimentam
+    ``_ritmo_organizacao``, que produz a media DU de referencia da
+    regiao (por loja para supervisor, por consultor para consultor).
+    Isso nao e acoplamento acidental — e a mesma regra de negocio de
+    sempre: o ritmo comparativo precisa da regiao inteira, nao so do
+    escopo do usuario. Desses dois frames nao sai NENHUMA linha para a
+    tela: apenas a base agregada e o normalizador (``org_norm``).
+
+    **Sobre ``df_metas`` / ``df_sup`` / ``dia_atual``:** mesmo motivo de
+    ``obter_metas_prod_diarias_periodo`` — sao repassados a
+    ``obter_kpis_gerais_periodo`` para obter o ``du_total``, sem contrato
+    de ordem implicito no call site.
+
+    Cache em ``session_state`` sob ``_kpis_qtd_cache`` /
+    ``_kpis_qtd_chave``, invalidado por ``_chave_kpis``.
+    """
+    chave = _chave_kpis(mes, ano, role, perfil_efetivo, session_state)
+
+    if session_state.get("_kpis_qtd_chave") != chave:
+        kpis = obter_kpis_gerais_periodo(
+            session_state=session_state,
+            mes=mes,
+            ano=ano,
+            role=role,
+            perfil_efetivo=perfil_efetivo,
+            df=df,
+            df_metas=df_metas,
+            df_metas_produto=df_metas_produto,
+            dia_atual=dia_atual,
+            df_sup=df_sup,
+        )
+
+        # Média DU de referência: média da região por loja (supervisor)
+        # ou por consultor (consultor). Para outros perfis, sem referência.
+        _df_org_ritmo, _org_norm = _ritmo_organizacao(
+            role, df, df_full, df_sup_full
+        )
+
+        session_state["_kpis_qtd_cache"] = calcular_kpis_qtd_produtos(
+            df,
+            df_analise,
+            df_metas_produto,
+            kpis.get("du_total", 0),
+            du_decorridos,
+            df_org=_df_org_ritmo,
+            org_norm=_org_norm,
+        )
+        session_state["_kpis_qtd_chave"] = chave
+
+    return session_state["_kpis_qtd_cache"]
 
 
 def limpar_cache_kpis(session_state: MutableMapping[str, Any]) -> None:
-    """Invalida o cache de KPIs do periodo (``obter_kpis_periodo``).
+    """Invalida os caches de KPIs do periodo (``obter_*_periodo``).
 
-    ``_kpis_cache`` / ``_kpis_chave`` sao chaves privadas DESTE modulo:
-    quem dispara um refresh global (o botao "Atualizar Dados", na
-    sidebar) precisa poder esquece-las sem conhece-las pelo nome. Sem
+    Os seis pares ``_*_cache`` / ``_*_chave`` sao chaves privadas DESTE
+    modulo: quem dispara um refresh global (o botao "Atualizar Dados",
+    na sidebar) precisa poder esquece-las sem conhece-las pelo nome. Sem
     este ponto unico, cada novo par de chaves de cache criado aqui
     precisaria ser lembrado no call site — foi assim que o cache YoY
     ficou de fora do refresh por uma versao (ver
-    ``tabs/produtos.py::limpar_cache_comparativos``).
+    ``tabs/produtos.py::limpar_cache_comparativos``). Depois da
+    decomposicao de ``obter_kpis_periodo`` em seis funcoes, o argumento
+    vale seis vezes mais: **funcao ``obter_*_periodo`` nova entra aqui
+    na mesma tarefa em que nasce.**
 
-    Nao recalcula nada: a proxima chamada de ``obter_kpis_periodo``
-    encontra a chave ausente e refaz o bloco inteiro.
+    Nao recalcula nada: a proxima chamada de cada ``obter_*_periodo``
+    encontra a chave ausente e refaz o seu bloco.
+
+    Os nomes sao escritos por extenso (e nao montados por prefixo) de
+    proposito: auditar cache de KPI comeca por um ``grep`` do nome da
+    chave, e nome montado em runtime some do grep.
     """
-    session_state.pop("_kpis_cache", None)
-    session_state.pop("_kpis_chave", None)
+    session_state.pop("_kpis_gerais_cache", None)
+    session_state.pop("_kpis_gerais_chave", None)
+    session_state.pop("_kpis_pipeline_cache", None)
+    session_state.pop("_kpis_pipeline_chave", None)
+    session_state.pop("_medias_cache", None)
+    session_state.pop("_medias_chave", None)
+    session_state.pop("_medias_organizacao_cache", None)
+    session_state.pop("_medias_organizacao_chave", None)
+    session_state.pop("_metas_prod_diarias_cache", None)
+    session_state.pop("_metas_prod_diarias_chave", None)
+    session_state.pop("_kpis_qtd_cache", None)
+    session_state.pop("_kpis_qtd_chave", None)

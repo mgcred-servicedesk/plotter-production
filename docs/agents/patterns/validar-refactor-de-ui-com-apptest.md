@@ -293,12 +293,40 @@ antigo.replace(" " * 12, " " * 8) == novo   # True => só indentação mudou
   (5 perfis × abas visíveis + 2 chaves forjadas) com diff **byte a
   byte** vazio. Origem do congelamento dos loaders em `pickle` e da
   contagem de misses como critério de aceite.)
+- Reaplicado em: [app.py](../../../app.py) (Fase 3/ISP — call site dos KPIs
+  dividido em dois pontos para adiar o cálculo dos 5 grupos que a view de
+  pontuação e o drill-down não consomem; 14 cenários por versão. Origem da
+  seção "Quando o diff **deve** ter conteúdo" abaixo.)
 - Doc complementar: [docs/agents/ui-components.md](../ui-components.md),
   [docs/agents/rls.md](../rls.md)
+
+## Quando o diff **deve** ter conteúdo: separe render de estado
+
+Refactor que muda *quando* algo é calculado — não *o quê* — tem dois
+critérios de aceite opostos no mesmo run:
+
+- o **render** precisa ser idêntico (diff vazio);
+- o **`session_state`** precisa divergir, e a divergência *é* a prova.
+
+Emita as duas coisas em linhas com prefixos distintos (`SS[...]` para as
+chaves de cache) e diffe **duas vezes**: uma filtrando as linhas de estado
+(`grep -v '^SS\['`) para provar a paridade visual, outra completa para ler
+a mudança pretendida. Sem a separação, o diff mistura sinal e evidência e
+nenhum dos dois critérios fica demonstrado.
+
+Presença/ausência de chave de cache é o instrumento certo aqui: cada
+`obter_*_periodo` só grava `_<grupo>_chave` se rodou, então
+`chave in at.session_state` responde "este caminho pagou por este grupo?"
+sem instrumentar o código de produção.
+
+Complemento gratuito no mesmo run: **`0 misses` de VCR dos dois lados**
+prova que a versão nova não passou a pedir nada novo aos loaders — o que
+um diff de render idêntico sozinho não garante (um loader a mais que
+devolvesse o mesmo dado passaria batido).
 
 ---
 
 **Autor (agente):** Claude Code (`ui-dash`, via `task-orchestrator`)
 **Criado em:** 2026-08-04
-**Última revisão:** 2026-08-05 por Claude Code (Fase 2/OCP — congelar os
-loaders com VCR de `pickle` quando o ETL escreve durante a validação)
+**Última revisão:** 2026-08-05 por Claude Code (Fase 3/ISP — diff que
+*deve* ter conteúdo: separar linhas de render das de `session_state`)
