@@ -8,12 +8,14 @@ KPI antigos nem dos loaders Excel.
 
 Comando: `streamlit run app.py`
 
-Após a refatoração SOLID/SRP de 2026-08 (`refactor/app-py-solid-fase1`),
-`app.py` é um **orquestrador fino** (~824 linhas): autentica, monta sidebar
-(via `ui/sidebar.py`), carrega dados do período numa chamada
-(`loaders.py::carregar_periodo_dashboard`), aplica RLS, calcula KPIs numa
-chamada (`kpis/gerais.py::obter_kpis_periodo`) e delega render para
-`src/dashboard/{tabs,pages}/*`. Toda lógica pesada vive em
+Após a refatoração SOLID de 2026-08 (`refactor/app-py-solid-fase1`, SRP +
+OCP), `app.py` é um **orquestrador fino** (~864 linhas): autentica, monta
+sidebar (via `ui/sidebar.py`, incluindo o seletor de Período), carrega
+dados do período numa chamada (`loaders.py::carregar_periodo_dashboard`),
+aplica RLS, calcula KPIs numa chamada
+(`kpis/gerais.py::obter_kpis_periodo`) e despacha render das abas via um
+**registro único** (`_AbaNav`, ver [ui-components.md](ui-components.md))
+para `src/dashboard/{tabs,pages}/*`. Toda lógica pesada vive em
 `src/dashboard/{loaders,kpis,ui,tabs,pages}/`.
 
 Features novas vão **sempre** para `app.py` na raiz. Os antigos
@@ -55,7 +57,7 @@ src/
     ui/                        ← componentes visuais
       sidebar.py                ← render_theme_toggle, render_sidebar_usuario,
                                    render_sidebar_visualizar_como, render_sidebar_filtros_perfil,
-                                   aplicar_filtros_ui, filtrar_metas_ui
+                                   aplicar_filtros_ui, filtrar_metas_ui, render_periodo
       theme.py                 ← sistema de temas (CHART_THEME, CSS vars, aplicar_tema),
                                    ocultar_widgets_nativos, render_overlay_fresh_login
       theme_claro_avancado.py  ← variante de tema claro
@@ -85,7 +87,7 @@ configuracao/                  ← planilhas auxiliares (HC, lojas, supervisores
 
 1. `tela_login()` → gate de autenticação.
 2. `carregar_estilos_customizados()` + `aplicar_tema()` (de `ui/theme.py`).
-3. Sidebar (`ui/sidebar.py`) monta período (ano/mês) e opções de admin.
+3. Sidebar (`ui/sidebar.py::render_periodo`) monta período (ano/mês) e opções de admin.
 4. `carregar_periodo_dashboard(mes, ano, on_progress=...)` (em `loaders.py`) — uma
    chamada que encapsula `consolidar_dados` (pagos) + categorias + metas de produto +
    `carregar_contratos_em_analise`/`_cancelados`, já aplicando `aplicar_conta_valor`
@@ -97,10 +99,13 @@ configuracao/                  ← planilhas auxiliares (HC, lojas, supervisores
    `medias_du_por_nivel`, `metas_produto_diarias` e memoiza o resultado em
    `st.session_state` por `(mes, ano, role, escopo, filtros de UI)`.
 7. `pode_ver(chave, role)` (de `permissions.py`) decide quais abas/cards renderizam.
-8. `render_tab_*` é despachado conforme o item selecionado em `st.pills` (não
-   `sac.tabs` — trocado para evitar abas inacessíveis por overflow em telas estreitas).
-   A aba "Produtos" carrega comparativos (mês anterior/YoY) só quando selecionada,
-   via helpers internos de `tabs/produtos.py`.
+8. `render_tab_*` é despachado por um **registro único de abas** (`_AbaNav`
+   NamedTuple em `app.py`, ver [ui-components.md](ui-components.md)) conforme
+   o item selecionado em `st.pills` (não `sac.tabs` — trocado para evitar
+   abas inacessíveis por overflow em telas estreitas). Adicionar/remover uma
+   aba é uma entrada nesse registro, não um `if/elif`. A aba "Produtos"
+   carrega comparativos (mês anterior/YoY) só quando selecionada, via
+   helpers internos de `tabs/produtos.py`.
 9. Drill-down de cards (`?card=<key>` ou clique) é despachado por
    `pages/detalhes_cards.py::render_drilldown_card`.
 
