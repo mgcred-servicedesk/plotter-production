@@ -9,12 +9,7 @@ Todos os componentes usam o CSS design system
 
 import streamlit as st
 
-
-_MESES_PT = {
-    1: "Janeiro", 2: "Fevereiro", 3: "Março", 4: "Abril",
-    5: "Maio", 6: "Junho", 7: "Julho", 8: "Agosto",
-    9: "Setembro", 10: "Outubro", 11: "Novembro", 12: "Dezembro",
-}
+from src.config.settings import MESES_PT_TITULO
 
 
 def render_header(
@@ -34,7 +29,7 @@ def render_header(
         subtitulo: Texto secundario abaixo do titulo.
     """
     if mes and ano:
-        periodo = f"{_MESES_PT.get(mes, mes)} {ano}"
+        periodo = f"{MESES_PT_TITULO.get(mes, mes)} {ano}"
         breadcrumb = (
             f'<nav class="mg-breadcrumb" aria-label="breadcrumb">'
             f"<span>MGCred</span>"

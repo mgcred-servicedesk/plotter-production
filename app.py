@@ -31,6 +31,7 @@ from src.dashboard.auth import (
 from src.dashboard.components.tables import exibir_tabela
 from src.dashboard.kpis.gerais import (
     calcular_kpis_analise,
+    limpar_cache_kpis,
     obter_kpis_periodo,
 )
 from src.dashboard.pages.config import render_pagina_config
@@ -48,7 +49,6 @@ from src.dashboard.loaders import (
     carregar_periodo_dashboard,
     carregar_pontuacao_efetiva,
     carregar_reconquista,
-    carregar_ultimo_periodo,
 )
 from src.dashboard.permissions import pode_ver
 from src.dashboard.rls import (
@@ -61,7 +61,10 @@ from src.dashboard.tabs.em_analise import render_tab_em_analise
 from src.dashboard.tabs.evolucao import render_tab_evolucao
 from src.dashboard.tabs.gestao_consultores import render_tab_gestao
 from src.dashboard.tabs.pagamentos_online import render_tab_pagamentos_online
-from src.dashboard.tabs.produtos import render_tab_produtos
+from src.dashboard.tabs.produtos import (
+    limpar_cache_comparativos,
+    render_tab_produtos,
+)
 from src.dashboard.tabs.rankings import render_tab_rankings
 from src.dashboard.tabs.regioes import render_tab_regioes
 from src.dashboard.ui.header import (
@@ -79,6 +82,7 @@ from src.dashboard.ui.resumo_executivo import render_resumo_executivo
 from src.dashboard.ui.sidebar import (
     aplicar_filtros_ui,
     filtrar_metas_ui,
+    render_periodo,
     render_sidebar_filtros_perfil,
     render_sidebar_usuario,
     render_sidebar_visualizar_como,
@@ -111,6 +115,26 @@ st.set_page_config(
 # ══════════════════════════════════════════════════════
 # Helpers de main() — blocos coesos extraidos
 # ══════════════════════════════════════════════════════
+
+
+def _limpar_caches_periodo() -> None:
+    """Limpeza disparada pelo botao "Atualizar Dados" da sidebar.
+
+    Composta AQUI porque cada cache pertence a um modulo diferente e
+    ninguem sozinho conhece o conjunto: ``main()`` e quem orquestra os
+    tres. Cada modulo dono expoe a propria funcao de limpeza — a
+    alternativa (a sidebar dar ``pop`` nas sete chaves pelo nome) ja
+    custou um bugfix quando um par de chaves novo nasceu num modulo e
+    nao foi lembrado no botao.
+
+    ``_periodo_carregado`` e estado do proprio ``main()`` (controla o
+    skeleton da primeira carga do periodo), por isso e a unica chave
+    removida aqui pelo nome.
+    """
+    st.cache_data.clear()
+    limpar_cache_kpis(st.session_state)
+    limpar_cache_comparativos()
+    st.session_state.pop("_periodo_carregado", None)
 
 
 def _render_aviso_pontuacao_fallback(df_pontos: pd.DataFrame) -> None:
@@ -189,74 +213,7 @@ def main():
         render_sidebar_usuario()
 
         # ── Periodo (colapsavel) ──────────────────────
-        with st.expander(
-            ":material/calendar_month: Período",
-            expanded=True,
-        ):
-            _anos = [2024, 2025, 2026]
-            if "periodo_padrao_carregado" not in st.session_state:
-                _ultimo = carregar_ultimo_periodo()
-                if _ultimo:
-                    st.session_state["ano_padrao"] = _ultimo["ano"]
-                    st.session_state["mes_padrao"] = _ultimo["mes"]
-                else:
-                    from datetime import datetime as _dt
-
-                    _hoje = _dt.now()
-                    st.session_state["ano_padrao"] = _hoje.year
-                    st.session_state["mes_padrao"] = _hoje.month
-                st.session_state["periodo_padrao_carregado"] = True
-
-            _ano_padrao = st.session_state.get("ano_padrao", 2026)
-            _mes_padrao = st.session_state.get("mes_padrao", 1)
-            _idx_ano = (
-                _anos.index(_ano_padrao) if _ano_padrao in _anos else len(_anos) - 1
-            )
-
-            c_ano, c_mes = st.columns(2)
-            with c_ano:
-                ano = st.selectbox("Ano", _anos, index=_idx_ano)
-            with c_mes:
-                mes = st.selectbox(
-                    "Mes",
-                    list(range(1, 13)),
-                    index=_mes_padrao - 1,
-                    format_func=lambda x: {
-                        1: "Janeiro",
-                        2: "Fevereiro",
-                        3: "Marco",
-                        4: "Abril",
-                        5: "Maio",
-                        6: "Junho",
-                        7: "Julho",
-                        8: "Agosto",
-                        9: "Setembro",
-                        10: "Outubro",
-                        11: "Novembro",
-                        12: "Dezembro",
-                    }[x],
-                )
-
-            # ── Botao para forcar atualizacao do cache ──
-            if st.button(
-                ":material/refresh: Atualizar Dados",
-                help=(
-                    "Limpa o cache e recarrega todos os dados "
-                    "do banco. Use quando souber que os dados "
-                    "foram atualizados recentemente."
-                ),
-                key="btn_refresh_cache",
-                width="stretch",
-            ):
-                st.cache_data.clear()
-                st.session_state.pop("_kpis_cache", None)
-                st.session_state.pop("_kpis_chave", None)
-                st.session_state.pop("_df_ant_cache", None)
-                st.session_state.pop("_df_ant_chave", None)
-                st.session_state.pop("_df_ano_ant_cache", None)
-                st.session_state.pop("_df_ano_ant_chave", None)
-                st.session_state.pop("_periodo_carregado", None)
-                st.rerun()
+        ano, mes = render_periodo(on_refresh=_limpar_caches_periodo)
 
     # ── Toggle Vendas ⇄ Pontuacao (state-driven) ──────
     # Decide a view ANTES do header para que o titulo acompanhe

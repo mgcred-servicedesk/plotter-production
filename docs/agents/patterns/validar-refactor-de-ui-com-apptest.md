@@ -70,6 +70,15 @@ diffar a saída. Diff vazio é a evidência.
 - Sujar o `session_state` de propósito quando houver branch de limpeza
   (ex.: `_vc_sel_ant` diferente da seleção força `_limpar_filtros_ui`),
   e assertar que as chaves sumiram.
+- **Para provar *eviction* de cache, envenene o VALOR e preserve a
+  CHAVE.** Assertar "a chave sumiu" depois de um clique que dispara
+  `st.rerun()` não funciona: o rerun recalcula e a chave volta. Rode uma
+  vez, troque o valor memoizado por uma sentinela mantendo a chave de
+  invalidação real (`_kpis_cache` com `total_vendas = -424242`,
+  `_df_ant_cache` virando `DataFrame({"SENTINELA": [1]})`), clique e
+  rode de novo. Se a limpeza não acontecer, a chave bate e a **sentinela
+  sobrevive**; se acontecer, volta o valor real. Um cenário cobre todos
+  os pares `<prefixo>_cache`/`<prefixo>_chave` de uma vez.
 - **Quando a chave é escrita *durante* o run, injetá-la antes do
   `at.run()` não adianta** — o valor real sobrescreve. É o caso de
   `_diag_pontuacao`, side-effect de `consolidar_dados`. Patchar a função
@@ -140,6 +149,20 @@ done
 git worktree remove "$SP/baseline" --force
 ```
 
+## Armadilha: nem todo diff é seu — rode o baseline duas vezes
+
+Quando o diff acusa **um único elemento** e o `len` é idêntico ao do
+baseline, suspeite do dado antes do código: rode o mesmo inventário
+**duas vezes na mesma versão** e diffe baseline × baseline. Se a linha
+diverge ali também, é ruído.
+
+Caso real: o `st.json(diag['mapa_pontos'])` do diagnóstico de pontuação
+alterna entre dois hashes com `len` fixo (208) porque a RPC devolve as
+categorias sem `ORDER BY` — a ordem das chaves do dict muda de processo
+para processo, e `PYTHONHASHSEED=0` não alcança isso (não é hash de
+`str`, é ordem de linha do Postgres). Um script isolado que extrai só
+aquele elemento nas duas versões fecha a prova em ~1 min de run.
+
 ## Armadilha: o dedent do `st.markdown` é condicional
 
 Ao mover um `st.markdown` para menos níveis de indentação, o hash cru
@@ -201,6 +224,10 @@ antigo.replace(" " * 12, " " * 8) == novo   # True => só indentação mudou
   (ST-10 — extração do dispatch do drill-down de cards; 8 cenários num
   processo por versão, diff vazio. Origem da travessia recursiva de
   `at.main.children` e do cenário de chave forjada.)
+- Reaplicado em: [src/dashboard/ui/sidebar.py](../../../src/dashboard/ui/sidebar.py)
+  (ST-11 — extração do bloco "Período"; 4 cenários por versão, diff
+  restrito à mudança de rótulo intencional. Origem do envenenamento de
+  cache com chave preservada e do baseline rodado duas vezes.)
 - Doc complementar: [docs/agents/ui-components.md](../ui-components.md),
   [docs/agents/rls.md](../rls.md)
 
@@ -208,5 +235,5 @@ antigo.replace(" " * 12, " " * 8) == novo   # True => só indentação mudou
 
 **Autor (agente):** Claude Code (`ui-dash`, via `task-orchestrator`)
 **Criado em:** 2026-08-04
-**Última revisão:** 2026-08-05 por Claude Code (ST-10 — travessia
-recursiva de `at.main.children` e cenário de chave inexistente)
+**Última revisão:** 2026-08-05 por Claude Code (ST-11 — sentinela de
+cache com chave preservada e baseline rodado duas vezes)

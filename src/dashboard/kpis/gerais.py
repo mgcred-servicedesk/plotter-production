@@ -1162,3 +1162,21 @@ def obter_kpis_periodo(
         session_state["_kpis_chave"] = chave
 
     return KpisPeriodo(**session_state["_kpis_cache"])
+
+
+def limpar_cache_kpis(session_state: MutableMapping[str, Any]) -> None:
+    """Invalida o cache de KPIs do periodo (``obter_kpis_periodo``).
+
+    ``_kpis_cache`` / ``_kpis_chave`` sao chaves privadas DESTE modulo:
+    quem dispara um refresh global (o botao "Atualizar Dados", na
+    sidebar) precisa poder esquece-las sem conhece-las pelo nome. Sem
+    este ponto unico, cada novo par de chaves de cache criado aqui
+    precisaria ser lembrado no call site — foi assim que o cache YoY
+    ficou de fora do refresh por uma versao (ver
+    ``tabs/produtos.py::limpar_cache_comparativos``).
+
+    Nao recalcula nada: a proxima chamada de ``obter_kpis_periodo``
+    encontra a chave ausente e refaz o bloco inteiro.
+    """
+    session_state.pop("_kpis_cache", None)
+    session_state.pop("_kpis_chave", None)

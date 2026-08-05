@@ -33,6 +33,7 @@ from src.dashboard.kpis.gerais import (
     contar_consultores,
     excluir_supervisores,
     filtrar_janela_recente,
+    limpar_cache_kpis,
     obter_kpis_periodo,
     separar_cancelados_liquidos,
 )
@@ -745,3 +746,28 @@ class TestObterKpisPeriodo:
         assert isinstance(cache, dict)
         assert set(cache.keys()) == set(KpisPeriodo._fields)
         assert len(cache) == 8
+
+    def test_limpar_cache_kpis_forca_recalculo(self, sem_feriados):
+        """``limpar_cache_kpis`` é o que o botão "Atualizar Dados" chama:
+        some com as duas chaves e faz a chamada seguinte recalcular (o
+        chamador não conhece os nomes ``_kpis_cache``/``_kpis_chave``)."""
+        ss = {}
+        perfil = {"perfil": "gerente_comercial", "escopo": ["R1", "R2"]}
+        kwargs = self._kwargs(ss, self._df_a(), perfil)
+        obter_kpis_periodo(**kwargs)
+        cache_antes = id(ss["_kpis_cache"])
+
+        limpar_cache_kpis(ss)
+        assert "_kpis_cache" not in ss
+        assert "_kpis_chave" not in ss
+
+        # Mesma chave de novo, mas sem cache: recalcula (dict novo).
+        obter_kpis_periodo(**kwargs)
+        assert id(ss["_kpis_cache"]) != cache_antes
+
+    def test_limpar_cache_kpis_e_idempotente(self):
+        """Chamada com o cache já ausente não pode levantar KeyError —
+        o botão pode ser clicado antes de qualquer cálculo."""
+        ss = {}
+        limpar_cache_kpis(ss)
+        assert ss == {}

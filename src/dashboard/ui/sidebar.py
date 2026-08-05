@@ -2,10 +2,11 @@
 Componentes da sidebar do dashboard.
 
 Reune tudo que e renderizado dentro de ``st.sidebar`` (toggle de
-tema, card do usuario, "Visualizar Como", filtros granulares
-Loja -> Consultor) e o par de funcoes que **le** o estado escrito
-por esses filtros (``aplicar_filtros_ui``, ``filtrar_metas_ui``),
-aplicado sobre DataFrames ja recortados pelo RLS de perfil.
+tema, card do usuario, expander de Periodo, "Visualizar Como",
+filtros granulares Loja -> Consultor) e o par de funcoes que **le**
+o estado escrito por esses filtros (``aplicar_filtros_ui``,
+``filtrar_metas_ui``), aplicado sobre DataFrames ja recortados pelo
+RLS de perfil.
 
 Contrato de estado (``st.session_state``):
 
@@ -14,23 +15,37 @@ Contrato de estado (``st.session_state``):
 - ``_ui_lojas_ant``       -> list[str], selecao anterior de lojas
   (detecta troca de loja para resetar o consultor)
 - ``visualizar_como``     -> dict de perfil simulado (admin/gestor)
+- ``ano_padrao`` / ``mes_padrao`` -> int, periodo inicial resolvido
+  a partir do ultimo mes com dado no banco
+- ``periodo_padrao_carregado``   -> bool, trava que resolve esse
+  padrao uma unica vez por sessao
 
 Quem escreve essas chaves e a sidebar; quem le sao
 ``aplicar_filtros_ui`` / ``filtrar_metas_ui`` e o ``app.py``
 (invalidacao de cache por chave de filtro).
+
+O modulo **nao** conhece chave de cache de outros modulos: o botao
+"Atualizar Dados" so dispara o callback ``on_refresh`` recebido de
+``app.py`` (ver ``render_periodo``).
 """
 
 import html
+from datetime import datetime
+from typing import Callable
 
 import pandas as pd
 import streamlit as st
 import streamlit_antd_components as sac
 
+from src.config.settings import MESES_PT_TITULO
 from src.dashboard.auth import (
     fazer_logout,
     usuario_logado,
 )
-from src.dashboard.loaders import carregar_lojas_ativas
+from src.dashboard.loaders import (
+    carregar_lojas_ativas,
+    carregar_ultimo_periodo,
+)
 from src.dashboard.rls import aplicar_rls
 from src.dashboard.ui.theme import (
     get_theme_mode,
@@ -141,6 +156,78 @@ def render_sidebar_usuario():
         ):
             fazer_logout()
             st.rerun()
+
+
+def render_periodo(*, on_refresh: Callable[[], None]) -> tuple[int, int]:
+    """Expander "Período": seletores de Ano/Mes + botao "Atualizar Dados".
+
+    Retorna ``(ano, mes)``. E a unica funcao de render deste modulo que
+    devolve valor: o periodo escolhido governa o resto do dashboard
+    (carga dos frames, titulo do header, chaves de cache), entao ele
+    volta pelo ``return`` em vez de por ``session_state``.
+
+    O padrao inicial vem do ultimo periodo COM DADO no banco
+    (``carregar_ultimo_periodo``), resolvido uma unica vez por sessao e
+    guardado em ``ano_padrao`` / ``mes_padrao``; sem resposta do banco,
+    cai para o mes corrente. A flag ``periodo_padrao_carregado`` e o que
+    impede que esse default sobrescreva a escolha do usuario a cada
+    rerun.
+
+    ``on_refresh`` e chamado no clique de "Atualizar Dados", antes do
+    ``st.rerun()``. A sidebar so sabe que houve o PEDIDO de refresh;
+    **quais** caches morrem e decisao de quem os possui — o chamador
+    (``app.py``) compoe a limpeza a partir das funcoes expostas pelos
+    modulos donos. Assim este modulo nao carrega o nome de nenhuma chave
+    de cache de KPI ou de aba.
+    """
+    with st.expander(
+        ":material/calendar_month: Período",
+        expanded=True,
+    ):
+        _anos = [2024, 2025, 2026]
+        if "periodo_padrao_carregado" not in st.session_state:
+            _ultimo = carregar_ultimo_periodo()
+            if _ultimo:
+                st.session_state["ano_padrao"] = _ultimo["ano"]
+                st.session_state["mes_padrao"] = _ultimo["mes"]
+            else:
+                _hoje = datetime.now()
+                st.session_state["ano_padrao"] = _hoje.year
+                st.session_state["mes_padrao"] = _hoje.month
+            st.session_state["periodo_padrao_carregado"] = True
+
+        _ano_padrao = st.session_state.get("ano_padrao", 2026)
+        _mes_padrao = st.session_state.get("mes_padrao", 1)
+        _idx_ano = (
+            _anos.index(_ano_padrao) if _ano_padrao in _anos else len(_anos) - 1
+        )
+
+        c_ano, c_mes = st.columns(2)
+        with c_ano:
+            ano = st.selectbox("Ano", _anos, index=_idx_ano)
+        with c_mes:
+            mes = st.selectbox(
+                "Mes",
+                list(range(1, 13)),
+                index=_mes_padrao - 1,
+                format_func=lambda x: MESES_PT_TITULO[x],
+            )
+
+        # ── Botao para forcar atualizacao do cache ──
+        if st.button(
+            ":material/refresh: Atualizar Dados",
+            help=(
+                "Limpa o cache e recarrega todos os dados "
+                "do banco. Use quando souber que os dados "
+                "foram atualizados recentemente."
+            ),
+            key="btn_refresh_cache",
+            width="stretch",
+        ):
+            on_refresh()
+            st.rerun()
+
+    return ano, mes
 
 
 def _limpar_filtros_ui() -> None:

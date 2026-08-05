@@ -37,6 +37,15 @@ logger = logging.getLogger(__name__)
 # Regiões excluídas do heatmap comparativo
 _REGIOES_EXCLUIR_HM: frozenset = frozenset({"ALEXANDRE"})
 
+# Prefixos das chaves de session_state dos meses de comparação. Ficam
+# aqui, e não soltos nos call sites, para que carregar e limpar leiam da
+# MESMA lista: o YoY já ficou de fora do "Atualizar Dados" uma vez por
+# ter sido acrescentado só no carregamento (ver
+# ``limpar_cache_comparativos``).
+_PREFIXO_MES_ANT = "_df_ant"
+_PREFIXO_ANO_ANT = "_df_ano_ant"
+_PREFIXOS_COMPARATIVO = (_PREFIXO_MES_ANT, _PREFIXO_ANO_ANT)
+
 # ── Configuracao dos 4 produtos de quantidade ────────
 
 _PRODS_QTD = [
@@ -618,6 +627,26 @@ def _carregar_mes_comparativo(
     return st.session_state[f"{prefixo}_cache"]
 
 
+def limpar_cache_comparativos() -> None:
+    """Invalida o cache dos meses de comparacao desta aba.
+
+    As quatro chaves (``<prefixo>_cache`` / ``<prefixo>_chave`` dos dois
+    prefixos) sao privadas DESTE modulo — quem dispara um refresh global
+    (o botao "Atualizar Dados", na sidebar) nao deve conhece-las pelo
+    nome. Enquanto conhecia, esqueceu: o par ``_df_ano_ant_*`` nasceu na
+    extracao do lazy-load e so entrou no refresh depois, por bugfix
+    (commit ``40a0999``). Derivando as chaves de
+    ``_PREFIXOS_COMPARATIVO``, um comparativo novo passa a ser limpo de
+    graca.
+
+    Nao recarrega nada: a proxima renderizacao da aba encontra a chave
+    ausente e refaz a cadeia (query + RLS + filtros de UI).
+    """
+    for prefixo in _PREFIXOS_COMPARATIVO:
+        st.session_state.pop(f"{prefixo}_cache", None)
+        st.session_state.pop(f"{prefixo}_chave", None)
+
+
 def render_tab_produtos(
     df: pd.DataFrame,
     df_metas_produto: pd.DataFrame,
@@ -647,14 +676,14 @@ def render_tab_produtos(
     df_ant = _carregar_mes_comparativo(
         mes_ant,
         ano_ant,
-        prefixo="_df_ant",
+        prefixo=_PREFIXO_MES_ANT,
         rotulo="mês anterior",
     )
     du_dec_ant = calcular_dias_uteis(ano_ant, mes_ant, 1)[0]
     df_ano_ant = _carregar_mes_comparativo(
         mes,
         ano - 1,
-        prefixo="_df_ano_ant",
+        prefixo=_PREFIXO_ANO_ANT,
         rotulo="comparativo YoY",
     )
 
