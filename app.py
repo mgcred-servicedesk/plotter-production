@@ -253,6 +253,8 @@ def main():
                 st.session_state.pop("_kpis_chave", None)
                 st.session_state.pop("_df_ant_cache", None)
                 st.session_state.pop("_df_ant_chave", None)
+                st.session_state.pop("_df_ano_ant_cache", None)
+                st.session_state.pop("_df_ano_ant_chave", None)
                 st.session_state.pop("_periodo_carregado", None)
                 st.rerun()
 
