@@ -102,6 +102,12 @@ diffar a saída. Diff vazio é a evidência.
   um cenário com **chave inexistente**. Ele prova o ramo "nenhum caso
   casou" — que é justamente o que uma extração desatenta quebra (um
   `else` inventado, um `elif` virado `if`).
+  Forjar a chave da navegação principal (`nav_principal`) tem um detalhe
+  próprio: o `st.pills` **descarta** valor de `session_state` fora de
+  `options` e cai no `default` — tanto para rótulo inexistente quanto
+  para aba que a matriz esconde do perfil. Ou seja, o `tab` só assume
+  rótulo visível, e o cenário serve para provar que as duas versões
+  coincidem nessa coerção, não para alcançar o ramo default do despacho.
 - Rodar a partir da raiz do projeto com as credenciais exportadas
   (`set -a; . .env; set +a`): o `load_dotenv()` da worktree procura a
   partir do arquivo dela e **não** acha o `.env` da raiz.
@@ -162,6 +168,60 @@ categorias sem `ORDER BY` — a ordem das chaves do dict muda de processo
 para processo, e `PYTHONHASHSEED=0` não alcança isso (não é hash de
 `str`, é ordem de linha do Postgres). Um script isolado que extrai só
 aquele elemento nas duas versões fecha a prova em ~1 min de run.
+
+## Armadilha: o banco muda debaixo do diff — congele os loaders
+
+O passo acima (baseline duas vezes) responde *se* o ruído existe; quando
+a resposta é "muito", ele não basta. Rodando a matriz perfil × aba no
+**mês corrente** enquanto o ETL carrega, dois runs do **mesmo** baseline
+separados por 4 minutos divergiram em **74 linhas estruturais**:
+consultores novos entrando no `selectbox` de Detalhes, `FGTS` aparecendo
+nas opções de Produto, uma tabela indo de 76 para 100 linhas e
+**criando um bloco de paginação** que a versão anterior não tinha. Com
+esse chão, "diff vazio" é inalcançável e "diff pequeno" não prova nada.
+
+Antídoto: **congelar a fonte**. Um proxy sobre cada `carregar_*` de
+`src/dashboard/loaders.py` (mais `shared/dias_uteis.carregar_feriados`)
+grava o retorno em `pickle` na primeira chamada e o reproduz nas
+seguintes — inclusive em **outro processo**, que é o ponto: baseline e
+versão atual passam a renderizar a partir dos mesmos bytes.
+
+```python
+def _congelar(mod, nome):
+    real = getattr(mod, nome)
+
+    def proxy(*args, **kwargs):
+        # callable (on_progress) muda de endereco a cada processo:
+        # nunca entra na chave.
+        bruto = "|".join([nome] + [_repr_arg(a) for a in args] + ...)
+        alvo = f"{VCR_DIR}/{nome}_{sha1(bruto)[:16]}.pkl"
+        if os.path.exists(alvo):
+            return pickle.load(open(alvo, "rb"))
+        MISSES.append(bruto)
+        val = real(*args, **kwargs)
+        pickle.dump(val, open(alvo, "wb"))
+        return val
+
+    setattr(mod, nome, proxy)
+
+for n in dir(L):
+    if n.startswith("carregar_") and callable(getattr(L, n)):
+        _congelar(L, n)
+```
+
+- Patchar **antes** do primeiro `at.run()`: o `from ... import carregar_x`
+  do `app.py` (e o das abas) só resolve quando o script roda, então pega
+  o proxy. Mesmo mecanismo do patch de `consolidar_dados`.
+- Ordem dos runs: **grave com o baseline**, depois rode as duas versões
+  em modo replay puro e diffe **esses dois**. O run de gravação sai da
+  comparação.
+- **Contar os misses é meia validação de graça.** Miss no replay da
+  versão nova = ela pediu dado que a antiga não pedia (loader a mais,
+  argumento diferente, aba deixando de ser lazy). `0 misses` dos dois
+  lados é parte do critério de aceite, junto do diff vazio.
+- Bônus: replay não toca a rede. A matriz inteira (39 cenários) roda em
+  ~1 min por versão, o que torna viável cobrir *todas* as combinações em
+  vez de amostrar — e poupa a instância Nano.
 
 ## Armadilha: o dedent do `st.markdown` é condicional
 
@@ -228,6 +288,11 @@ antigo.replace(" " * 12, " " * 8) == novo   # True => só indentação mudou
   (ST-11 — extração do bloco "Período"; 4 cenários por versão, diff
   restrito à mudança de rótulo intencional. Origem do envenenamento de
   cache com chave preservada e do baseline rodado duas vezes.)
+- Reaplicado em: [app.py](../../../app.py) (Fase 2/OCP — registro único
+  de abas substituindo o `if/elif` de 9 ramos; 39 cenários por versão
+  (5 perfis × abas visíveis + 2 chaves forjadas) com diff **byte a
+  byte** vazio. Origem do congelamento dos loaders em `pickle` e da
+  contagem de misses como critério de aceite.)
 - Doc complementar: [docs/agents/ui-components.md](../ui-components.md),
   [docs/agents/rls.md](../rls.md)
 
@@ -235,5 +300,5 @@ antigo.replace(" " * 12, " " * 8) == novo   # True => só indentação mudou
 
 **Autor (agente):** Claude Code (`ui-dash`, via `task-orchestrator`)
 **Criado em:** 2026-08-04
-**Última revisão:** 2026-08-05 por Claude Code (ST-11 — sentinela de
-cache com chave preservada e baseline rodado duas vezes)
+**Última revisão:** 2026-08-05 por Claude Code (Fase 2/OCP — congelar os
+loaders com VCR de `pickle` quando o ETL escreve durante a validação)

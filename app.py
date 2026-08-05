@@ -17,6 +17,7 @@ import sys
 import warnings
 from datetime import datetime
 from pathlib import Path
+from typing import Callable, NamedTuple
 
 import pandas as pd
 import streamlit as st
@@ -115,6 +116,33 @@ st.set_page_config(
 # ══════════════════════════════════════════════════════
 # Helpers de main() — blocos coesos extraidos
 # ══════════════════════════════════════════════════════
+
+
+class _AbaNav(NamedTuple):
+    """Entrada do registro de abas da navegacao principal.
+
+    Carrega os metadados da aba **e** como renderiza-la, para que exista
+    uma fonte de verdade so: antes, a lista de metadados e o ``if/elif``
+    de despacho eram duas listas paralelas das mesmas nove abas, e a aba
+    nova tinha que ser lembrada nos dois lugares.
+
+    NamedTuple pelo mesmo motivo de ``DadosPeriodo`` (loaders): tres dos
+    quatro campos sao ``str``, entao posicao sozinha e fragil demais — e
+    a construcao continua tao curta quanto a tupla que substituiu.
+
+    Campos:
+        permissao: chave em ``permissions.MATRIZ`` (gate de perfil).
+        rotulo: texto da aba. E tambem a chave de despacho — e o que
+            ``st.pills`` devolve.
+        icone: nome do Material Symbol (``:material/<nome>:``).
+        render: callable de aridade zero (closure sobre os dados ja
+            carregados em ``main()``). So a da aba selecionada roda.
+    """
+
+    permissao: str
+    rotulo: str
+    icone: str
+    render: Callable[[], None]
 
 
 def _limpar_caches_periodo() -> None:
@@ -620,80 +648,12 @@ def main():
 
         # ── Navegacao principal ───────────────────
 
-        # Monta abas conforme a matriz de permissoes.
-        # Icones sao Material Symbols (:material/<nome>:), nao Bootstrap:
-        # a navegacao usa st.pills, que renderiza markdown no rotulo.
-        abas_disponiveis = [
-            ("tab_produtos", "Produtos", "sell"),
-            ("tab_regioes", "Regioes", "map"),
-            ("tab_rankings_lojas", "Rankings", "emoji_events"),
-            ("tab_analiticos", "Analiticos", "bar_chart"),
-            ("tab_evolucao", "Evolucao", "trending_up"),
-            ("tab_em_analise", "Em Analise", "schedule"),
-            ("tab_detalhes", "Detalhes", "table_chart"),
-            ("tab_pagamentos_online", "Pagamentos Online", "bolt"),
-            ("tab_gestao", "Gestao", "filter_alt"),
-        ]
-        rotulos_visiveis = [
-            rotulo
-            for chave, rotulo, _icone in abas_disponiveis
-            if pode_ver(chave, role)
-        ]
-        icones_aba = {rotulo: icone for _c, rotulo, icone in abas_disponiveis}
+        # Rankings e Gestao preparam dados antes de chamar o renderer com
+        # statements (atribuicao, def aninhado), o que lambda nao aceita:
+        # entram no registro como funcao nomeada. As outras sete cabem
+        # numa expressao e entram como lambda ali mesmo.
 
-        if not rotulos_visiveis:
-            st.warning("Nenhuma aba disponivel para seu perfil.")
-            return
-
-        # Navegacao em st.pills (nao sac.tabs): o button group nativo tem
-        # flex-wrap, entao as abas quebram em varias linhas quando nao
-        # cabem na largura, em vez de sumirem. O sac.tabs roda dentro de
-        # um iframe e o CSS da propria lib esconde o botao de overflow
-        # (.ant-tabs-nav-more{display:none}), tornando as abas que
-        # transbordam inacessiveis em telas estreitas.
-        # `required=True` impede desselecionar e cair sem nenhuma aba.
-        tab = st.pills(
-            "Navegacao principal",
-            options=rotulos_visiveis,
-            default=rotulos_visiveis[0],
-            required=True,
-            format_func=lambda r: f":material/{icones_aba[r]}: {r}",
-            label_visibility="collapsed",
-            key="nav_principal",
-        )
-
-        if tab == "Produtos":
-            # Os dois meses de comparacao (anterior e YoY) sao carregados
-            # dentro da propria aba: sao lazy — so ela os consome — e o
-            # cache deles vive junto de quem os usa (tabs/produtos.py).
-            render_tab_produtos(
-                df_f,
-                df_metas_prod_f,
-                categorias,
-                ano,
-                mes,
-                dia_atual,
-                df_sup_f,
-                df_analise=df_analise_f,
-                du_total=kpis.get("du_total", 0),
-                du_decorridos=du_decorridos,
-                df_full=df_full,
-                df_metas_produto_full=df_metas_produto_full,
-            )
-        elif tab == "Regioes":
-            render_tab_regioes(
-                df_f,
-                df_metas_f,
-                ano,
-                mes,
-                dia_atual,
-                df_sup_f,
-                df_metas_prod_f,
-                categorias,
-                df_full,
-                df_metas_produto_full,
-            )
-        elif tab == "Rankings":
+        def _render_rankings() -> None:
             # Universos de ativos p/ a visao de controle (sem producao).
             # Carregam global e passam pelo aplicar_rls (gerente enxerga
             # so a propria regiao via REGIAO_ATUAL; fail-closed). A aba
@@ -709,30 +669,8 @@ def main():
                 df_lojas_univ=_univ_lojas,
                 df_cons_univ=_univ_cons,
             )
-        elif tab == "Analiticos":
-            render_tab_analiticos(
-                df_f,
-                df_sup_f,
-                df_analise_f,
-                df_cancelados_f,
-                perfil=role,
-                reconquista=dados_reconquista,
-            )
-        elif tab == "Evolucao":
-            render_tab_evolucao(
-                df_f,
-                ano,
-                mes,
-                kpis,
-            )
-        elif tab == "Em Analise":
-            render_tab_em_analise(df_analise_f, df_sup_f)
-        elif tab == "Detalhes":
-            render_tab_detalhes(df_f)
-        elif tab == "Pagamentos Online":
-            df_pag_online = carregar_pagamentos_online()
-            render_tab_pagamentos_online(df_pag_online)
-        elif tab == "Gestao":
+
+        def _render_gestao() -> None:
             # Universo de consultores ATIVOS: sem ele a aba so enxerga
             # quem produziu, e um criterio "ate R$ X" perde quem vendeu
             # nada. Passa pelo mesmo recorte de df_f — aplicar_rls
@@ -771,6 +709,149 @@ def main():
                 _metas_gestao,
                 _carregar_intervalo_gestao,
             )
+
+        # Registro unico das abas: permissao + rotulo + icone + render na
+        # MESMA entrada. Acrescentar uma aba e acrescentar uma linha aqui
+        # (mais a chave em permissions.MATRIZ) — nao ha mais um if/elif
+        # de despacho para manter em sincronia com a lista de metadados.
+        # Cada `render` fecha sobre os dados ja carregados acima e so a da
+        # aba selecionada executa, entao os loaders proprios de uma aba
+        # continuam pagos apenas por quem a abre (render lazy do st.pills).
+        # Icones sao Material Symbols (:material/<nome>:), nao Bootstrap:
+        # a navegacao usa st.pills, que renderiza markdown no rotulo.
+        registro_abas = (
+            _AbaNav(
+                "tab_produtos",
+                "Produtos",
+                "sell",
+                # Os dois meses de comparacao (anterior e YoY) sao
+                # carregados dentro da propria aba: sao lazy — so ela os
+                # consome — e o cache deles vive junto de quem os usa
+                # (tabs/produtos.py).
+                lambda: render_tab_produtos(
+                    df_f,
+                    df_metas_prod_f,
+                    categorias,
+                    ano,
+                    mes,
+                    dia_atual,
+                    df_sup_f,
+                    df_analise=df_analise_f,
+                    du_total=kpis.get("du_total", 0),
+                    du_decorridos=du_decorridos,
+                    df_full=df_full,
+                    df_metas_produto_full=df_metas_produto_full,
+                ),
+            ),
+            _AbaNav(
+                "tab_regioes",
+                "Regioes",
+                "map",
+                lambda: render_tab_regioes(
+                    df_f,
+                    df_metas_f,
+                    ano,
+                    mes,
+                    dia_atual,
+                    df_sup_f,
+                    df_metas_prod_f,
+                    categorias,
+                    df_full,
+                    df_metas_produto_full,
+                ),
+            ),
+            _AbaNav(
+                "tab_rankings_lojas",
+                "Rankings",
+                "emoji_events",
+                _render_rankings,
+            ),
+            _AbaNav(
+                "tab_analiticos",
+                "Analiticos",
+                "bar_chart",
+                lambda: render_tab_analiticos(
+                    df_f,
+                    df_sup_f,
+                    df_analise_f,
+                    df_cancelados_f,
+                    perfil=role,
+                    reconquista=dados_reconquista,
+                ),
+            ),
+            _AbaNav(
+                "tab_evolucao",
+                "Evolucao",
+                "trending_up",
+                lambda: render_tab_evolucao(
+                    df_f,
+                    ano,
+                    mes,
+                    kpis,
+                ),
+            ),
+            _AbaNav(
+                "tab_em_analise",
+                "Em Analise",
+                "schedule",
+                lambda: render_tab_em_analise(df_analise_f, df_sup_f),
+            ),
+            _AbaNav(
+                "tab_detalhes",
+                "Detalhes",
+                "table_chart",
+                lambda: render_tab_detalhes(df_f),
+            ),
+            _AbaNav(
+                "tab_pagamentos_online",
+                "Pagamentos Online",
+                "bolt",
+                lambda: render_tab_pagamentos_online(
+                    carregar_pagamentos_online()
+                ),
+            ),
+            _AbaNav(
+                "tab_gestao",
+                "Gestao",
+                "filter_alt",
+                _render_gestao,
+            ),
+        )
+
+        # Abas conforme a matriz de permissoes.
+        rotulos_visiveis = [
+            aba.rotulo for aba in registro_abas if pode_ver(aba.permissao, role)
+        ]
+        icones_aba = {aba.rotulo: aba.icone for aba in registro_abas}
+        renders_aba = {aba.rotulo: aba.render for aba in registro_abas}
+
+        if not rotulos_visiveis:
+            st.warning("Nenhuma aba disponivel para seu perfil.")
+            return
+
+        # Navegacao em st.pills (nao sac.tabs): o button group nativo tem
+        # flex-wrap, entao as abas quebram em varias linhas quando nao
+        # cabem na largura, em vez de sumirem. O sac.tabs roda dentro de
+        # um iframe e o CSS da propria lib esconde o botao de overflow
+        # (.ant-tabs-nav-more{display:none}), tornando as abas que
+        # transbordam inacessiveis em telas estreitas.
+        # `required=True` impede desselecionar e cair sem nenhuma aba.
+        tab = st.pills(
+            "Navegacao principal",
+            options=rotulos_visiveis,
+            default=rotulos_visiveis[0],
+            required=True,
+            format_func=lambda r: f":material/{icones_aba[r]}: {r}",
+            label_visibility="collapsed",
+            key="nav_principal",
+        )
+
+        # Despacho pelo rotulo devolvido pelo st.pills. Sem `else`: rotulo
+        # fora do registro nao renderiza nada, como no if/elif anterior
+        # (inalcancavel — as options vem do proprio registro).
+        _render_aba = renders_aba.get(tab)
+        if _render_aba is not None:
+            _render_aba()
 
     except Exception:
         logger.exception("Erro inesperado no main()")
