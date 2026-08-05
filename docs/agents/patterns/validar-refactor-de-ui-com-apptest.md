@@ -82,6 +82,17 @@ diffar a saída. Diff vazio é a evidência.
   cenário, `session_state` isolado) desde que seja a mesma versão do
   app — e o `cache_data` fica quente do 2º em diante, o que corta a
   maior parte do custo de I/O.
+- Preferir **travessia recursiva de `at.main.children`** aos acessores
+  tipados (`at.dataframe`, `at.markdown`, …): pega elemento dentro de
+  bloco aninhado (`st.columns`, `st.expander`, `st.status`), preserva a
+  ordem de render e emite o caminho do bloco junto. E, ao contrário do
+  que diz o item acima sobre `sac.*`, o componente **aparece** nessa
+  travessia como `component_instance` — dá para contar os `sac.divider`
+  de cada página. O que continua invisível é o *conteúdo* do iframe.
+- Quando o componente é um **dispatch** (`if/elif` por chave), incluir
+  um cenário com **chave inexistente**. Ele prova o ramo "nenhum caso
+  casou" — que é justamente o que uma extração desatenta quebra (um
+  `else` inventado, um `elif` virado `if`).
 - Rodar a partir da raiz do projeto com as credenciais exportadas
   (`set -a; . .env; set +a`): o `load_dotenv()` da worktree procura a
   partir do arquivo dela e **não** acha o `.env` da raiz.
@@ -185,6 +196,11 @@ antigo.replace(" " * 12, " " * 8) == novo   # True => só indentação mudou
   `plotly_chart` e da normalização do campo `id`. A aba alvo era a
   primeira de `rotulos_visiveis` para todos os perfis, então o `default`
   do `st.pills` já cai nela — não foi preciso forjar `nav_principal`.)
+- Reaplicado em:
+  [src/dashboard/pages/detalhes_cards.py](../../../src/dashboard/pages/detalhes_cards.py)
+  (ST-10 — extração do dispatch do drill-down de cards; 8 cenários num
+  processo por versão, diff vazio. Origem da travessia recursiva de
+  `at.main.children` e do cenário de chave forjada.)
 - Doc complementar: [docs/agents/ui-components.md](../ui-components.md),
   [docs/agents/rls.md](../rls.md)
 
@@ -192,5 +208,5 @@ antigo.replace(" " * 12, " " * 8) == novo   # True => só indentação mudou
 
 **Autor (agente):** Claude Code (`ui-dash`, via `task-orchestrator`)
 **Criado em:** 2026-08-04
-**Última revisão:** 2026-08-04 por Claude Code (ST-09 —
-`PYTHONHASHSEED=0`, `proto` de `plotly_chart` e normalização do `id`)
+**Última revisão:** 2026-08-05 por Claude Code (ST-10 — travessia
+recursiva de `at.main.children` e cenário de chave inexistente)

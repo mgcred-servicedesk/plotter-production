@@ -38,16 +38,10 @@ from src.dashboard.pages.dashboard_pontuacao import (
     render_dashboard_pontuacao,
     render_diagnostico_pontuacao,
 )
-from src.dashboard.pages.detalhes_cards import (
-    render_detalhe_cancelados,
-    render_detalhe_em_analise,
-    render_detalhe_media_consultor,
-    render_detalhe_media_loja,
-)
+from src.dashboard.pages.detalhes_cards import render_drilldown_card
 from src.dashboard.loaders import (
     carregar_consultores_ativos,
     carregar_contratos_pagos_intervalo,
-    carregar_digitacao_diaria_detalhe,
     carregar_universo_lojas,
     carregar_metas_produto_consultor,
     carregar_pagamentos_online,
@@ -606,53 +600,24 @@ def main():
         if pode_ver("cards_gerenciais", role):
             # ── Drill-down: pagina de detalhe de um card ──────
             # Quando `card_page` esta setado (promovido pelo read
-            # fail-closed acima), renderiza so o botao de voltar + a
-            # pagina correspondente e encerra (pula cards e tabs),
-            # espelhando o padrao do modo Config.
+            # fail-closed acima), renderiza so a pagina de detalhe
+            # correspondente (botao de voltar + dispatch vivem no
+            # modulo) e encerra aqui, pulando cards e tabs — espelhando
+            # o padrao do modo Config.
             _card_page = st.session_state.get("card_page")
             if _card_page:
-                if st.button("← Voltar ao Dashboard"):
-                    st.session_state["card_page"] = None
-                    st.rerun()
-
-                _du_total = kpis.get("du_total", 0)
-                if _card_page == "em_analise":
-                    # Aplica RLS server-side local no detalhe (o Supabase
-                    # ja filtra, mas admin/gestor visualizando como gerente
-                    # precisa restringir ao escopo simulado).
-                    df_digitacao_detalhe = aplicar_rls(
-                        carregar_digitacao_diaria_detalhe(mes, ano)
-                    )
-                    render_detalhe_em_analise(
-                        df_analise=df_analise_f,
-                        df_digitacao_detalhe=df_digitacao_detalhe,
-                        du_decorridos=du_decorridos,
-                        du_total=_du_total,
-                        perfil=role,
-                    )
-                elif _card_page == "cancelados":
-                    render_detalhe_cancelados(
-                        df_cancelados=df_cancelados_f,
-                        du_decorridos=du_decorridos,
-                        du_total=_du_total,
-                        perfil=role,
-                    )
-                elif _card_page == "media_consultor":
-                    render_detalhe_media_consultor(
-                        df=df_f,
-                        du_decorridos=du_decorridos,
-                        du_total=_du_total,
-                        df_sup=df_sup_f,
-                        perfil=role,
-                    )
-                elif _card_page == "media_loja":
-                    render_detalhe_media_loja(
-                        df=df_f,
-                        du_decorridos=du_decorridos,
-                        du_total=_du_total,
-                        df_sup=df_sup_f,
-                        perfil=role,
-                    )
+                render_drilldown_card(
+                    _card_page,
+                    df=df_f,
+                    df_analise=df_analise_f,
+                    df_cancelados=df_cancelados_f,
+                    df_sup=df_sup_f,
+                    du_decorridos=du_decorridos,
+                    du_total=kpis.get("du_total", 0),
+                    mes=mes,
+                    ano=ano,
+                    perfil=role,
+                )
                 return
 
             # KPIs Principais Reformulados

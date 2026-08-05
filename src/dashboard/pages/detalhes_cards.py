@@ -11,6 +11,10 @@ Convencao de dividers: titulo da pagina em ``color="blue"``; quadros
 internos em ``color="gray"``. Icones Bootstrap coerentes com o tema do
 card.
 
+O dispatch entre as quatro paginas (mais o botao de voltar) fica em
+``render_drilldown_card``, no fim deste modulo — ``app.py`` so decide
+*quando* entrar no drill-down.
+
 Permissoes: o roteamento que aciona estas paginas so promove a
 ``card_page`` quando ``pode_ver('cards_drilldown', role)`` (admin,
 gestor e gerente_comercial; supervisor/consultor sao fail-closed), com
@@ -43,6 +47,8 @@ from src.dashboard.kpis.detalhes_cards import (
     filtrar_ultimo_dia,
     ocultar_colunas_zeradas,
 )
+from src.dashboard.loaders import carregar_digitacao_diaria_detalhe
+from src.dashboard.rls import aplicar_rls
 from src.dashboard.ui.kpi_cards_reforma import _calcular_indicador_media
 
 
@@ -598,3 +604,77 @@ def render_detalhe_media_loja(
         df_sup=df_sup,
         perfil=perfil,
     )
+
+
+# ──────────────────────────────────────────────────────────────────
+# Roteamento do drill-down
+# ──────────────────────────────────────────────────────────────────
+
+
+def render_drilldown_card(
+    card_page: str,
+    *,
+    df: pd.DataFrame,
+    df_analise: pd.DataFrame,
+    df_cancelados: pd.DataFrame,
+    df_sup: Optional[pd.DataFrame],
+    du_decorridos: int,
+    du_total: int,
+    mes: int,
+    ano: int,
+    perfil: Optional[str] = None,
+) -> None:
+    """Renderiza a pagina de detalhe correspondente a ``card_page``.
+
+    Inclui o botao de voltar, que zera ``card_page`` e faz rerun. O
+    chamador (``app.py``) e responsavel por decidir *quando* entrar no
+    drill-down (gate de perfil + leitura fail-closed do query param) e
+    por encerrar o render do dashboard apos esta chamada (``return``).
+
+    ``card_page`` e uma das quatro chaves validas (``em_analise``,
+    ``cancelados``, ``media_consultor``, ``media_loja``). Chave
+    desconhecida renderiza apenas o botao de voltar — o roteamento em
+    ``app.py`` e fail-closed e nao promove valor fora dessas quatro.
+    """
+    if st.button("← Voltar ao Dashboard"):
+        st.session_state["card_page"] = None
+        st.rerun()
+
+    if card_page == "em_analise":
+        # Aplica RLS server-side local no detalhe (o Supabase
+        # ja filtra, mas admin/gestor visualizando como gerente
+        # precisa restringir ao escopo simulado). A carga fica aqui
+        # porque so este ramo consome o detalhe de digitacao.
+        df_digitacao_detalhe = aplicar_rls(
+            carregar_digitacao_diaria_detalhe(mes, ano)
+        )
+        render_detalhe_em_analise(
+            df_analise=df_analise,
+            df_digitacao_detalhe=df_digitacao_detalhe,
+            du_decorridos=du_decorridos,
+            du_total=du_total,
+            perfil=perfil,
+        )
+    elif card_page == "cancelados":
+        render_detalhe_cancelados(
+            df_cancelados=df_cancelados,
+            du_decorridos=du_decorridos,
+            du_total=du_total,
+            perfil=perfil,
+        )
+    elif card_page == "media_consultor":
+        render_detalhe_media_consultor(
+            df=df,
+            du_decorridos=du_decorridos,
+            du_total=du_total,
+            df_sup=df_sup,
+            perfil=perfil,
+        )
+    elif card_page == "media_loja":
+        render_detalhe_media_loja(
+            df=df,
+            du_decorridos=du_decorridos,
+            du_total=du_total,
+            df_sup=df_sup,
+            perfil=perfil,
+        )
