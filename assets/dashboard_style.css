@@ -272,21 +272,12 @@ div[data-testid="column"] {
     -webkit-backdrop-filter: blur(8px) saturate(140%);
 }
 
-/* O BaseWeb calcula via JS um max-height/height inline no wrapper
- * externo (`[data-baseweb="popover"]`) com base no espaco livre ABAIXO
- * do input — perto do fim da sidebar esse espaco e pequeno, e o
- * wrapper fica menor do que a lista inteira. So destravar o scroll
- * do `<ul>` interno nao basta: o wrapper externo, menor, corta a
- * lista antes que o scroll interno alcance o fim (por isso a barra
- * de rolagem "nao desce ate o fim" — o conteudo depois do corte nem
- * existe no DOM visivel). Fixa os dois niveis na MESMA altura maxima
- * para que o scroll interno tenha, de fato, a lista inteira disponivel. */
-[data-baseweb="popover"],
-[data-baseweb="popover"] > div {
-    max-height: min(320px, 50vh) !important;
-    overflow: hidden !important;
-}
-
+/* O popover e position:fixed a partir do input: sem altura maxima,
+ * uma lista longa (ex.: filtro de Consultor) cresce alem do viewport
+ * quando o input esta perto do fim da sidebar, e a parte excedente
+ * fica inacessivel (fixed nao tem scroll de pagina que alcance).
+ * Trava a altura e da scroll interno para a ultima opcao ficar
+ * sempre alcancavel, independente de onde o input esta na tela. */
 [data-baseweb="menu"],
 [role="listbox"] {
     max-height: min(320px, 50vh) !important;
