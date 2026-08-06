@@ -272,18 +272,6 @@ div[data-testid="column"] {
     -webkit-backdrop-filter: blur(8px) saturate(140%);
 }
 
-/* O popover e position:fixed a partir do input: sem altura maxima,
- * uma lista longa (ex.: filtro de Consultor) cresce alem do viewport
- * quando o input esta perto do fim da sidebar, e a parte excedente
- * fica inacessivel (fixed nao tem scroll de pagina que alcance).
- * Trava a altura e da scroll interno para a ultima opcao ficar
- * sempre alcancavel, independente de onde o input esta na tela. */
-[data-baseweb="menu"],
-[role="listbox"] {
-    max-height: min(320px, 50vh) !important;
-    overflow-y: auto !important;
-}
-
 [data-baseweb="menu"] li,
 [role="option"] {
     color: var(--mg-text) !important;
