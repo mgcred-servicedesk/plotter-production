@@ -308,11 +308,9 @@ def _render_consultor_subselect(
     Exclui supervisores da lista. Reseta automaticamente se o consultor
     anterior não está mais nas opções (loja mudou).
 
-    ``help`` incentiva digitar em vez de rolar: o popover do BaseWeb/
-    React Aria tem um bug de posicionamento upstream (reproduzido via
-    DevTools em 2026-08) que corta a lista quando o campo está fundo
-    na sidebar — CSS não resolve porque o offset errado é calculado em
-    JS a cada abertura, não é uma propriedade estática. Ver
+    ``help`` incentiva digitar em vez de rolar — atalho útil mesmo após
+    o bug upstream de posicionamento do popover (Streamlit < 1.61.1)
+    ter sido corrigido subindo a versão do Streamlit. Ver
     docs/agents/progress/2026-08-06-popover-consultor-cortado-bug-upstream.md.
     """
     consultores = _opcoes_consultor(df_source, df_sup, df_universo)

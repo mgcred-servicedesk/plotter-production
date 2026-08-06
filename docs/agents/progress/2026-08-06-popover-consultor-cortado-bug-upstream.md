@@ -1,8 +1,8 @@
-# 2026-08-06 — Popover do filtro de Consultor corta a última opção (bug upstream, não corrigido em CSS)
+# 2026-08-06 — Popover do filtro de Consultor corta a última opção (bug upstream, resolvido via upgrade do Streamlit)
 
 **Agente:** Claude Code
-**Tipo:** research / bugfix (parcial — mitigação de UX, sem fix de causa raiz)
-**Arquivos tocados:** `src/dashboard/ui/sidebar.py`
+**Tipo:** research / bugfix (causa raiz corrigida via upgrade de dependência)
+**Arquivos tocados:** `src/dashboard/ui/sidebar.py`, `requirements.txt`
 **Commit(s):** ver branch `fix/sidebar-filtro-consultor-universo`
 
 ## Objetivo
@@ -57,18 +57,43 @@ rolagem não desce até o fim. Pediu correção.
   (componentes diferentes no frontend do Streamlit). A correção não
   se aplica ao nosso caso.
 
+## Resolução
+
+Em vez de perseguir um workaround, testamos se uma versão mais nova do
+Streamlit já corrigia o bug — a pesquisa por changelog foi
+inconclusiva (respostas via WebFetch/resumo por modelo pequeno se
+mostraram inconsistentes entre si, incluindo datas erradas; não deu
+pra confirmar por pesquisa sozinha). Teste empírico direto:
+
+1. `.venv/bin/pip install streamlit==1.61.1` (linha `1.61.x`, patch
+   mais recente disponível no PyPI na data).
+2. Suíte completa (`pytest tests/`, 436 testes) + `ruff` — sem
+   regressão da própria atualização de versão.
+3. Usuário testou o cenário reproduzido (Visualizar Como → Supervisor
+   → loja com vários consultores → abrir dropdown de Consultor) no
+   navegador: **corrigido**.
+
+`requirements.txt` atualizado para `streamlit==1.61.1`. O `help=`
+"Digite parte do nome para filtrar" foi mantido — é um atalho de UX
+útil por si só, independente do bug.
+
+Não identificamos (e não paramos para procurar, dado que o teste
+empírico já resolveu) qual PR/changelog exato do Streamlit corrigiu
+isso especificamente para o `ComboBox`/`st.selectbox` — só confirmamos
+que `1.60.0` tinha o bug e `1.61.1` não.
+
 ## Pendências / follow-ups
 
+- [x] ~~Testar se uma versão mais nova do Streamlit corrige~~ — sim,
+      `1.61.1` corrige. `requirements.txt` atualizado.
 - [ ] Abrir issue no `streamlit/streamlit` com a reprodução (prints de
-      DevTools já coletados nesta investigação) — ainda não feito,
-      aguardando decisão do usuário.
-- [ ] Considerar compactar a sidebar acima do filtro de Consultor
-      (ex.: colapsar "Visualizar Como"/Período) para reduzir a
-      profundidade do campo na tela — reduz a chance do bug aparecer,
-      não é garantia. Não implementado (mudança estrutural maior,
-      discutir separado).
-- [ ] Se o Streamlit corrigir isso upstream numa versão futura,
-      revisitar — o `help=` adicionado pode ficar ou sair conforme UX.
+      DevTools já coletados nesta investigação) — opcional agora que
+      há um workaround via upgrade; útil só se alguém mais for atingido
+      numa versão anterior. Não feito, sem decisão do usuário sobre
+      isso.
+- [ ] Compactar a sidebar acima do filtro de Consultor — não é mais
+      necessário para este bug especificamente, mas pode valer por
+      outros motivos de UX. Não avaliado.
 
 ## Referências
 

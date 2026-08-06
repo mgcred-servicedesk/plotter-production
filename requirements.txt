@@ -1,7 +1,7 @@
 pandas==3.0.5
 numpy==2.5.1
 plotly==6.9.0
-streamlit==1.60.0
+streamlit==1.61.1
 streamlit-antd-components>=0.3.2
 python-dotenv==1.2.2
 bcrypt>=5.0.0
