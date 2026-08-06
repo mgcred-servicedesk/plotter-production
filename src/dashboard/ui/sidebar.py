@@ -31,7 +31,7 @@ O modulo **nao** conhece chave de cache de outros modulos: o botao
 
 import html
 from datetime import datetime
-from typing import Callable
+from typing import Callable, Optional
 
 import pandas as pd
 import streamlit as st
@@ -43,6 +43,7 @@ from src.dashboard.auth import (
     usuario_logado,
 )
 from src.dashboard.loaders import (
+    carregar_consultores_ativos,
     carregar_lojas_ativas,
     carregar_ultimo_periodo,
 )
@@ -269,25 +270,50 @@ def filtrar_metas_ui(
     return df_metas
 
 
-def _render_consultor_subselect(
+def _opcoes_consultor(
     df_source: pd.DataFrame,
     df_sup: pd.DataFrame,
-    key: str,
-) -> None:
-    """Renderiza o selectbox de consultor e persiste em ui_filtro_consultor.
+    df_universo: Optional[pd.DataFrame] = None,
+) -> list[str]:
+    """Lista ordenada de consultores para o filtro, sem supervisores.
 
-    Exclui supervisores da lista. Reseta automaticamente se o consultor
-    anterior não está mais nas opções (loja mudou).
+    União de quem tem produção no período (``df_source``) com o universo
+    de consultores ativos (``df_universo``, já recortado por RLS/loja
+    pelo chamador) — sem a união, um consultor ativo sem venda no
+    período (comum em loja pequena ou no mês corrente) some do filtro
+    mesmo existindo. Mesmo padrão já usado para o filtro de Loja
+    (``carregar_lojas_ativas`` união com ``df``), só replicado aqui.
     """
     supervisores: set = set()
     if not df_sup.empty and "SUPERVISOR" in df_sup.columns:
         supervisores = set(df_sup["SUPERVISOR"].dropna())
 
-    consultores = []
+    consultores_scope: set = set()
+    if df_universo is not None and "CONSULTOR" in df_universo.columns:
+        consultores_scope |= set(df_universo["CONSULTOR"].dropna())
     if "CONSULTOR" in df_source.columns:
-        consultores = sorted(
-            c for c in df_source["CONSULTOR"].dropna().unique() if c not in supervisores
-        )
+        consultores_scope |= set(df_source["CONSULTOR"].dropna())
+
+    return sorted(c for c in consultores_scope if c not in supervisores)
+
+
+def _render_consultor_subselect(
+    df_source: pd.DataFrame,
+    df_sup: pd.DataFrame,
+    key: str,
+    df_universo: Optional[pd.DataFrame] = None,
+) -> None:
+    """Renderiza o selectbox de consultor e persiste em ui_filtro_consultor.
+
+    Exclui supervisores da lista. Reseta automaticamente se o consultor
+    anterior não está mais nas opções (loja mudou).
+
+    ``help`` incentiva digitar em vez de rolar — atalho útil mesmo após
+    o bug upstream de posicionamento do popover (Streamlit < 1.61.1)
+    ter sido corrigido subindo a versão do Streamlit. Ver
+    docs/agents/progress/2026-08-06-popover-consultor-cortado-bug-upstream.md.
+    """
+    consultores = _opcoes_consultor(df_source, df_sup, df_universo)
 
     if not consultores:
         st.session_state["ui_filtro_consultor"] = ""
@@ -303,6 +329,7 @@ def _render_consultor_subselect(
         index=idx,
         key=key,
         format_func=lambda x: "Todos" if x == "" else x,
+        help="Digite parte do nome para filtrar.",
     )
     st.session_state["ui_filtro_consultor"] = sel
 
@@ -479,10 +506,21 @@ def render_sidebar_filtros_perfil(
 
         if lojas_sel:
             df_lojas = df[df["LOJA"].isin(lojas_sel)]
-            _render_consultor_subselect(df_lojas, df_sup, key="sel_filtro_cons_ger")
+            _univ_cons_ger = aplicar_rls(carregar_consultores_ativos())
+            if "LOJA" in _univ_cons_ger.columns:
+                _univ_cons_ger = _univ_cons_ger[
+                    _univ_cons_ger["LOJA"].isin(lojas_sel)
+                ]
+            _render_consultor_subselect(
+                df_lojas, df_sup, key="sel_filtro_cons_ger",
+                df_universo=_univ_cons_ger,
+            )
         else:
             st.session_state["ui_filtro_consultor"] = ""
 
     elif role == "supervisor":
-        _render_consultor_subselect(df, df_sup, key="sel_filtro_cons_sup")
+        _univ_cons_sup = aplicar_rls(carregar_consultores_ativos())
+        _render_consultor_subselect(
+            df, df_sup, key="sel_filtro_cons_sup", df_universo=_univ_cons_sup,
+        )
         st.session_state["ui_filtro_lojas"] = []
