@@ -13,7 +13,7 @@ import pandas as pd
 import streamlit as st
 import streamlit_antd_components as sac
 
-from src.dashboard.formatters import formatar_moeda
+from src.dashboard.formatters import formatar_moeda, formatar_numero
 from src.dashboard.kpis.produtos import calcular_kpis_por_produto
 from src.dashboard.kpis.regioes import (
     calcular_evolucao_media_du,
@@ -46,7 +46,28 @@ _PREFIXO_MES_ANT = "_df_ant"
 _PREFIXO_ANO_ANT = "_df_ano_ant"
 _PREFIXOS_COMPARATIVO = (_PREFIXO_MES_ANT, _PREFIXO_ANO_ANT)
 
-# ── Configuracao dos 4 produtos de quantidade ────────
+# Bancos aceitos pela flag "Somente BMG/Help". Sao valores JA
+# normalizados (strip + upper) — a comparacao passa por ``_norm``. As
+# variantes com prefixo "BANCO " existem porque a base nao e uniforme;
+# hoje "HELP" nao ocorre como BANCO em CLT/Consignado, mas o filtro fica
+# preparado (ver progress/2026-08-06-plano-clt-consignado-*.md).
+_BANCOS_BMG_HELP = ("BMG", "BANCO BMG", "HELP", "BANCO HELP")
+
+# ── Configuracao dos produtos de quantidade ──────────
+#
+# Cada item vira uma aba de "Emissão e Seguros — Análise Regional".
+# Chaves reconhecidas:
+#
+# - ``label``: rotulo da aba.
+# - ``subtabs``: lista de colunas de efetivados. Cada uma declara
+#   ``nome_col`` + os criterios de filtro lidos por ``_mask_subtab``
+#   (``tipo_oper``, ``subtipo``, ``categoria``, ``subtipos``,
+#   ``excluir_tipo_oper``).
+# - ``col_dig_tipo`` / ``col_dig_subtipo``: criterio da coluna
+#   "Análise" (digitados). Ausentes = aba sem coluna de análise.
+# - ``total_label`` / ``total_help``: KPI de total no topo da aba.
+# - ``toggle_banco``: flag opcional que restringe **somente** esse
+#   total a uma lista de bancos.
 
 _PRODS_QTD = [
     {
@@ -95,6 +116,57 @@ _PRODS_QTD = [
             },
         ],
         "col_dig_tipo": ["Seguro"],
+    },
+    {
+        "label": "CLT",
+        "subtabs": [
+            {
+                "nome_col": "CLT",
+                "categoria": ["CONSIG_PRIV"],
+                "excluir_tipo_oper": ["SEGURO PRESTAMISTA"],
+            },
+        ],
+        "total_label": "Propostas pagas",
+        "total_help": (
+            "Contratos pagos de CLT (categoria CONSIG_PRIV). "
+            "Seguro Prestamista fica de fora da contagem."
+        ),
+        "toggle_banco": {
+            "label": "Somente BMG/Help",
+            "key": "prod_qtd_clt_bmg_help",
+            "bancos": _BANCOS_BMG_HELP,
+            "help": (
+                "Restringe apenas o total acima aos bancos BMG e Help. "
+                "As tabelas por região/loja continuam com todos os "
+                "bancos."
+            ),
+        },
+    },
+    {
+        "label": "Consignado (Novo/Refin)",
+        "subtabs": [
+            {
+                "nome_col": "Consignado",
+                "categoria": ["CONSIG_BMG", "CONSIG_ITAU", "CONSIG_C6"],
+                "subtipos": ["NOVO", "REFIN"],
+            },
+        ],
+        "total_label": "Propostas pagas",
+        "total_help": (
+            "Consignado pago com subtipo Novo ou Refin. Portabilidade "
+            "e Refin da Portabilidade ficam fora — mantêm "
+            "categoria PORTABILIDADE."
+        ),
+        "toggle_banco": {
+            "label": "Somente BMG/Help",
+            "key": "prod_qtd_consig_bmg_help",
+            "bancos": _BANCOS_BMG_HELP,
+            "help": (
+                "Restringe apenas o total acima aos bancos BMG e Help. "
+                "As tabelas por região/loja continuam com todos os "
+                "bancos."
+            ),
+        },
     },
 ]
 
@@ -196,6 +268,124 @@ def _html_tabela_regional(
         f'<tbody>{rows_html}</tbody>'
         f'</table></div>'
     )
+
+
+def _norm(serie: pd.Series) -> pd.Series:
+    """Normaliza texto para comparacao: str + strip + upper."""
+    return serie.astype(str).str.strip().str.upper()
+
+
+def _mask_falsa(df: pd.DataFrame) -> pd.Series:
+    """Mascara que nao seleciona nada, alinhada ao indice de ``df``."""
+    return pd.Series(False, index=df.index)
+
+
+def _mask_subtab(df: pd.DataFrame, sub: dict) -> pd.Series:
+    """Monta a mascara de contagem de uma coluna de efetivados.
+
+    Criterios suportados (combinados por AND; ausentes sao ignorados):
+
+    - ``tipo_oper``: ``TIPO OPER.`` dentro de uma lista. Comparacao
+      **crua**, sem normalizar — os rotulos de ``_PRODS_QTD`` batem
+      1:1 com o dado ("CARTÃO BENEFICIO", "Venda Pré-Adesão", "Seguro").
+    - ``subtipo``: ``SUBTIPO`` igual a um valor (normalizado).
+    - ``categoria``: ``categoria_codigo`` dentro de uma lista.
+    - ``subtipos``: ``SUBTIPO`` dentro de uma lista (normalizado).
+    - ``excluir_tipo_oper``: ``TIPO OPER.`` **fora** de uma lista
+      (normalizado).
+
+    Criterio declarado cuja coluna nao existe no frame zera a contagem
+    — o mesmo comportamento defensivo de antes desta extensao. Vale
+    tambem para ``excluir_tipo_oper``: sem a coluna nao da para provar
+    a exclusao, e um total silenciosamente inflado e pior que zero.
+    """
+    partes: list = []
+
+    if "tipo_oper" in sub:
+        partes.append(
+            df["TIPO OPER."].isin(sub["tipo_oper"])
+            if "TIPO OPER." in df.columns
+            else _mask_falsa(df)
+        )
+    if "subtipo" in sub:
+        partes.append(
+            _norm(df["SUBTIPO"]) == str(sub["subtipo"]).upper()
+            if "SUBTIPO" in df.columns
+            else _mask_falsa(df)
+        )
+    if "categoria" in sub:
+        partes.append(
+            df["categoria_codigo"].isin(sub["categoria"])
+            if "categoria_codigo" in df.columns
+            else _mask_falsa(df)
+        )
+    if "subtipos" in sub:
+        partes.append(
+            _norm(df["SUBTIPO"]).isin(sub["subtipos"])
+            if "SUBTIPO" in df.columns
+            else _mask_falsa(df)
+        )
+    if "excluir_tipo_oper" in sub:
+        partes.append(
+            ~_norm(df["TIPO OPER."]).isin(sub["excluir_tipo_oper"])
+            if "TIPO OPER." in df.columns
+            else _mask_falsa(df)
+        )
+
+    if not partes:
+        return _mask_falsa(df)
+
+    mask = partes[0]
+    for parte in partes[1:]:
+        mask = mask & parte
+    return mask
+
+
+def _mask_banco(df: pd.DataFrame, bancos) -> pd.Series:
+    """Mascara de ``BANCO`` normalizado dentro de ``bancos``."""
+    if "BANCO" not in df.columns:
+        return _mask_falsa(df)
+    return _norm(df["BANCO"]).isin(list(bancos))
+
+
+def _render_total_produto(df: pd.DataFrame, cfg: dict) -> None:
+    """KPI de total da aba + flag opcional de banco.
+
+    A flag restringe **apenas** este total: as tabelas por
+    regiao/loja abaixo continuam com o recorte completo (decisao
+    registrada em
+    ``progress/2026-08-06-plano-clt-consignado-emissao-seguros.md``).
+    O total conta sobre o mesmo frame das tabelas (ja sem
+    supervisores), mas nao depende de REGIAO/LOJA preenchidos — linha
+    sem regiao entra aqui e nao entra no ``groupby`` das tabelas.
+    """
+    mask = _mask_falsa(df)
+    for sub in cfg["subtabs"]:
+        mask = mask | _mask_subtab(df, sub)
+
+    cfg_banco = cfg.get("toggle_banco")
+    col_total, col_flag = st.columns([1, 2])
+
+    somente_banco = False
+    if cfg_banco:
+        # Widget primeiro: o valor da flag entra na conta do total,
+        # que so e desenhado depois (a coluna e um container, a ordem
+        # de execucao nao muda o layout).
+        with col_flag:
+            somente_banco = st.toggle(
+                cfg_banco["label"],
+                key=cfg_banco["key"],
+                help=cfg_banco.get("help"),
+            )
+    if somente_banco and cfg_banco:
+        mask = mask & _mask_banco(df, cfg_banco["bancos"])
+
+    with col_total:
+        st.metric(
+            cfg["total_label"],
+            formatar_numero(int(mask.sum())),
+            help=cfg.get("total_help"),
+        )
 
 
 def _contar_por_regiao(
@@ -331,25 +521,14 @@ def _render_produto_regional(
         df_analise if df_analise is not None else pd.DataFrame()
     )
 
+    # ── Total da aba (+ flag de banco, quando configurada) ───────
+    if cfg.get("total_label"):
+        _render_total_produto(df_p, cfg)
+
     # ── Colunas de efetivados (pode ter mais de 1 para Emissão) ──
     dfs_ef = []
     for sub in cfg["subtabs"]:
-        if "tipo_oper" in sub:
-            mask = (
-                df_p["TIPO OPER."].isin(sub["tipo_oper"])
-                if "TIPO OPER." in df_p.columns
-                else pd.Series(False, index=df_p.index)
-            )
-        else:
-            subtipo = sub.get("subtipo", "")
-            mask = (
-                df_p["SUBTIPO"].astype(str)
-                .str.strip()
-                .str.upper()
-                == subtipo.upper()
-                if "SUBTIPO" in df_p.columns
-                else pd.Series(False, index=df_p.index)
-            )
+        mask = _mask_subtab(df_p, sub)
         if visao_por_loja:
             dfs_ef.append(
                 _contar_por_loja_consultor(df_p, mask, sub["nome_col"])
@@ -374,7 +553,13 @@ def _render_produto_regional(
             )
 
     # ── Digitados (em análise) ────────────────────────
-    if not df_a.empty:
+    # Aba sem criterio de digitados (CLT, Consignado) nao ganha coluna
+    # "Análise": o frame vazio so com as chaves de merge some no
+    # ``col_exib``, que filtra por coluna existente.
+    tem_analise = "col_dig_subtipo" in cfg or "col_dig_tipo" in cfg
+    if not tem_analise:
+        df_dig = pd.DataFrame(columns=merge_cols)
+    elif not df_a.empty:
         if "col_dig_subtipo" in cfg:
             mask_dig = (
                 df_a["SUBTIPO"].astype(str)

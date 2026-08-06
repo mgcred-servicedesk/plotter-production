@@ -76,6 +76,76 @@ Regras:
 - **Conta duplamente**: para valor/pontos **como CNC** E separadamente como produção de Super Conta (quantidade).
 - No DB: categoria `SUPER_CONTA` com `grupo_dashboard = 'CNC'` e entrada própria em `pontuacao` com o mesmo multiplicador do CNC.
 
+## CLT e Consignado (Novo/Refin) pagos
+
+Contadores de **quantidade** de propostas pagas, exibidos nas abas `CLT` e
+`Consignado (Novo/Refin)` da seção "Emissão e Seguros — Análise Regional".
+
+| Contador | Critério (combinado por **AND**) |
+|---|---|
+| **CLT** | `categoria_codigo = CONSIG_PRIV` **e** `TIPO OPER.` ≠ `SEGURO PRESTAMISTA` |
+| **Consignado (Novo/Refin)** | `categoria_codigo ∈ {CONSIG_BMG, CONSIG_ITAU, CONSIG_C6}` **e** `SUBTIPO ∈ {NOVO, REFIN}` |
+
+Comparações de `SUBTIPO` / `TIPO OPER.` / `BANCO` são feitas
+**normalizadas** (`.astype(str).str.strip().str.upper()`) — a base não é
+uniformemente maiúscula (`Portabilidade` e `PORTABILIDADE` convivem).
+
+- **Não** usam a exceção `sub_status_banco = 'Liquidada'` dos
+  [Seguros](#seguros-bmg-med--vida-familiar): o dashboard carrega só a view
+  `contratos_pagos`, então toda linha do DataFrame já é paga por construção.
+- `categoria_codigo` de CLT é **derivado no app** — as linhas chegam com
+  categoria nula do banco e só viram `CONSIG_PRIV` em
+  `_preencher_categoria_fallback`
+  ([`src/dashboard/loaders.py`](../../src/dashboard/loaders.py)). O filtro
+  vale no DataFrame do dashboard, **nunca** em SQL direto.
+- **Seguro Prestamista fica fora do CLT**: ~93 linhas de `CONSIG_PRIV` têm
+  `TIPO OPER. = 'Seguro Prestamista'` — são seguro, não crédito CLT.
+- **Portabilidade se exclui sozinha, sem lógica extra.** O alias
+  [Portabilidade — alias por banco](#portabilidade--alias-por-banco)
+  sobrescreve **apenas** a coluna `PONTOS`; o `categoria_codigo` da linha
+  continua `PORTABILIDADE`. Logo Portabilidade e Refin da Portabilidade
+  (que carregam `SUBTIPO = REFIN`) já não passam pelo filtro de categoria.
+- `MARGEM COMPLEMENTAR` (~8% do consignado) fica de fora por não ser Novo
+  nem Refin — comportamento pretendido.
+- `CONSIG_ITAU` / `CONSIG_C6` têm **0 linhas** hoje (o ETL manda todo
+  consignado para `CONSIG_BMG`); permanecem no filtro por robustez, sem
+  efeito prático. A distinção de banco existe **só** na coluna `BANCO`.
+
+### Flag "Somente BMG/Help"
+
+Toggle disponível nas abas CLT e Consignado:
+
+| Aspecto | Regra |
+|---|---|
+| Filtro | `BANCO ∈ {BMG, BANCO BMG, HELP, BANCO HELP}` (normalizado) |
+| Alcance | **Só o total exibido no topo da aba** — tabelas por região/loja seguem com todos os bancos |
+
+Hoje `HELP` **nunca** ocorre como `BANCO` em CLT nem em Consignado
+(validado contra a base completa: `HELP` só aparece em CNC / CNC 13º /
+Antecipação de Benefício / CPT), então a flag equivale na prática a
+`BANCO = BMG`. Mantida assim por decisão de produto, preparada para o caso
+de um dia existir CLT/Consignado via Help. Não confundir com o prefixo
+`HELP` em **nome de loja** (`HELP BANGU`, …) — o filtro é sobre `BANCO`,
+não `LOJA`.
+
+### Onde está implementado
+
+[`src/dashboard/tabs/produtos.py`](../../src/dashboard/tabs/produtos.py):
+config `_PRODS_QTD`, filtros em `_mask_subtab` / `_mask_banco`, total e
+toggle em `_render_total_produto`. Critério declarado cuja coluna não
+existe no frame **zera** a contagem (total inflado silenciosamente é pior
+que zero). Testes em `tests/test_tabs_produtos.py`.
+
+Esses contadores **não** estão nos cards-resumo (`kpi_cards.py` /
+`calcular_kpis_qtd_produtos`, config desacoplada de `_PRODS_QTD`) —
+decisão explícita de escopo.
+
+Follow-ups conhecidos, não bloqueantes: CLT/Consignado não têm coluna
+"Análise" (digitados); `ITAU-360` — valor real de `BANCO` — não está em
+`_PORTAB_BANCO_TO_CONSIG`, divergência preexistente que não afeta estes
+contadores. Ver
+[progress/2026-08-06](progress/2026-08-06-plano-clt-consignado-emissao-seguros.md).
+
 ## PACK — meta conjunta e desmembramento
 
 `grupo_dashboard = 'PACK'` agrupa três categorias (`FGTS`, `ANT_BENEF`,
