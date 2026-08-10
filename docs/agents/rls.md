@@ -22,6 +22,34 @@ df_sup   = aplicar_rls_supervisores(df_sup, df)
 - A ordem importa: `aplicar_rls_metas` e `aplicar_rls_supervisores`
   dependem do `df` já filtrado.
 
+### Exceção: agregados cross-região pré-RLS (`df_full`)
+
+Painéis que comparam **regiões entre si** (ex.: heatmap comparativo,
+"Evolução Média DU por Região") precisam ver todas as regiões
+independente do perfil, senão a comparação fica sem sentido para
+`gerente_comercial`/`supervisor` (só a própria região apareceria, as
+demais ficariam zeradas). `app.py` guarda um alias **pré-RLS** do
+DataFrame (`df_full = df`, antes de `aplicar_rls` — ver
+`app.py:391-399`) e repassa esse alias, junto do pós-RLS, para as abas
+que precisam desse painel.
+
+Regra de segurança do padrão: **só pode sair agregado por região desse
+frame — nunca linha crua** (`groupby("REGIAO")`, nunca um `df_full` cru
+renderizado em tabela/detalhe). `calcular_evolucao_media_du`
+(`src/dashboard/kpis/regioes.py:283`) segue essa regra: devolve só
+`Região`/`Mês Anterior`/`Mês Atual`/`% Evolução` por região + linha
+`TOTAL`, nunca contrato/consultor individual.
+
+O mesmo alias existe para o **mês comparativo** em
+`src/dashboard/tabs/produtos.py` (`_carregar_mes_comparativo` cacheia
+`<prefixo>_cache_full` ao lado do `<prefixo>_cache` pós-RLS;
+`_mes_comparativo_full` lê esse cache). Antes de existir esse segundo
+alias, o comparativo ficava assimétrico: "Mês Atual" já usava `df_full`
+(todas as regiões) mas "Mês Anterior" usava o pós-RLS — para
+`gerente_comercial`, toda região que não fosse a sua aparecia com "Mês
+Anterior" zerado, distorcendo o `% Evolução`. Contexto completo:
+[progress/2026-08-10-fix-evolucao-du-regiao-mes-comparativo.md](progress/2026-08-10-fix-evolucao-du-regiao-mes-comparativo.md).
+
 ## Hierarquia de perfis (do mais alto ao mais baixo)
 
 | Perfil | Escopo | Acesso |

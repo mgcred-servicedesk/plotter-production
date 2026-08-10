@@ -91,8 +91,11 @@ Comparações de `SUBTIPO` / `TIPO OPER.` / `BANCO` são feitas
 uniformemente maiúscula (`Portabilidade` e `PORTABILIDADE` convivem).
 
 - **Não** usam a exceção `sub_status_banco = 'Liquidada'` dos
-  [Seguros](#seguros-bmg-med--vida-familiar): o dashboard carrega só a view
-  `contratos_pagos`, então toda linha do DataFrame já é paga por construção.
+  [Seguros](#seguros-bmg-med--vida-familiar): a view que alimenta o
+  dashboard (`v_contratos_dashboard`, não `contratos_pagos` —
+  `src/dashboard/loaders.py:337`) só aplica essa exceção a
+  `tipo_operacao ∈ {BMG MED, Seguro}`; para CLT/Consignado toda linha já
+  chega paga por `status_pagamento_cliente = 'PAGO AO CLIENTE'`.
 - `categoria_codigo` de CLT é **derivado no app** — as linhas chegam com
   categoria nula do banco e só viram `CONSIG_PRIV` em
   `_preencher_categoria_fallback`
@@ -111,6 +114,33 @@ uniformemente maiúscula (`Portabilidade` e `PORTABILIDADE` convivem).
   consignado para `CONSIG_BMG`); permanecem no filtro por robustez, sem
   efeito prático. A distinção de banco existe **só** na coluna `BANCO`.
 
+### Contadores dos demais produtos (Emissão, Super Conta, BMG Med, Vida Familiar)
+
+Em 2026-08-10 o mesmo contador de topo ("Propostas pagas") foi estendido às
+outras 4 abas da seção — **sem** a flag "Somente BMG/Help", que só faz
+sentido para CLT/Consignado (onde o banco distingue a régua de
+comissionamento; nos demais produtos o banco não é critério de negócio):
+
+| Contador | Critério |
+|---|---|
+| **Emissão** | `TIPO OPER. ∈ {CARTÃO BENEFICIO, Venda Pré-Adesão}` (soma as duas subtabs) |
+| **Super Conta** | `SUBTIPO = SUPER CONTA` |
+| **BMG Med** | `TIPO OPER. = BMG MED` |
+| **Vida Familiar** | `TIPO OPER. = Seguro` |
+
+BMG Med e Vida Familiar entram no DataFrame pela exceção
+`sub_status_banco = 'Liquidada'` (ver
+[Seguros](#seguros-bmg-med--vida-familiar)), não por
+`PAGO AO CLIENTE` — mas isso já está resolvido na origem
+(`v_contratos_dashboard`): toda linha do frame já é paga-ou-liquidada por
+construção, então a contagem simples por `TIPO OPER.` não precisa (nem
+deve) replicar esse filtro — mesma lógica já vale para CLT/Consignado
+acima.
+
+Mesma implementação genérica de `_render_total_produto` /
+`_render_produto_regional` (aba sem `toggle_banco` na config simplesmente
+não desenha o toggle — ver [Onde está implementado](#onde-está-implementado)).
+
 ### Flag "Somente BMG/Help"
 
 Toggle disponível nas abas CLT e Consignado:
@@ -118,7 +148,30 @@ Toggle disponível nas abas CLT e Consignado:
 | Aspecto | Regra |
 |---|---|
 | Filtro | `BANCO ∈ {BMG, BANCO BMG, HELP, BANCO HELP}` (normalizado) |
-| Alcance | **Só o total exibido no topo da aba** — tabelas por região/loja seguem com todos os bancos |
+| Alcance | **A aba inteira** — o total no topo **e** as tabelas abaixo, em todos os perfis: por região/loja (Admin/Gestor) e por loja/consultor (`gerente_comercial`) |
+| Escopo | Só a aba onde o toggle está ligado (chave de sessão por aba); não afeta a outra aba nem o resto do dashboard |
+
+O recorte é **um só**: a mesma máscara de banco usada no total entra por
+`AND` no filtro de cada subtab antes de alimentar as tabelas. Consequências:
+
+- O total do topo **bate** com a soma das tabelas (salvo linha sem
+  `REGIAO`/`LOJA`, que entra no total e não no `groupby` — ver
+  [Onde está implementado](#onde-está-implementado)).
+- Na visão por região não há esqueleto de linhas: região/loja que fica sem
+  nenhuma linha após o filtro **some da tela**. Na visão `gerente_comercial`
+  o esqueleto de consultores preserva as linhas zeradas.
+- `BANCO` ausente do frame com a flag ligada **zera a aba inteira** (total e
+  tabelas), coerente com "critério sem coluna zera a contagem".
+
+> **Histórico:** até 2026-08-10 a flag restringia **apenas o total**, e as
+> tabelas seguiam com todos os bancos. Isso foi reportado como
+> "`gerente_comercial` não consegue filtrar produção": esse perfil usa a
+> tabela por loja/consultor como visão principal, não o KPI agregado, então
+> a flag parecia não fazer nada. Não era RLS nem dado (`BANCO` nunca nula,
+> nenhuma região órfã, o toggle corta ~10-20% da produção e nunca zera) —
+> era o alcance da flag. Ver
+> [progress/2026-08-06](progress/2026-08-06-plano-clt-consignado-emissao-seguros.md)
+> (ST-05/ST-06).
 
 Hoje `HELP` **nunca** ocorre como `BANCO` em CLT nem em Consignado
 (validado contra a base completa: `HELP` só aparece em CNC / CNC 13º /
@@ -128,20 +181,65 @@ de um dia existir CLT/Consignado via Help. Não confundir com o prefixo
 `HELP` em **nome de loja** (`HELP BANGU`, …) — o filtro é sobre `BANCO`,
 não `LOJA`.
 
+### Produção de supervisor — conta pro total, marcada, fora do ranking
+
+Diferente do resto do dashboard (ver
+[Exclusão de supervisores](#exclusão-de-supervisores)), os contadores desta
+seção **não** excluem produção de supervisor do total — desde 2026-08-10
+ela conta pra loja/aba, igual ao card "Aceleradores"
+(`calcular_kpis_qtd_produtos`), só que **marcada**, nunca misturada ao
+ranking/média de consultor:
+
+| Visão | Como aparece |
+|---|---|
+| KPI do topo | Soma tudo (com supervisor); se houver produção de supervisor, `st.caption` abaixo do metric informa quanto |
+| Admin/Gestor (por região/loja) | Produção de supervisor entra **anônima e somada** no total da loja (não há linha por pessoa nesta visão); loja afetada ganha `" *"` no nome, com legenda no rodapé da seção |
+| `gerente_comercial` (por loja/consultor) | Linha própria por loja, rotulada `"<nome> (Supervisor)"`, sempre **depois** dos consultores reais (nunca entra no `sort_values` por produção) e **antes** da linha "Total" — que soma tudo, incluindo essa linha |
+
+Motivo da mudança: o card "Aceleradores" sempre somou supervisor (nunca
+chamou `excluir_supervisores`); estes contadores excluíam por completo —
+divergência que apareceu como "os números não batem" entre as duas
+superfícies para Super Conta/BMG Med (produtos onde havia produção de
+supervisor no período; nos demais o gap era zero por coincidência de não
+ter produção de supervisor naquele mês). A correção alinha o total com o
+Aceleradores sem violar a regra geral: supervisor não vira uma linha de
+"consultor" em nenhum ranking, esqueleto (consultores zerados) ou coluna
+"Análise" (digitados de supervisor não são computados — fica sempre `0`
+nessa linha, limitação conhecida, não bug).
+
 ### Onde está implementado
 
 [`src/dashboard/tabs/produtos.py`](../../src/dashboard/tabs/produtos.py):
-config `_PRODS_QTD`, filtros em `_mask_subtab` / `_mask_banco`, total e
-toggle em `_render_total_produto`. Critério declarado cuja coluna não
-existe no frame **zera** a contagem (total inflado silenciosamente é pior
-que zero). Testes em `tests/test_tabs_produtos.py`.
+config `_PRODS_QTD`, filtros em `_mask_subtab` / `_mask_banco` /
+`_mask_supervisor`, total e toggle em `_render_total_produto`. Critério
+declarado cuja coluna não existe no frame **zera** a contagem (total
+inflado silenciosamente é pior que zero). Testes em
+`tests/test_tabs_produtos.py`.
+
+O alcance único da flag (total + tabelas) sai de `_render_total_produto`
+devolvendo a **máscara de banco já aplicada ao total** (`None` quando não há
+filtro ativo); `_render_produto_regional` reaplica essa mesma máscara por
+`AND` em `_mask_subtab(df, sub)` antes de chamar `_contar_por_regiao` ou
+`_contar_por_loja_consultor` — um recorte só, sem branch por perfil. Desde
+2026-08-10 esse `df` é o frame **completo** (com supervisor) — `df_p`
+(via `_excluir_sup`) continua existindo, mas só serve pro esqueleto de
+consultores zerados e pro frame de digitados (`df_a`), nunca mais pras
+contagens de efetivados. Na visão por consultor, a produção de supervisor
+é separada do `df_merged` **antes** do merge com esqueleto/digitados (que
+são exclusivos de consultor de verdade) e reintroduzida só na hora de
+renderizar, como linha à parte. O total é contado sem depender de
+`REGIAO`/`LOJA`; as tabelas usam `groupby`, que descarta linha órfã — com
+órfã, total ≥ soma das tabelas.
 
 Esses contadores **não** estão nos cards-resumo (`kpi_cards.py` /
 `calcular_kpis_qtd_produtos`, config desacoplada de `_PRODS_QTD`) —
-decisão explícita de escopo.
+decisão explícita de escopo. (`calcular_kpis_qtd_produtos` sempre somou
+supervisor; ver seção acima.)
 
 Follow-ups conhecidos, não bloqueantes: CLT/Consignado não têm coluna
-"Análise" (digitados); `ITAU-360` — valor real de `BANCO` — não está em
+"Análise" (digitados) — se ganharem, a flag de banco precisa ser estendida
+ao frame de digitados (`df_a`), que hoje não recebe a máscara;
+`ITAU-360` — valor real de `BANCO` — não está em
 `_PORTAB_BANCO_TO_CONSIG`, divergência preexistente que não afeta estes
 contadores. Ver
 [progress/2026-08-06](progress/2026-08-06-plano-clt-consignado-emissao-seguros.md).
@@ -282,6 +380,15 @@ def _excluir_supervisores(df, df_sup):
 ```
 
 Aplicar **antes** de rankings, contagens de consultores e médias por consultor.
+
+> **Exceção documentada:** os contadores de "Emissão e Seguros — Análise
+> Regional" (ver
+> [Produção de supervisor — conta pro total, marcada, fora do
+> ranking](#produção-de-supervisor--conta-pro-total-marcada-fora-do-ranking))
+> voltam a somar produção de supervisor no **total** (loja/aba), mas
+> continuam nunca deixando o supervisor virar uma linha de "consultor" em
+> ranking, esqueleto ou média — a regra acima (nunca aparecer em
+> análises consultor-level) segue valendo, só o total deixou de excluir.
 
 ## Lojas de backoffice (Vai e Vem)
 

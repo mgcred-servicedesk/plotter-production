@@ -66,8 +66,8 @@ _BANCOS_BMG_HELP = ("BMG", "BANCO BMG", "HELP", "BANCO HELP")
 # - ``col_dig_tipo`` / ``col_dig_subtipo``: criterio da coluna
 #   "Análise" (digitados). Ausentes = aba sem coluna de análise.
 # - ``total_label`` / ``total_help``: KPI de total no topo da aba.
-# - ``toggle_banco``: flag opcional que restringe **somente** esse
-#   total a uma lista de bancos.
+# - ``toggle_banco``: flag opcional que restringe o total **e** as
+#   tabelas por regiao/loja/consultor da aba a uma lista de bancos.
 
 _PRODS_QTD = [
     {
@@ -86,6 +86,11 @@ _PRODS_QTD = [
             "CARTÃO BENEFICIO",
             "Venda Pré-Adesão",
         ],
+        "total_label": "Propostas pagas",
+        "total_help": (
+            "Contratos pagos de Emissão (Cartão Benefício + "
+            "Venda Pré-Adesão)."
+        ),
     },
     {
         "label": "Super Conta",
@@ -96,6 +101,8 @@ _PRODS_QTD = [
             },
         ],
         "col_dig_subtipo": "SUPER CONTA",
+        "total_label": "Propostas pagas",
+        "total_help": "Contratos pagos de Super Conta (subtipo SUPER CONTA).",
     },
     {
         "label": "BMG Med",
@@ -106,6 +113,10 @@ _PRODS_QTD = [
             },
         ],
         "col_dig_tipo": ["BMG MED"],
+        "total_label": "Propostas pagas",
+        "total_help": (
+            "Contratos pagos de BMG Med (tipo operação BMG MED)."
+        ),
     },
     {
         "label": "Vida Familiar",
@@ -116,6 +127,10 @@ _PRODS_QTD = [
             },
         ],
         "col_dig_tipo": ["Seguro"],
+        "total_label": "Propostas pagas",
+        "total_help": (
+            "Contratos pagos de Vida Familiar (tipo operação Seguro)."
+        ),
     },
     {
         "label": "CLT",
@@ -136,9 +151,8 @@ _PRODS_QTD = [
             "key": "prod_qtd_clt_bmg_help",
             "bancos": _BANCOS_BMG_HELP,
             "help": (
-                "Restringe apenas o total acima aos bancos BMG e Help. "
-                "As tabelas por região/loja continuam com todos os "
-                "bancos."
+                "Restringe o total acima e as tabelas desta aba aos "
+                "bancos BMG e Help."
             ),
         },
     },
@@ -162,9 +176,8 @@ _PRODS_QTD = [
             "key": "prod_qtd_consig_bmg_help",
             "bancos": _BANCOS_BMG_HELP,
             "help": (
-                "Restringe apenas o total acima aos bancos BMG e Help. "
-                "As tabelas por região/loja continuam com todos os "
-                "bancos."
+                "Restringe o total acima e as tabelas desta aba aos "
+                "bancos BMG e Help."
             ),
         },
     },
@@ -348,16 +361,39 @@ def _mask_banco(df: pd.DataFrame, bancos) -> pd.Series:
     return _norm(df["BANCO"]).isin(list(bancos))
 
 
-def _render_total_produto(df: pd.DataFrame, cfg: dict) -> None:
+def _mask_supervisor(df: pd.DataFrame, supervisores_norm: set) -> pd.Series:
+    """Mascara de linhas cujo ``CONSULTOR`` e um supervisor conhecido.
+
+    ``supervisores_norm`` ja vem normalizado (strip + upper) por quem
+    monta a lista a partir de ``df_sup`` — ver ``_render_produto_regional``.
+    """
+    if not supervisores_norm or "CONSULTOR" not in df.columns:
+        return _mask_falsa(df)
+    return _norm(df["CONSULTOR"]).isin(supervisores_norm)
+
+
+def _render_total_produto(
+    df: pd.DataFrame,
+    cfg: dict,
+    mask_supervisor: Optional[pd.Series] = None,
+) -> Optional[pd.Series]:
     """KPI de total da aba + flag opcional de banco.
 
-    A flag restringe **apenas** este total: as tabelas por
-    regiao/loja abaixo continuam com o recorte completo (decisao
-    registrada em
-    ``progress/2026-08-06-plano-clt-consignado-emissao-seguros.md``).
-    O total conta sobre o mesmo frame das tabelas (ja sem
-    supervisores), mas nao depende de REGIAO/LOJA preenchidos — linha
-    sem regiao entra aqui e nao entra no ``groupby`` das tabelas.
+    Retorna a mascara de banco **ja aplicada a este total**, alinhada
+    ao indice de ``df``, ou ``None`` quando nao ha filtro ativo (flag
+    desligada ou aba sem ``toggle_banco``). O chamador repropaga essa
+    mesma mascara para as tabelas por regiao/loja/consultor, para que
+    a flag filtre a aba inteira — por isso o retorno so vale sobre o
+    **mesmo frame** passado aqui.
+
+    O total conta sobre o **mesmo frame** das tabelas (``df`` completo,
+    COM producao de supervisor — ver ``_render_produto_regional``), e
+    nao depende de REGIAO/LOJA preenchidos — linha sem regiao entra
+    aqui e nao entra no ``groupby`` das tabelas.
+
+    ``mask_supervisor``, quando informada, so serve para a legenda: se
+    houver producao de supervisor dentro do total, mostra quanto —
+    nunca subtrai nem exclui nada da conta principal.
     """
     mask = _mask_falsa(df)
     for sub in cfg["subtabs"]:
@@ -377,8 +413,11 @@ def _render_total_produto(df: pd.DataFrame, cfg: dict) -> None:
                 key=cfg_banco["key"],
                 help=cfg_banco.get("help"),
             )
+
+    mask_banco: Optional[pd.Series] = None
     if somente_banco and cfg_banco:
-        mask = mask & _mask_banco(df, cfg_banco["bancos"])
+        mask_banco = _mask_banco(df, cfg_banco["bancos"])
+        mask = mask & mask_banco
 
     with col_total:
         st.metric(
@@ -386,6 +425,15 @@ def _render_total_produto(df: pd.DataFrame, cfg: dict) -> None:
             formatar_numero(int(mask.sum())),
             help=cfg.get("total_help"),
         )
+        if mask_supervisor is not None:
+            qtd_sup = int((mask & mask_supervisor).sum())
+            if qtd_sup > 0:
+                st.caption(
+                    f"Inclui {formatar_numero(qtd_sup)} de produção de "
+                    "supervisor (fora de rankings e médias por consultor)."
+                )
+
+    return mask_banco
 
 
 def _contar_por_regiao(
@@ -520,21 +568,42 @@ def _render_produto_regional(
     df_a = _excluir_sup(
         df_analise if df_analise is not None else pd.DataFrame()
     )
+    mask_sup_total = _mask_supervisor(df, supervisores_norm)
 
     # ── Total da aba (+ flag de banco, quando configurada) ───────
+    # A flag do total repropaga para as tabelas abaixo: o mesmo
+    # recorte de banco entra por AND no mask de cada subtab, valendo
+    # para as duas visoes (regiao/loja e loja/consultor). Aba sem
+    # ``total_label`` nem ``toggle_banco`` (as 4 antigas) fica com
+    # ``mask_banco = None`` — nenhum filtro extra.
+    #
+    # O total e as tabelas contam sobre ``df`` **completo** (com
+    # producao de supervisor) — decisao de 2026-08-10: supervisor
+    # conta pra loja, igual ja vale pro resto do dashboard (ver
+    # docs/agents/rls.md "Nota de design" e business-rules.md
+    # "Exclusao de supervisores"). O que muda por perfil e SO como
+    # essa producao aparece nas tabelas (ver mais abaixo): agregada e
+    # anonima na visao por regiao/loja, destacada como linha propria
+    # na visao por consultor — nunca misturada ao ranking/media de
+    # consultor.
+    mask_banco: Optional[pd.Series] = None
     if cfg.get("total_label"):
-        _render_total_produto(df_p, cfg)
+        mask_banco = _render_total_produto(
+            df, cfg, mask_supervisor=mask_sup_total,
+        )
 
     # ── Colunas de efetivados (pode ter mais de 1 para Emissão) ──
     dfs_ef = []
     for sub in cfg["subtabs"]:
-        mask = _mask_subtab(df_p, sub)
+        mask = _mask_subtab(df, sub)
+        if mask_banco is not None:
+            mask = mask & mask_banco
         if visao_por_loja:
             dfs_ef.append(
-                _contar_por_loja_consultor(df_p, mask, sub["nome_col"])
+                _contar_por_loja_consultor(df, mask, sub["nome_col"])
             )
         else:
-            dfs_ef.append(_contar_por_regiao(df_p, mask, sub["nome_col"]))
+            dfs_ef.append(_contar_por_regiao(df, mask, sub["nome_col"]))
 
     # Merge conforme a visão
     if visao_por_loja:
@@ -551,6 +620,22 @@ def _render_produto_regional(
             df_merged = pd.merge(
                 df_merged, extra, on=merge_cols, how="outer"
             )
+
+    # ── Separar producao de supervisor (visao por consultor) ──────
+    # So a visao por consultor precisa disso: e onde "consultor" vira
+    # uma pessoa fisica na tabela, e supervisor nao pode entrar como
+    # se fosse um consultor (nem no esqueleto de zerados, nem no
+    # ranking por ``ef_base``). Sai ANTES do merge de digitados/
+    # esqueleto — os dois so operam sobre consultores de verdade — e
+    # volta depois, so na hora de renderizar, como linha propria por
+    # loja (ver bloco de render mais abaixo).
+    ef_cols_prod = [s["nome_col"] for s in cfg["subtabs"]]
+    df_merged_sup = pd.DataFrame(columns=merge_cols)
+    if visao_por_loja and supervisores_norm and not df_merged.empty:
+        mask_sup_merged = _mask_supervisor(df_merged, supervisores_norm)
+        if mask_sup_merged.any():
+            df_merged_sup = df_merged[mask_sup_merged].copy()
+            df_merged = df_merged[~mask_sup_merged].copy()
 
     # ── Digitados (em análise) ────────────────────────
     # Aba sem criterio de digitados (CLT, Consignado) nao ganha coluna
@@ -587,7 +672,9 @@ def _render_produto_regional(
             df_dig = pd.DataFrame(columns=["REGIAO", "LOJA", "Análise"])
 
     # ── Incluir todos os consultores (mesmo zerados) na visão por loja ──
-    # Supervisores são excluídos — aparecem apenas em seus próprios quadros
+    # Supervisores não entram aqui: não recebem linha zerada quando não
+    # produzem, e quando produzem aparecem à parte (bloco de supervisor
+    # montado logo abaixo, renderizado como linha própria por loja).
     if visao_por_loja:
         if "LOJA" in df_p.columns and "CONSULTOR" in df_p.columns:
             esqueleto = (
@@ -645,6 +732,51 @@ def _render_produto_regional(
     col_exib = ["Análise"] + ef_cols + ["Proj"]
     col_exib = [c for c in col_exib if c in df_final.columns]
 
+    # ── Bloco de producao de supervisor (visao por consultor) ─────
+    # Mesmas colunas numericas de ``df_final`` (fillna 0 + int, Total
+    # se houver mais de uma subtab, Proj pela mesma formula), MENOS
+    # "Análise": digitados de supervisor nao sao computados aqui (o
+    # frame ``df_a`` ja exclui supervisor antes disso, sem mudar) —
+    # a coluna existe zerada so pra caber no mesmo ``col_exib`` da
+    # tabela. Nao entra no esqueleto nem no ranking por ``ef_base``;
+    # o render mais abaixo acrescenta como linha propria, por ultimo,
+    # dentro da loja onde houve producao.
+    df_final_sup = df_merged_sup.copy()
+    if not df_final_sup.empty:
+        for c in ef_cols_prod:
+            df_final_sup[c] = (
+                df_final_sup[c].fillna(0).astype(int)
+                if c in df_final_sup.columns
+                else 0
+            )
+        if len(ef_cols_prod) > 1:
+            df_final_sup["Total"] = df_final_sup[ef_cols_prod].sum(axis=1)
+        df_final_sup["Análise"] = 0
+        if du_dec > 0:
+            df_final_sup["Proj"] = (
+                df_final_sup[ef_base] / du_dec * du_total
+            ).round(0).astype(int)
+        else:
+            df_final_sup["Proj"] = 0
+
+    # ── Lojas com producao de supervisor (visao por regiao) ───────
+    # Na visao Admin/Gestor nao ha linha por pessoa — a producao do
+    # supervisor entra somada e anonima no total da loja (mesma regra
+    # "supervisor conta pra loja"). Aqui so identificamos QUAIS lojas
+    # tem esse componente, pra marcar o rotulo na tabela.
+    lojas_com_supervisor: set = set()
+    if not visao_por_loja and mask_sup_total.any() and "LOJA" in df.columns:
+        mask_prod_sup = _mask_falsa(df)
+        for sub in cfg["subtabs"]:
+            m = _mask_subtab(df, sub)
+            if mask_banco is not None:
+                m = m & mask_banco
+            mask_prod_sup = mask_prod_sup | (m & mask_sup_total)
+        if mask_prod_sup.any():
+            lojas_com_supervisor = set(
+                df.loc[mask_prod_sup, "LOJA"].unique()
+            )
+
     # ── Renderização conforme a visão ────────────────
     if visao_por_loja:
         # Visão Gerente Comercial: tabelas por LOJA, linhas = CONSULTORES
@@ -674,6 +806,24 @@ def _render_produto_regional(
                         .sort_values(ef_base, ascending=False)
                         .reset_index(drop=True)
                     )
+                    # Producao de supervisor desta loja: linha propria,
+                    # sempre depois do ranking de consultores (nunca
+                    # entra no sort acima) e antes do Total — visivel,
+                    # mas fora do ranking/media por consultor.
+                    if not df_final_sup.empty:
+                        bloco_sup = df_final_sup[
+                            df_final_sup["LOJA"] == loja
+                        ][["CONSULTOR"] + col_exib].copy()
+                        if not bloco_sup.empty:
+                            bloco_sup = bloco_sup.rename(
+                                columns={"CONSULTOR": "Consultor"}
+                            )
+                            bloco_sup["Consultor"] = (
+                                bloco_sup["Consultor"] + " (Supervisor)"
+                            )
+                            df_loja = pd.concat(
+                                [df_loja, bloco_sup], ignore_index=True,
+                            )
                     total_row = {"Consultor": "Total"}
                     for c in col_exib:
                         total_row[c] = int(df_loja[c].sum())
@@ -716,6 +866,14 @@ def _render_produto_regional(
                         .sort_values(ef_base, ascending=False)
                         .reset_index(drop=True)
                     )
+                    if lojas_com_supervisor:
+                        df_reg["Loja"] = df_reg["Loja"].apply(
+                            lambda v: (
+                                f"{v} *"
+                                if v in lojas_com_supervisor
+                                else v
+                            )
+                        )
                     total_row = {"Loja": "Total"}
                     for c in col_exib:
                         total_row[c] = int(df_reg[c].sum())
@@ -727,6 +885,12 @@ def _render_produto_regional(
                         _html_tabela_regional(reg, df_reg, col_exib),
                         unsafe_allow_html=True,
                     )
+
+        if lojas_com_supervisor:
+            st.caption(
+                "* Loja com produção de supervisor incluída no total "
+                "(fora de rankings e médias por consultor)."
+            )
 
 
 def _chave_mes_comparativo(mes: int, ano: int) -> tuple:
@@ -776,13 +940,21 @@ def _carregar_mes_comparativo(
     represente a mesma granularidade (regiao / loja / consultor) que
     esta sendo visualizada.
 
+    Tambem cacheia, em paralelo, um snapshot **pre-RLS** sob
+    ``<prefixo>_cache_full`` — mesmo papel do ``df_full`` do mes atual
+    (ver ``app.py``): base para comparativos agregados por regiao que
+    nao devem ficar reduzidos ao escopo do perfil (ex.: "Mes Anterior"
+    do quadro de Evolucao Media DU por Regiao, consumido via
+    ``_mes_comparativo_full``). Nao paga query extra, so guarda a
+    referencia anterior ao ``aplicar_rls``.
+
     Falha de carga nao derruba a aba: e logada, virada em ``st.warning``
     visivel e o comparativo cai para um frame vazio (o grafico apenas
     perde a curva).
 
     Args:
         mes / ano: periodo a carregar.
-        prefixo: raiz das duas chaves de ``session_state``
+        prefixo: raiz das chaves de ``session_state``
             (``_df_ant`` para o mes anterior, ``_df_ano_ant`` para o
             mesmo mes do ano anterior).
         rotulo: nome do comparativo nas mensagens de log e de aviso.
@@ -792,6 +964,7 @@ def _carregar_mes_comparativo(
         try:
             frame, _, _ = consolidar_dados(mes, ano)
             frame = aplicar_nomes_display_produto(frame)
+            frame_full = frame
             frame = aplicar_rls(frame)
             if (
                 st.session_state.get("ui_filtro_lojas")
@@ -807,9 +980,19 @@ def _carregar_mes_comparativo(
                 f"({mes:02d}/{ano}): {exc}"
             )
             frame = pd.DataFrame()
+            frame_full = pd.DataFrame()
         st.session_state[f"{prefixo}_cache"] = frame
+        st.session_state[f"{prefixo}_cache_full"] = frame_full
         st.session_state[f"{prefixo}_chave"] = chave
     return st.session_state[f"{prefixo}_cache"]
+
+
+def _mes_comparativo_full(prefixo: str) -> pd.DataFrame:
+    """Snapshot pre-RLS do mes de comparacao cacheado por
+    ``_carregar_mes_comparativo`` (chamar so depois dele, mesmo
+    ``prefixo``). Deste frame so devem sair agregados por regiao para
+    a tela — nunca linha crua (mesma regra do ``df_full``)."""
+    return st.session_state.get(f"{prefixo}_cache_full", pd.DataFrame())
 
 
 def limpar_cache_comparativos() -> None:
@@ -829,6 +1012,7 @@ def limpar_cache_comparativos() -> None:
     """
     for prefixo in _PREFIXOS_COMPARATIVO:
         st.session_state.pop(f"{prefixo}_cache", None)
+        st.session_state.pop(f"{prefixo}_cache_full", None)
         st.session_state.pop(f"{prefixo}_chave", None)
 
 
@@ -920,10 +1104,15 @@ def render_tab_produtos(
             df_hm, df_metas_produto_full, categorias,
         )
 
+        # "Mes Anterior" tambem pre-RLS: espelha o df_full do mes
+        # atual acima. Com df_ant (pos-RLS) aqui, todo perfil
+        # gerente_comercial via regiao alheia zerada ("Mes Anterior"
+        # = 0 / 0% de evolucao) — o comparativo entre regionais so
+        # faz sentido com as duas pontas na mesma base organizacional.
         df_evol = calcular_evolucao_media_du(
             df_full,
             max(du_decorridos, 1),
-            df_ant,
+            _mes_comparativo_full(_PREFIXO_MES_ANT),
             max(du_dec_ant, 1),
             regioes_excluir=_REGIOES_EXCLUIR_HM,
         )

@@ -60,17 +60,19 @@ def _opcoes_coluna(df: pd.DataFrame, coluna: str) -> list:
 
 
 def _filtrar_detalhamento(df: pd.DataFrame, key_prefix: str) -> pd.DataFrame:
-    """Filtros de Loja, Consultor, Produto e Subproduto.
+    """Filtros de Loja, Consultor, Produto, Banco e Subproduto.
 
     Produto filtra por ``PRODUTO_DETALHADO`` — a taxonomia do dashboard
     com o PACK desmembrado, para que FGTS, ANT. DE BENEF. e CNC 13º
-    sejam buscaveis separadamente. Subproduto filtra por ``SUBTIPO``
-    (NOVO, REFIN, MARGEM COMPLEMENTAR, SUPER CONTA...) e e em cascata:
-    suas opcoes saem do recorte ja filtrado, evitando combinacoes sem
+    sejam buscaveis separadamente. Banco filtra por ``BANCO`` (valores
+    crus, sem normalizacao — mesma logica de ``_opcoes_coluna`` ja usada
+    em Produto). Subproduto filtra por ``SUBTIPO`` (NOVO, REFIN, MARGEM
+    COMPLEMENTAR, SUPER CONTA...) e e em cascata: suas opcoes saem do
+    recorte ja filtrado (incluindo Banco), evitando combinacoes sem
     linhas.
     """
     df = adicionar_produto_detalhado(df)
-    col1, col2, col3, col4 = st.columns(4)
+    col1, col2, col3, col4, col5 = st.columns(5)
     with col1:
         lojas = ["Todas"] + sorted(df["LOJA"].unique().tolist())
         filt_loja = st.selectbox("Loja", lojas, key=f"{key_prefix}_loja")
@@ -86,6 +88,11 @@ def _filtrar_detalhamento(df: pd.DataFrame, key_prefix: str) -> pd.DataFrame:
         filt_prod = st.selectbox(
             "Produto", produtos, key=f"{key_prefix}_prod"
         )
+    with col4:
+        bancos = ["Todos"] + _opcoes_coluna(df, "BANCO")
+        filt_banco = st.selectbox(
+            "Banco", bancos, key=f"{key_prefix}_banco"
+        )
 
     df_d = df.copy()
     if filt_loja != "Todas":
@@ -94,15 +101,17 @@ def _filtrar_detalhamento(df: pd.DataFrame, key_prefix: str) -> pd.DataFrame:
         df_d = df_d[df_d["CONSULTOR"] == filt_cons]
     if filt_prod != "Todos" and COL_PRODUTO_DETALHADO in df_d.columns:
         df_d = df_d[df_d[COL_PRODUTO_DETALHADO] == filt_prod]
+    if filt_banco != "Todos" and "BANCO" in df_d.columns:
+        df_d = df_d[df_d["BANCO"].astype(str).str.strip() == filt_banco]
 
     subprodutos = ["Todos"] + _opcoes_coluna(df_d, "SUBTIPO")
-    # Cascata: ao trocar o Produto, o Subproduto selecionado pode nao
+    # Cascata: ao trocar Produto/Banco, o Subproduto selecionado pode nao
     # existir mais nas opcoes. Reseta antes de instanciar o widget
     # (depois disso o session_state e imutavel no mesmo rerun).
     key_sub = f"{key_prefix}_sub"
     if st.session_state.get(key_sub) not in subprodutos:
         st.session_state[key_sub] = "Todos"
-    with col4:
+    with col5:
         filt_sub = st.selectbox("Subproduto", subprodutos, key=key_sub)
 
     if filt_sub != "Todos" and "SUBTIPO" in df_d.columns:

@@ -172,3 +172,58 @@ class TestCalcularEvolucaoMediaDu:
     def test_sem_regiao_retorna_vazio(self):
         df = pd.DataFrame({"VALOR": [1.0]})
         assert calcular_evolucao_media_du(df, 10, None, 10).empty
+
+    def test_mes_anterior_pre_rls_evita_zerar_regiao_alheia_do_gerente(
+        self, df_rank,
+    ):
+        """Regressão do bug documentado em
+        docs/agents/progress/2026-08-10-fix-evolucao-du-regiao-mes-comparativo.md:
+        o painel alimentava este KPI com o "Mês Anterior" PÓS-RLS, que
+        para um ``gerente_comercial`` só contém a própria região — toda
+        região alheia aparecia com "Mês Anterior" = 0, mesmo tendo
+        produção real no mês anterior. A correção troca a entrada pelo
+        snapshot PRÉ-RLS do mesmo mês (``_mes_comparativo_full`` em
+        ``produtos.py``).
+
+        Aqui a diferença é provada chamando ``calcular_evolucao_media_du``
+        direto com as duas variantes de "mês anterior" — sem precisar
+        simular ``_carregar_mes_comparativo`` nem ``aplicar_rls`` de
+        verdade. ``df_rank`` (pré-RLS, como ``df_full``) tem R1 e R2.
+        """
+        df_atual_full = df_rank
+
+        df_ant_full = pd.DataFrame({
+            "REGIAO": ["R1", "R2"],
+            "VALOR": [1000.0, 1000.0],
+        })
+        # Simula aplicar_rls para um gerente_comercial escopado em R1:
+        # só a própria região sobrevive no "mês anterior" pós-RLS.
+        df_ant_pos_rls = df_ant_full[df_ant_full["REGIAO"] == "R1"]
+
+        # Comportamento ANTIGO (bug): "Mês Anterior" pós-RLS zera R2,
+        # região alheia ao gerente.
+        res_antigo = calcular_evolucao_media_du(
+            df_atual_full, du_dec_atual=10,
+            df_ant=df_ant_pos_rls, du_dec_ant=10,
+        )
+        by_antigo = {r["Região"]: r for _, r in res_antigo.iterrows()}
+        assert by_antigo["R2"]["Mês Anterior"] == pytest.approx(0.0)
+        assert by_antigo["R2"]["% Evolução"] == pytest.approx(0.0)
+
+        # Comportamento NOVO/correto: "Mês Anterior" pré-RLS preserva a
+        # produção real de R2 (1000 / 10 du = 100).
+        res_novo = calcular_evolucao_media_du(
+            df_atual_full, du_dec_atual=10,
+            df_ant=df_ant_full, du_dec_ant=10,
+        )
+        by_novo = {r["Região"]: r for _, r in res_novo.iterrows()}
+        assert by_novo["R2"]["Mês Anterior"] == pytest.approx(100.0)
+        # Atual R2 = 2300 / 10 = 230 vs anterior 100 → +130%
+        assert by_novo["R2"]["% Evolução"] == pytest.approx(130.0)
+
+        # A própria região do gerente (R1) não muda entre as duas
+        # variantes — prova que a diferença fica isolada na região
+        # alheia, não em todo o resultado.
+        assert (
+            by_antigo["R1"]["Mês Anterior"] == by_novo["R1"]["Mês Anterior"]
+        )
