@@ -132,20 +132,16 @@ def calcular_kpis_por_produto(
     return pd.DataFrame(dados)
 
 
-def calcular_distribuicao_produtos(
+def _mascaras_aceleradores(
     df: pd.DataFrame,
-    df_supervisores: Optional[pd.DataFrame] = None,
-) -> tuple[pd.DataFrame, list[str], list[str]]:
-    """Distribuicao de valor e quantidade por consultor.
+) -> tuple[pd.Series, pd.Series, pd.Series, pd.Series]:
+    """Devolve as 4 mascaras de acelerador (bmg, seguro, emissao, super conta).
 
-    Produtos de valor (CNC, SAQUE, etc.): agrega por VALOR (R$).
-    Aceleradores (BMG Med, Vida Familiar, Emissao, Super Conta):
-    agrega por quantidade de contratos.
-
-    Returns (df, colunas_moeda, colunas_numero).
+    Criterio declarado cuja coluna nao existe no frame vira mascara
+    toda-False (nunca infla contagem). Usado pelas distribuicoes por
+    consultor e por loja — e recalculado apos qualquer filtro/reset_index,
+    porque a mascara so vale para o indice em que foi construida.
     """
-    if "CONSULTOR" not in df.columns:
-        return pd.DataFrame(), [], []
 
     def _flag(col: str) -> pd.Series:
         return df.get(col, pd.Series(False, index=df.index)).fillna(False).astype(bool)
@@ -162,26 +158,34 @@ def calcular_distribuicao_produtos(
         if "SUBTIPO" in df.columns
         else pd.Series(False, index=df.index)
     )
+    return mask_bmg, mask_seg, mask_em, mask_sc
+
+
+def calcular_distribuicao_produtos(
+    df: pd.DataFrame,
+    df_supervisores: Optional[pd.DataFrame] = None,
+) -> tuple[pd.DataFrame, list[str], list[str]]:
+    """Distribuicao de valor e quantidade por consultor.
+
+    Produtos de valor (CNC, SAQUE, etc.): agrega por VALOR (R$).
+    Aceleradores (BMG Med, Vida Familiar, Emissao, Super Conta):
+    agrega por quantidade de contratos.
+
+    Visao consultor-level → aplica ``excluir_supervisores``
+    (``docs/agents/business-rules.md`` § "Exclusao de supervisores").
+
+    Returns (df, colunas_moeda, colunas_numero).
+    """
+    if "CONSULTOR" not in df.columns:
+        return pd.DataFrame(), [], []
+
+    mask_bmg, mask_seg, mask_em, mask_sc = _mascaras_aceleradores(df)
 
     mask_all = (df["VALOR"] > 0) | mask_bmg | mask_seg | mask_em | mask_sc
     df_v = excluir_supervisores(df[mask_all].copy().reset_index(drop=True), df_supervisores)
 
     # Recompute flags on filtered df
-    def _flag_v(col: str) -> pd.Series:
-        return df_v.get(col, pd.Series(False, index=df_v.index)).fillna(False).astype(bool)
-
-    bmg_v = _flag_v("is_bmg_med")
-    seg_v = _flag_v("is_seguro_vida")
-    em_v = (
-        df_v["TIPO_PRODUTO"].str.upper().isin({p.upper() for p in PRODUTOS_EMISSAO})
-        if "TIPO_PRODUTO" in df_v.columns
-        else pd.Series(False, index=df_v.index)
-    )
-    sc_v = (
-        df_v["SUBTIPO"].str.strip().str.upper() == "SUPER CONTA"
-        if "SUBTIPO" in df_v.columns
-        else pd.Series(False, index=df_v.index)
-    )
+    bmg_v, seg_v, em_v, sc_v = _mascaras_aceleradores(df_v)
 
     # ── Pivot de VALOR (produtos de crédito) ────────────────────────────────
     mask_cred = (df_v["VALOR"] > 0) & ~bmg_v & ~seg_v & ~em_v
@@ -243,6 +247,107 @@ def calcular_distribuicao_produtos(
     col_order = ["CONSULTOR"]
     if "LOJA" in distrib.columns:
         col_order.append("LOJA")
+    if "REGIAO" in distrib.columns:
+        col_order.append("REGIAO")
+    col_order += sorted(cv_exist) + ["TOTAL"] + [c for c in cols_qtd if c in distrib.columns]
+
+    distrib = distrib[[c for c in col_order if c in distrib.columns]]
+    distrib = distrib.sort_values("TOTAL", ascending=False).reset_index(drop=True)
+
+    colunas_moeda = [c for c in sorted(cv_exist) + ["TOTAL"] if c in distrib.columns]
+    colunas_numero = [c for c in cols_qtd if c in distrib.columns]
+    return distrib, colunas_moeda, colunas_numero
+
+
+def calcular_distribuicao_produtos_por_loja(
+    df: pd.DataFrame,
+) -> tuple[pd.DataFrame, list[str], list[str]]:
+    """Distribuicao de valor e quantidade por LOJA.
+
+    Mesmas mascaras e mesmos pivots de
+    :func:`calcular_distribuicao_produtos`, com duas diferencas centrais:
+
+    1. **Eixo de agregacao**: ``LOJA`` no lugar de ``CONSULTOR``.
+    2. **Nao exclui supervisor**: a producao do proprio supervisor entra
+       somada (e anonima) no total da loja — nao ha ``excluir_supervisores``
+       aqui, e por isso a funcao nao recebe ``df_supervisores``.
+
+    O item 2 segue o precedente ja documentado em
+    ``docs/agents/business-rules.md`` §§ "Producao de supervisor — conta
+    pro total, marcada, fora do ranking" e "Exclusao de supervisores":
+    total por loja/regiao soma supervisor; so visao consultor-level o
+    exclui (``calcular_distribuicao_produtos`` continua excluindo).
+
+    Returns (df, colunas_moeda, colunas_numero).
+    """
+    if "LOJA" not in df.columns:
+        return pd.DataFrame(), [], []
+
+    mask_bmg, mask_seg, mask_em, mask_sc = _mascaras_aceleradores(df)
+
+    mask_all = (df["VALOR"] > 0) | mask_bmg | mask_seg | mask_em | mask_sc
+    # Sem excluir_supervisores: producao de supervisor conta pra loja.
+    df_v = df[mask_all].copy().reset_index(drop=True)
+
+    # Recompute flags on filtered df
+    bmg_v, seg_v, em_v, sc_v = _mascaras_aceleradores(df_v)
+
+    # ── Pivot de VALOR (produtos de crédito) ────────────────────────────────
+    mask_cred = (df_v["VALOR"] > 0) & ~bmg_v & ~seg_v & ~em_v
+    # PACK desmembrado: a distribuicao nao compara com meta, entao cada
+    # categoria vira sua propria coluna (FGTS / ANT. DE BENEF. / CNC 13º).
+    df_cred = adicionar_produto_detalhado(df_v[mask_cred].copy())
+    df_cred["PRODUTO_MIX"] = (
+        df_cred[COL_PRODUTO_DETALHADO].fillna("OUTROS")
+        if COL_PRODUTO_DETALHADO in df_cred.columns
+        else df_cred["grupo_dashboard"].fillna("OUTROS")
+    )
+
+    if not df_cred.empty:
+        pv_val = df_cred.pivot_table(
+            index="LOJA",
+            columns="PRODUTO_MIX",
+            values="VALOR",
+            aggfunc="sum",
+            fill_value=0,
+        ).reset_index()
+        cols_valor = [c for c in pv_val.columns if c != "LOJA"]
+    else:
+        pv_val = pd.DataFrame(columns=["LOJA"])
+        cols_valor = []
+
+    # ── Pivot de Qtd (aceleradores) ─────────────────────────────────────────
+    _ACEL = [
+        ("BMG Med", bmg_v),
+        ("Vida Familiar", seg_v),
+        ("Emissao", em_v),
+        ("Super Conta", sc_v),
+    ]
+    pv_qtd = pd.DataFrame({"LOJA": df_v["LOJA"].unique()})
+    cols_qtd: list[str] = []
+    for nome, mask in _ACEL:
+        if mask.any():
+            qtd = df_v[mask].groupby("LOJA").size().rename(nome)
+            pv_qtd = pv_qtd.merge(qtd.reset_index(), on="LOJA", how="left")
+            pv_qtd[nome] = pv_qtd[nome].fillna(0).astype(int)
+            cols_qtd.append(nome)
+
+    # ── Merge e TOTAL ────────────────────────────────────────────────────────
+    distrib = pv_val.merge(pv_qtd, on="LOJA", how="outer").fillna(0)
+    cv_exist = [c for c in cols_valor if c in distrib.columns]
+    distrib["TOTAL"] = distrib[cv_exist].sum(axis=1)
+
+    if "REGIAO" in df.columns:
+        # drop_duplicates("LOJA") — e nao o par (LOJA, REGIAO): loja que
+        # trocou de regiao no meio do periodo (vigencia temporal) traria
+        # duas linhas e duplicaria a loja inteira no resultado.
+        distrib = distrib.merge(
+            df[["LOJA", "REGIAO"]].drop_duplicates("LOJA"),
+            on="LOJA", how="left",
+        )
+
+    # Ordem: info | produtos valor | TOTAL | aceleradores
+    col_order = ["LOJA"]
     if "REGIAO" in distrib.columns:
         col_order.append("REGIAO")
     col_order += sorted(cv_exist) + ["TOTAL"] + [c for c in cols_qtd if c in distrib.columns]

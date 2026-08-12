@@ -27,6 +27,7 @@ from src.dashboard.kpis.produtos import (
     COL_PRODUTO_DETALHADO,
     adicionar_produto_detalhado,
     calcular_distribuicao_produtos,
+    calcular_distribuicao_produtos_por_loja,
 )
 
 
@@ -1017,6 +1018,102 @@ def _render_reconquista(reconquista: dict | None):
         _render_reconquista_detalhamento(clientes)
 
 
+def _render_distribuicao_por_loja(df) -> None:
+    """Distribuicao agregada por LOJA (inclui producao de supervisor)."""
+    df_dist, cols_moeda, cols_num = calcular_distribuicao_produtos_por_loja(df)
+    if df_dist.empty:
+        st.warning("Dados nao disponiveis")
+        return
+
+    st.info("Distribuicao de valor (R$) e aceleradores (Qtd) por loja")
+    st.caption(
+        "Inclui a producao do proprio supervisor no total da loja — "
+        "a visao por consultor a exclui."
+    )
+    exibir_tabela(
+        df_dist,
+        colunas_moeda=cols_moeda,
+        colunas_numero=cols_num,
+        paginacao=100,
+        key="tab_dist_prod_loja",
+    )
+    _exportar_csv(
+        df_dist, "distribuicao_produtos_loja",
+        "exp_dist_prod_loja",
+    )
+
+
+def _render_distribuicao_por_consultor(
+    df, df_sup, key_tabela: str, com_busca: bool,
+) -> None:
+    """Distribuicao por CONSULTOR (supervisores excluidos).
+
+    ``com_busca`` revela um selectbox de consultor **local** a esta
+    sub-aba (key propria) — nao e o filtro global da sidebar, entao
+    selecionar aqui nao afeta nenhuma outra aba. A busca so recorta o
+    que aparece na tela: o CSV continua exportando o dataset completo.
+    """
+    df_dist, cols_moeda, cols_num = calcular_distribuicao_produtos(df, df_sup)
+    if df_dist.empty:
+        st.warning("Dados nao disponiveis")
+        return
+
+    st.info("Distribuicao de valor (R$) e aceleradores (Qtd) por consultor")
+
+    df_exib = df_dist
+    if com_busca and "CONSULTOR" in df_dist.columns:
+        consultores = ["Todos"] + sorted(
+            df_dist["CONSULTOR"].unique().tolist()
+        )
+        filt_cons = st.selectbox(
+            "Consultor", consultores, key="dist_prod_busca_cons",
+        )
+        if filt_cons != "Todos":
+            df_exib = df_dist[df_dist["CONSULTOR"] == filt_cons]
+
+    exibir_tabela(
+        df_exib,
+        colunas_moeda=cols_moeda,
+        colunas_numero=cols_num,
+        paginacao=100,
+        key=key_tabela,
+    )
+    _exportar_csv(
+        df_dist, "distribuicao_produtos",
+        "exp_dist_prod",
+    )
+
+
+def _render_distribuicao_produtos(df, df_sup, perfil: str) -> None:
+    """Sub-aba: distribuicao de produtos, com visao por perfil.
+
+    Supervisor ve sempre a tabela por consultor — o escopo dele e uma
+    loja so, entao a agregacao por loja renderia uma unica linha. Os
+    demais perfis (admin/gestor/gerente_comercial) abrem na visao por
+    loja e alternam para a de consultor pelo toggle.
+    """
+    if perfil == "supervisor":
+        _render_distribuicao_por_consultor(
+            df, df_sup, "tab_dist_prod_sup_cons", com_busca=False,
+        )
+        return
+
+    ver_consultor = st.toggle(
+        "Ver por Consultor",
+        key="dist_prod_ver_consultor",
+        help=(
+            "Desligado: distribuicao agregada por loja. Ligado: detalhe "
+            "por consultor, com busca."
+        ),
+    )
+    if ver_consultor:
+        _render_distribuicao_por_consultor(
+            df, df_sup, "tab_dist_prod_cons", com_busca=True,
+        )
+    else:
+        _render_distribuicao_por_loja(df)
+
+
 def render_tab_analiticos(
     df, df_sup, df_analise, df_cancelados, perfil: str = "",
     reconquista: dict | None = None,
@@ -1071,24 +1168,4 @@ def render_tab_analiticos(
         _render_reconquista(reconquista)
 
     elif menu == "Distribuicao de Produtos":
-        df_dist, cols_moeda, cols_num = calcular_distribuicao_produtos(df, df_sup)
-        if not df_dist.empty:
-            st.info("Distribuicao de valor (R$) e aceleradores (Qtd) por consultor")
-            top_n = st.slider(
-                "Exibir top N consultores",
-                min_value=5,
-                max_value=50,
-                value=20,
-                step=5,
-            )
-            exibir_tabela(
-                df_dist.head(top_n),
-                colunas_moeda=cols_moeda,
-                colunas_numero=cols_num,
-            )
-            _exportar_csv(
-                df_dist, "distribuicao_produtos",
-                "exp_dist_prod",
-            )
-        else:
-            st.warning("Dados nao disponiveis")
+        _render_distribuicao_produtos(df, df_sup, perfil)
