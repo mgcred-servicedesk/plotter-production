@@ -332,3 +332,11 @@ empilhar. Por isso:
 **Markdown não é processado dentro de bloco HTML bruto.** Em
 `st.markdown(..., unsafe_allow_html=True)` ou `st.html`, use
 `<strong>`; `**negrito**` aparece com os asteriscos literais.
+
+**`_card_contexto` (`ui/kpi_cards_reforma.py`) aplica
+`.replace(",", ".")` no card inteiro** — é assim que `f"{n:,}"` vira
+separador de milhar BR. O efeito atinge *todo* o HTML do card, não só o
+valor: qualquer vírgula literal no `label`/`sub` (texto de legenda ou
+CSS como `clamp(10px,1.2vw,20px)`, `rgba(0,0,0,.5)`) sai como ponto.
+Escreva a copy do card sem vírgula; se precisar de CSS com vírgula,
+coloque-o no `<div>` externo da fileira, que não passa pelo helper.

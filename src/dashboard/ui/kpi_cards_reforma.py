@@ -11,8 +11,10 @@ Cores semânticas: Verde (>100%), Amarelo (60-99%), Vermelho (<60%)
 
 from typing import Dict, List, Optional, Sequence
 
+import pandas as pd
 import streamlit as st
 
+from src.dashboard.components.tables import exibir_tabela
 from src.dashboard.formatters import (
     formatar_moeda,
     formatar_moeda_compacta,
@@ -740,6 +742,24 @@ _MESES_RECONQ = {
 }
 
 
+def _render_barra_reconquista(barra_esq: str, barra_dir: str, cor_barra: str) -> None:
+    """Renderiza a barra-resumo (número à esquerda + faixa/alerta à
+    direita) acima dos cards de Reconquista. Compartilhada pelos dois
+    regimes (acelerador combinado e conversão), que só diferem no HTML
+    de cada lado — mantém o markup em um único lugar."""
+    st.markdown(
+        '<div style="display:flex; align-items:center; gap:16px; '
+        'flex-wrap:wrap; margin:4px 2px 12px; padding:12px 18px; '
+        'background: var(--mg-surface); border: 1px solid var(--mg-border); '
+        f'border-left: 4px solid {cor_barra}; '
+        'border-radius: var(--mg-radius-md);">'
+        f'<div>{barra_esq}</div>'
+        f'<div style="flex:1; min-width:180px;">{barra_dir}</div>'
+        '</div>',
+        unsafe_allow_html=True,
+    )
+
+
 def render_cards_reconquista(
     dados: Optional[Dict],
     mes: int,
@@ -747,10 +767,11 @@ def render_cards_reconquista(
 ) -> None:
     """Bloco resumido de KPIs do Reconquista MG CRED (v2).
 
-    Renderiza 4 cards minimalistas (Clientes do mês, Efetivadas,
-    Promessas, Sem reconquista) no estilo `mg-kpi-context`. A
-    apuracao é mensal por dt_fim_relacionamento com defasagem de
-    1 mes (ja resolvida no loader). No-op se `dados` for vazio.
+    Renderiza 3 cards minimalistas (Efetivadas, Promessas, Cobrança
+    Consignável) no estilo `mg-kpi-context`, seguidos da faixa do
+    acelerador combinado por consultor. A apuracao é mensal por
+    dt_fim_relacionamento com defasagem de 1 mes (ja resolvida no
+    loader). No-op se `dados` for vazio.
     """
     if not dados:
         return
@@ -784,17 +805,19 @@ def render_cards_reconquista(
 
     efet = int(totais.get("efetivadas", 0))
     prom = int(totais.get("promessas", 0))
-    sem = int(totais.get("sem_reconquista", 0))
+    # Acelerador novo (vigente a partir de 08/2026). Chave ausente no
+    # dict => 0, mesmo tratamento dado aos demais totais opcionais.
+    consignavel = int(totais.get("cobranca_consignavel", 0) or 0)
+    acelerador = efet + consignavel
+    acelerador_perfil = totais.get("acelerador_perfil")
+    faixa_agregada = totais.get("faixa_agregada")
     conversao = float(totais.get("conversao", 0.0))
     faixa = totais.get("faixa") or {}
     cor_faixa = faixa.get("cor", "var(--mg-text)")
     faixa_rotulo = faixa.get("rotulo", "—")
 
-    nao_elegivel = int(totais.get("nao_elegivel", 0))
-
     pct_efet = efet / total * 100 if total else 0.0
     pct_prom = prom / total * 100 if total else 0.0
-    pct_sem = sem / total * 100 if total else 0.0
 
     # Taxa que a base alcançaria se todas as promessas virassem efetivadas.
     taxa_potencial = (efet + prom) / total * 100 if total else 0.0
@@ -818,19 +841,6 @@ def render_cards_reconquista(
     else:
         var_prom_html = '<span style="opacity: 0.8;">— vs período ant.</span>'
 
-    _nao_eleg_txt = (
-        f' · {nao_elegivel} não elegíveis' if nao_elegivel else ''
-    )
-    card_total = _card_contexto(
-        "📋 Elegíveis do mês",
-        f"{total:,}",
-        (
-            f'Base da conversão · {total_geral} no total{_nao_eleg_txt}'
-            f'<br><span style="opacity: 0.8;">Fim de relacionamento '
-            f'{ref_label}</span>'
-        ),
-    )
-
     card_efet = _card_contexto(
         "✅ Efetivadas",
         f"{efet:,}",
@@ -852,38 +862,85 @@ def render_cards_reconquista(
         ),
     )
 
-    card_sem = _card_contexto(
-        "🎯 Sem reconquista",
-        f"{sem:,}",
-        f'{pct_sem:.1f}% · a trabalhar',
+    # Acelerador combinado: soma com Efetivadas para resolver a faixa
+    # do consultor (a legenda mostra a soma; a faixa vem por consultor
+    # logo abaixo). Sem vírgula literal no texto — `_card_contexto`
+    # troca "," por "." no card inteiro (separador de milhar BR).
+    card_consignavel = _card_contexto(
+        "💰 Cobrança Consignável",
+        f"{consignavel:,}",
+        (
+            'Contrato Novo · BMG · propostas pagas'
+            f'<br><span style="opacity: 0.8;">Acelerador combinado: '
+            f'<strong>{acelerador:,}</strong> com Efetivadas</span>'
+        ),
     )
 
-    # Objetivo: % de conversão (elegíveis) e a faixa de prêmio/deflator.
-    st.markdown(
-        '<div style="display:flex; align-items:center; gap:16px; '
-        'flex-wrap:wrap; margin:4px 2px 12px; padding:12px 18px; '
-        'background: var(--mg-surface); border: 1px solid var(--mg-border); '
-        f'border-left: 4px solid {cor_faixa}; '
-        'border-radius: var(--mg-radius-md);">'
-        '<div><div style="font-size:12px; color:var(--mg-text-muted);">'
-        '🎯 Conversão (elegíveis)</div>'
-        f'<div style="font-size:26px; font-weight:700; color:{cor_faixa};">'
-        f'{conversao:.1f}%</div></div>'
-        '<div style="flex:1; min-width:180px;">'
-        '<div style="font-size:12px; color:var(--mg-text-muted);">'
-        'Faixa de prêmio</div>'
-        f'<div style="font-size:16px; font-weight:600; color:{cor_faixa};">'
-        f'{faixa_rotulo}</div></div>'
-        '</div>',
-        unsafe_allow_html=True,
-    )
+    # Barra-resumo acima dos cards — só para perfil consultor (decisão do
+    # usuário: supervisor/gerente_comercial/gestor/admin não veem nenhuma
+    # moldura de faixa/prêmio aqui, nem a antiga nem a nova; ficam só com
+    # os 3 cards + tabelas abaixo, que já refletem o "quadro atual" no
+    # escopo RLS de cada um). Dentro de consultor, dois regimes:
+    #  - `faixa_agregada` presente (apuração >= 08/2026): contagem
+    #    combinada à esquerda e, à direita, só o alerta da faixa negativa
+    #    (`is_deflator`, vindo do banco — nada hardcoded aqui). Acima dela
+    #    nenhuma faixa/prêmio positivo é revelado — o rótulo por consultor
+    #    fica na tabela abaixo.
+    #  - `faixa_agregada` ausente (apuração anterior a 08/2026): sistema
+    #    antigo (% de conversão + `_faixa_premio_conversao`).
+    if acelerador_perfil == "consultor" and faixa_agregada is not None:
+        alerta_deflator = bool(faixa_agregada.get("is_deflator", False))
+        cor_barra = "#E5484D" if alerta_deflator else "var(--mg-text)"
+        barra_esq = (
+            '<div style="font-size:12px; color:var(--mg-text-muted);">'
+            '🎯 Reconquistas + Cobrança Consignável</div>'
+            f'<div style="font-size:26px; font-weight:700; '
+            f'color:{cor_barra};">'
+            + f"{acelerador:,}".replace(",", ".")
+            + '</div>'
+        )
+        if alerta_deflator:
+            barra_dir = (
+                '<div style="font-size:12px; color:var(--mg-text-muted);">'
+                'Faixa de prêmio</div>'
+                f'<div style="font-size:16px; font-weight:600; '
+                f'color:{cor_barra};">-10% SOBRE PRÊMIO TOTAL</div>'
+            )
+        else:
+            # Sem rótulo "Faixa de prêmio" acima: não há faixa a exibir
+            # aqui, e o texto apenas nomeia o número da esquerda.
+            barra_dir = (
+                '<div style="font-size:16px; font-weight:600; '
+                'color:var(--mg-text); line-height:1.35;">'
+                'Quantidade de Reconquistas e Cobrança Consignável '
+                'Elegível</div>'
+            )
+        _render_barra_reconquista(barra_esq, barra_dir, cor_barra)
+    elif acelerador_perfil == "consultor":
+        cor_barra = cor_faixa
+        barra_esq = (
+            '<div style="font-size:12px; color:var(--mg-text-muted);">'
+            '🎯 Conversão (elegíveis)</div>'
+            f'<div style="font-size:26px; font-weight:700; '
+            f'color:{cor_barra};">{conversao:.1f}%</div>'
+        )
+        barra_dir = (
+            '<div style="font-size:12px; color:var(--mg-text-muted);">'
+            'Faixa de prêmio</div>'
+            f'<div style="font-size:16px; font-weight:600; '
+            f'color:{cor_barra};">{faixa_rotulo}</div>'
+        )
+        _render_barra_reconquista(barra_esq, barra_dir, cor_barra)
+    # else: perfil != consultor -> nenhuma barra (nem antiga, nem nova).
 
     st.markdown(
         '<div style="display:flex; gap:clamp(10px,1.2vw,20px); align-items:stretch;">'
-        + card_total + card_efet + card_prom + card_sem
+        + card_efet + card_prom + card_consignavel
         + '</div>',
         unsafe_allow_html=True,
     )
+
+    _render_faixa_acelerador_consultor(dados.get("por_consultor"))
 
     # Prévia da apuração seguinte (promessas já se acumulando na esteira).
     _render_previa_reconquista(dados.get("prox"))
@@ -899,6 +956,68 @@ def render_cards_reconquista(
         'loja, será divulgado após a virada da maciça.'
         '</div>',
         unsafe_allow_html=True,
+    )
+
+
+# Ordem e rotulos da tabela do acelerador combinado por consultor.
+# Iterar o dict preserva a ordem de insercao -> ordem das colunas.
+_COLS_ACELERADOR_CONSULTOR = {
+    "consultor": "Consultor",
+    "efetivadas": "Efetivadas",
+    "cobranca_consignavel": "Cobrança Consignável",
+    "total_acelerador": "Total Acelerador",
+    "faixa_rotulo": "Faixa",
+}
+
+
+def _render_faixa_acelerador_consultor(
+    por_consultor: Optional[pd.DataFrame],
+) -> None:
+    """Faixa do acelerador combinado (Efetivadas + Cobrança Consignável).
+
+    Exibe apenas o ROTULO da faixa atingida por consultor — o valor da
+    premiacao em R$ nao aparece no dashboard (decisao de negocio: o
+    premio e resolvido fora daqui). Tabela em vez de cards porque a
+    lista de consultores e longa.
+
+    No-op quando o loader nao entrega `por_consultor` — e o loader que
+    decide escopo (perfil), vigencia (>= 08/2026) e faixas cadastradas;
+    a UI so renderiza o que recebe.
+    """
+    if por_consultor is None or por_consultor.empty:
+        return
+
+    cols = [
+        c for c in _COLS_ACELERADOR_CONSULTOR
+        if c in por_consultor.columns
+    ]
+    if "consultor" not in cols:
+        return
+
+    # Sem reordenar: o loader ja entrega ordenado por total_acelerador
+    # (desc) com desempate por consultor. Re-sortar aqui so pela 1a
+    # coluna desfaria o desempate (sort_values nao e estavel por padrao).
+    df_view = por_consultor[cols].rename(
+        columns=_COLS_ACELERADOR_CONSULTOR
+    )
+
+    # Respiro entre a fileira de cards e a tabela: a fileira e um
+    # <div> flex bruto (sem margin-bottom) e o design system so define
+    # margin para `.main h3` — mesmo motivo do spacer da previa.
+    st.markdown("<div style='height: 20px;'></div>", unsafe_allow_html=True)
+    st.markdown("#### 🏅 Faixa do acelerador por consultor")
+    st.caption(
+        "Efetivadas + Cobrança Consignável no período de apuração · "
+        "exibe a faixa atingida (o valor do prêmio é resolvido fora "
+        "do dashboard)."
+    )
+    exibir_tabela(
+        df_view,
+        colunas_numero=[
+            "Efetivadas", "Cobrança Consignável", "Total Acelerador",
+        ],
+        paginacao=100,
+        key="reconq_acelerador_consultor",
     )
 
 

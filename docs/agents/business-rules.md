@@ -479,5 +479,148 @@ Fronteiras contínuas (limite superior inclusivo nas negativas):
 `_faixa_premio_conversao` (loaders). PROMESSA é pipeline; SEM RECONQUISTA
 é a trabalhar.
 
+### Acelerador combinado — Reconquista + Cobrança Consignável (≥ 08/2026)
+
+Vigente **a partir da apuração de agosto/2026**. Corte simples de data —
+não há vigência por linha (nada de SCD2 como em `loja_regiao_vigencia`):
+apuração < 08/2026 não tem acelerador combinado. Na prática o corte é
+duplo e redundante de propósito: o gate de período no loader **e** a
+ausência de faixas cadastradas para o período (sem faixa vigente ⇒
+acelerador desligado, não erro).
+
+Não confundir com
+[KPI — conversão e faixa de prêmio](#kpi--conversão-e-faixa-de-prêmio-substitui-a-meta-fixa):
+aquele é **percentual de conversão, por loja**; este é **contagem, por
+consultor**. Os dois convivem.
+
+**Escopo de premiação** — muda em relação ao histórico: até 07/2026 a
+regra era apurada manualmente, fora do sistema, e alcançava público mais
+amplo. A partir de 08/2026 o dashboard é a apuração oficial e o alcance é:
+
+| Perfil | Premiado por esta regra? |
+|---|---|
+| `consultor` | Sim — atingimento individual |
+| `supervisor` | Sim — 70% do prêmio de **cada** consultor da equipe (ver abaixo) |
+| `gerente_comercial` / `gestor` / `admin` | Não — leitura gerencial, sem atingimento próprio |
+
+**Contagem combinada**, por consultor, no mês de apuração:
+
+```
+total = EFETIVADA (Reconquista, base ELEGIVEL) + Cobrança Consignável
+```
+
+| `qtd_min` | `qtd_max` | Rótulo exibido |
+|---|---|---|
+| 0 | 2 | 0 a 2 |
+| 3 | 5 | 3 a 5 |
+| 6 | 8 | 6 a 8 |
+| 9 | `NULL` | 9 ou mais |
+
+- **9 exato entra na última faixa**: `qtd_max = NULL` = sem limite
+  superior, sem lacuna entre 8 e 9. A tabela de origem do negócio dizia
+  "Maior que 9"; o critério confirmado é **≥ 9** — o rótulo exibido não
+  pode contradizer o critério.
+- As faixas **não são hardcoded**: vêm da tabela
+  `faixas_acelerador_reconquista`, configurável **por período**
+  (`periodo_id`), mesmo padrão da [Pontuação](#pontuação)
+  (`pontuacao` + `obter_pontuacao_periodo`), inclusive o fallback temporal
+  — retrocede ao período anterior mais recente com faixas cadastradas.
+  Mudar faixa de um mês para outro é edição de dado, **não deploy**.
+  Contraste deliberado com `_faixa_premio_conversao`
+  ([`src/dashboard/loaders.py:1917`](../../src/dashboard/loaders.py)),
+  escada fixa em Python — não é o modelo a seguir aqui.
+- **Assimetria de janela entre as duas parcelas** (esperado, não bug):
+  EFETIVADA carrega a defasagem de 1 mês da Reconquista (apuração `M` =
+  `dt_fim_relacionamento` em `M-1`); Cobrança Consignável conta pagamentos
+  **do próprio mês `M`**.
+
+**O dashboard exibe faixa, nunca prêmio.** Decisão de produto: só o
+**rótulo** da faixa atingida (ex.: "3 a 5"). Nenhum valor de premiação em
+R$ ou percentual aparece — prêmio/deflator é resolvido fora do dashboard.
+Mesmo espírito do indicador de conversão (expõe o ajuste, nunca calcula
+R$). Se um dia a tabela de faixas ganhar coluna de valor, ela não vai à UI
+sem nova decisão.
+
+### Cobrança Consignável — critério
+
+Acelerador **novo e independente** da Reconquista: contagem de contratos
+por consultor no mês de apuração. Critérios combinados por **AND**, sobre
+o frame de contratos pagos (`v_contratos_dashboard`):
+
+| Critério | Regra |
+|---|---|
+| Período | `status_pagamento_cliente = 'PAGO AO CLIENTE'` **e** `data_status_pagamento` dentro do mês/ano de apuração — **nunca** `data_cadastro` |
+| `TIPO OPER.` | normalizado = `CONTRATO NOVO` (a base grava `Contrato Novo`) |
+| `SUBTIPO` | normalizado = `NOVO`; `MARGEM COMPLEMENTAR` fica **explicitamente fora** (mesmo recorte do contador [Consignado (Novo/Refin)](#clt-e-consignado-novorefin-pagos)) |
+| `BANCO` | normalizado ∈ {`BMG`, `BANCO BMG`} — mesma normalização da [flag "Somente BMG/Help"](#flag-somente-bmghelp), **sem** `HELP` |
+| Valor | `valor_bruto <> valor` (`VLR BRUTO` ≠ `VLR BASE`) |
+
+- Normalização = `.astype(str).str.strip().str.upper()` (`_norm` /
+  `_mask_banco`, [`src/dashboard/tabs/produtos.py`](../../src/dashboard/tabs/produtos.py)),
+  pelo mesmo motivo de sempre: a base não é uniformemente maiúscula.
+- **O filtro de período já vem satisfeito por construção** no frame mensal:
+  `contratos.periodo_id` é derivado de `data_status_pagamento`, exposto
+  como coluna `DATA` (mapa `_COLS_CONTRATOS_PAGOS`, loaders) — igual aos
+  contadores de CLT/Consignado, não se re-filtra pagamento no DataFrame.
+- A exceção `sub_status_banco = 'Liquidada'` dos
+  [Seguros](#seguros-bmg-med--vida-familiar) **não contamina** esta
+  contagem: essas linhas têm `TIPO OPER. ∈ {BMG MED, Seguro}` e nunca
+  passam por `CONTRATO NOVO` (além de chegarem com `DATA` nula).
+- **`HELP` fica de fora** — divergência deliberada em relação à flag
+  "Somente BMG/Help": aqui o critério de negócio é BMG. Sem efeito prático
+  hoje (`HELP` nunca ocorre como `BANCO` de consignado), mas o conjunto
+  documentado é o que vale.
+- `valor_bruto` (`VLR BRUTO`) é **coluna nova**. A view expõe
+  `COALESCE(valor_bruto, valor)`: enquanto o ETL externo (`angry-man`) não
+  persistir o campo, `valor_bruto = valor` ⇒ **Cobrança Consignável = 0**.
+  Esse zero é o caso neutro documentado (mesmo espírito de
+  `flag_elegibilidade` NULL ⇒ ELEGIVEL), **não** falha silenciosa: o dia
+  em que o ETL mandar o valor real, o upsert por `contrato_id` corrige
+  sozinho. Zero persistente após a carga do ETL é sinal de coluna não
+  populada — investigar a origem, não a regra.
+
+### Supervisor — 70% do prêmio de cada consultor
+
+O supervisor recebe **70% do prêmio/deflator de cada consultor da sua
+equipe, individualmente** — nunca um valor agregado único sobre a soma da
+equipe. Consequência direta para a apuração e para a UI: a visão do
+supervisor lista **um rótulo de faixa por consultor**, não uma faixa única
+"do supervisor" nem uma contagem somada da equipe.
+
+| Aspecto | Regra |
+|---|---|
+| Equipe do supervisor | Consultores lotados na(s) loja(s) do supervisor |
+| Vínculo no schema | **Não existe FK supervisor→consultor**: `supervisores → lojas` (`carregar_supervisores()`, [`src/dashboard/loaders.py:1492`](../../src/dashboard/loaders.py), devolve `SUPERVISOR`/`LOJA`/`REGIAO`) cruzado com `consultores.loja_id` (`database/schema.sql`) |
+| Supervisor multi-loja | Soma os consultores de todas as suas lojas (cada um continua com sua faixa própria) |
+| Valor do 70% | Nunca exibido — o dashboard mostra faixa; o 70% define **o que** o supervisor enxerga (faixa por consultor) e quantas linhas a visão tem |
+
+Produção do próprio supervisor não vira linha de consultor nesta visão
+(vale a regra geral de [Exclusão de supervisores](#exclusão-de-supervisores)).
+
+**A chave de junção das duas parcelas é o nome do consultor**, não um id:
+EFETIVADA vem de `v_reconquista.consultor` (`COALESCE(consultores.nome,
+reconquista.consultor_nome, '(Sem Consultor)')`, migration 030) e a
+Cobrança Consignável vem de `CONSULTOR` no frame de contratos. Cliente
+reconquistado sem consultor resolvido cai no bucket `(Sem Consultor)` —
+que não premia ninguém e não deve ser redistribuído.
+
+### Cards do bloco Reconquista (UI)
+
+`render_cards_reconquista`
+([`src/dashboard/ui/kpi_cards_reforma.py`](../../src/dashboard/ui/kpi_cards_reforma.py))
+passa de 4 para 3 cards:
+
+| Antes | Depois |
+|---|---|
+| 📋 Elegíveis do mês | *removido* |
+| ✅ Efetivadas | ✅ Efetivadas |
+| ⏳ Promessas | ⏳ Promessas |
+| 🎯 Sem reconquista | **Cobrança Consignável** (contagem do período) |
+
+Elegíveis e "sem reconquista" **continuam existindo no cálculo** (base da
+conversão e fila a trabalhar) — saíram apenas do bloco de cards. O bloco de
+prévia (`_render_previa_reconquista`, mesmo módulo, rótulo "Clientes na
+esteira") **não** muda.
+
 > **LGPD:** `nu_matricula` **não** é armazenada. `co_adesao` identifica o
 > contrato, não a pessoa.
