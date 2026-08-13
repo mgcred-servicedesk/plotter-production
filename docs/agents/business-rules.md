@@ -181,6 +181,57 @@ de um dia existir CLT/Consignado via Help. Não confundir com o prefixo
 `HELP` em **nome de loja** (`HELP BANGU`, …) — o filtro é sobre `BANCO`,
 não `LOJA`.
 
+### Reuso em "Distribuição de Produtos" (Analíticos)
+
+Desde 2026-08-13 os **mesmos dois critérios** alimentam duas colunas de
+quantidade na tabela "Distribuição de Produtos"
+([`src/dashboard/kpis/produtos.py`](../../src/dashboard/kpis/produtos.py),
+`_mascaras_aceleradores`), nas visões por consultor e por loja — ao lado
+de BMG Med, Vida Familiar, Emissão e Super Conta:
+
+| Coluna na tabela | Critério |
+|---|---|
+| `CLT (Qtd)` | idêntico ao contador **CLT** acima |
+| `Consignado (Novo/Refin)` | idêntico ao contador **Consignado** acima |
+
+- **São quantidade acrescentada por cima, não substituem o valor.** O R$
+  desses produtos já aparecia (e continua aparecendo) nas colunas de valor
+  do pivot, via `grupo_dashboard` — `CONSIG_PRIV → CLT` e
+  `CONSIG_{BMG,ITAU,C6} → CONSIGNADO`. A máscara de valor (`mask_cred`)
+  **não mudou**: continua excluindo só BMG Med / Vida Familiar / Emissão.
+  É o mesmo tratamento que [Super Conta](#super-conta) já recebia — conta
+  duas vezes, em valor **e** em quantidade.
+- Consequência esperada, **não** é divergência: numa mesma linha o R$ da
+  coluna `CLT` pode não bater com `CLT (Qtd)` — o valor inclui
+  `Seguro Prestamista` (é `grupo_dashboard = CLT`) e a quantidade não;
+  em Consignado o valor inclui `MARGEM COMPLEMENTAR` e a quantidade não.
+- **Por que `CLT (Qtd)` e não `CLT`**: `CONSIG_PRIV` tem
+  `grupo_dashboard = 'CLT'`, então o pivot de valor já emite uma coluna
+  chamada `CLT`. Duas colunas homônimas viram `CLT_x`/`CLT_y` no merge e
+  **as duas** caem nos filtros `c in distrib.columns` — o R$ de CLT sumiria
+  do `TOTAL` silenciosamente. `CONSIGNADO` (valor) × `Consignado
+  (Novo/Refin)` (qtd) não colidem, por isso só CLT leva sufixo.
+
+#### Escopo do toggle aqui é a tabela inteira
+
+O parâmetro `somente_bmg_help` das duas funções de distribuição usa a
+**mesma lista de bancos** da flag acima, mas com alcance **diferente**:
+
+| | "Emissão e Seguros — Análise Regional" | "Distribuição de Produtos" |
+|---|---|---|
+| Alcance | Só a aba onde está ligado (CLT **ou** Consignado) | **A tabela inteira**: todas as colunas de valor, todas as de quantidade e o `TOTAL` |
+| Como é aplicado | Composição de máscaras por subtab (`AND` em `_mask_subtab`) | Recorte de linhas no topo da função, antes de qualquer máscara |
+| Produtos afetados | Só CLT / Consignado | **Todos** — CNC, FGTS, Saque, aceleradores etc. |
+
+O recorte no topo é o que faz pivot de valor, as 6 máscaras, o `TOTAL` e
+os merges de `LOJA`/`REGIAO` herdarem o filtro sem branch extra. `BANCO`
+ausente do frame com a flag ligada **zera a tabela inteira** — mesma regra
+de "critério declarado sem coluna zera a contagem".
+
+A lista `_BANCOS_BMG_HELP` está **duplicada** em `kpis/produtos.py` e
+`tabs/produtos.py` de propósito (importar da UI para a camada de KPI
+inverteria a direção de dependência) — se mudar, mudar nos dois.
+
 ### Produção de supervisor — conta pro total, marcada, fora do ranking
 
 Diferente do resto do dashboard (ver

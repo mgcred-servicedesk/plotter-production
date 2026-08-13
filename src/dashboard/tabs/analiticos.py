@@ -1018,9 +1018,11 @@ def _render_reconquista(reconquista: dict | None):
         _render_reconquista_detalhamento(clientes)
 
 
-def _render_distribuicao_por_loja(df) -> None:
+def _render_distribuicao_por_loja(df, somente_bmg_help: bool = False) -> None:
     """Distribuicao agregada por LOJA (inclui producao de supervisor)."""
-    df_dist, cols_moeda, cols_num = calcular_distribuicao_produtos_por_loja(df)
+    df_dist, cols_moeda, cols_num = calcular_distribuicao_produtos_por_loja(
+        df, somente_bmg_help=somente_bmg_help,
+    )
     if df_dist.empty:
         st.warning("Dados nao disponiveis")
         return
@@ -1045,6 +1047,7 @@ def _render_distribuicao_por_loja(df) -> None:
 
 def _render_distribuicao_por_consultor(
     df, df_sup, key_tabela: str, com_busca: bool,
+    somente_bmg_help: bool = False,
 ) -> None:
     """Distribuicao por CONSULTOR (supervisores excluidos).
 
@@ -1053,7 +1056,9 @@ def _render_distribuicao_por_consultor(
     selecionar aqui nao afeta nenhuma outra aba. A busca so recorta o
     que aparece na tela: o CSV continua exportando o dataset completo.
     """
-    df_dist, cols_moeda, cols_num = calcular_distribuicao_produtos(df, df_sup)
+    df_dist, cols_moeda, cols_num = calcular_distribuicao_produtos(
+        df, df_sup, somente_bmg_help=somente_bmg_help,
+    )
     if df_dist.empty:
         st.warning("Dados nao disponiveis")
         return
@@ -1092,9 +1097,19 @@ def _render_distribuicao_produtos(df, df_sup, perfil: str) -> None:
     demais perfis (admin/gestor/gerente_comercial) abrem na visao por
     loja e alternam para a de consultor pelo toggle.
     """
+    somente_bmg_help = st.toggle(
+        "Somente BMG/Help",
+        key="dist_prod_bmg_help",
+        help=(
+            "Restringe toda a tabela — valor e quantidade — aos bancos "
+            "BMG e Help."
+        ),
+    )
+
     if perfil == "supervisor":
         _render_distribuicao_por_consultor(
             df, df_sup, "tab_dist_prod_sup_cons", com_busca=False,
+            somente_bmg_help=somente_bmg_help,
         )
         return
 
@@ -1109,9 +1124,10 @@ def _render_distribuicao_produtos(df, df_sup, perfil: str) -> None:
     if ver_consultor:
         _render_distribuicao_por_consultor(
             df, df_sup, "tab_dist_prod_cons", com_busca=True,
+            somente_bmg_help=somente_bmg_help,
         )
     else:
-        _render_distribuicao_por_loja(df)
+        _render_distribuicao_por_loja(df, somente_bmg_help=somente_bmg_help)
 
 
 def render_tab_analiticos(

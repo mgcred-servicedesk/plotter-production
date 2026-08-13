@@ -161,6 +161,123 @@ class TestCalcularDistribuicaoProdutos:
         joao = distrib[distrib["CONSULTOR"] == "João"].iloc[0]
         assert joao["BMG Med"] == 1
 
+    def test_clt_conta_consig_priv_exclui_seguro_prestamista(self):
+        # João: 1 linha CONSIG_PRIV valida (Emprestimo) + 1 Seguro
+        # Prestamista em minusculo (nao conta, prova normalizacao).
+        # Maria: CONSIG_PRIV com "SEGURO PRESTAMISTA" ja maiusculo (nao
+        # conta).
+        df = pd.DataFrame({
+            "CONSULTOR": ["João", "João", "Maria"],
+            "grupo_dashboard": ["CLT", "CLT", "CLT"],
+            "categoria_codigo": ["CONSIG_PRIV", "CONSIG_PRIV", "CONSIG_PRIV"],
+            "TIPO OPER.": ["Emprestimo", "seguro prestamista", "SEGURO PRESTAMISTA"],
+            "VALOR": [1000.0, 500.0, 300.0],
+            "TIPO_PRODUTO": ["CLT", "CLT", "CLT"],
+        })
+        distrib, _, numero = calcular_distribuicao_produtos(df)
+        assert "CLT (Qtd)" in numero
+        joao = distrib[distrib["CONSULTOR"] == "João"].iloc[0]
+        assert joao["CLT (Qtd)"] == 1
+        maria = distrib[distrib["CONSULTOR"] == "Maria"].iloc[0]
+        assert maria["CLT (Qtd)"] == 0
+
+    def test_consignado_normaliza_subtipo_exclui_portabilidade_e_margem(self):
+        # João: "novo " (CONSIG_BMG) e " Refin" (CONSIG_ITAU) contam,
+        # espaco/capitalizacao variados provam a normalizacao;
+        # PORTABILIDADE com SUBTIPO=REFIN NAO conta (categoria_codigo
+        # continua PORTABILIDADE, nunca vira CONSIG_*).
+        # Maria: SUBTIPO=MARGEM COMPLEMENTAR nao e Novo nem Refin, nao
+        # conta.
+        df = pd.DataFrame({
+            "CONSULTOR": ["João", "João", "João", "Maria"],
+            "grupo_dashboard": ["CONSIGNADO"] * 4,
+            "categoria_codigo": [
+                "CONSIG_BMG", "CONSIG_ITAU", "PORTABILIDADE", "CONSIG_C6",
+            ],
+            "SUBTIPO": ["novo ", " Refin", "REFIN", "MARGEM COMPLEMENTAR"],
+            "VALOR": [1000.0, 1200.0, 900.0, 700.0],
+            "TIPO_PRODUTO": ["CONSIGNADO"] * 4,
+        })
+        distrib, _, numero = calcular_distribuicao_produtos(df)
+        assert "Consignado (Novo/Refin)" in numero
+        joao = distrib[distrib["CONSULTOR"] == "João"].iloc[0]
+        assert joao["Consignado (Novo/Refin)"] == 2
+        maria = distrib[distrib["CONSULTOR"] == "Maria"].iloc[0]
+        assert maria["Consignado (Novo/Refin)"] == 0
+
+    def test_toggle_somente_bmg_help_restringe_tabela_inteira(self):
+        # João: BANCO BMG. Maria: BANCO C6 (fora da lista). Cada um tem
+        # uma linha de valor (CNC) e uma de Consignado.
+        df = pd.DataFrame({
+            "CONSULTOR": ["João", "João", "Maria", "Maria"],
+            "grupo_dashboard": ["CNC", "CONSIGNADO", "CNC", "CONSIGNADO"],
+            "categoria_codigo": [None, "CONSIG_BMG", None, "CONSIG_C6"],
+            "SUBTIPO": [None, "NOVO", None, "NOVO"],
+            "BANCO": ["BMG", "BMG", "C6", "C6"],
+            "VALOR": [1000.0, 500.0, 800.0, 400.0],
+            "TIPO_PRODUTO": ["CNC", "CONSIGNADO", "CNC", "CONSIGNADO"],
+        })
+        # Default (False) preserva o comportamento anterior: os dois
+        # consultores aparecem.
+        distrib_off, _, _ = calcular_distribuicao_produtos(df)
+        assert set(distrib_off["CONSULTOR"]) == {"João", "Maria"}
+        assert distrib_off["TOTAL"].sum() == pytest.approx(2700.0)
+
+        # Flag ligada: só o banco BMG sobrevive — recorta valor E
+        # quantidade (e o TOTAL) juntos, Maria some inteira.
+        distrib_on, _, numero_on = calcular_distribuicao_produtos(
+            df, somente_bmg_help=True
+        )
+        assert set(distrib_on["CONSULTOR"]) == {"João"}
+        joao = distrib_on.iloc[0]
+        assert joao["TOTAL"] == pytest.approx(1500.0)
+        assert joao["Consignado (Novo/Refin)"] == 1
+        assert "Consignado (Novo/Refin)" in numero_on
+
+    def test_banco_ausente_com_flag_zera_tabela_inteira(self):
+        # Sem coluna BANCO no frame, a flag ligada recorta tudo (mesma
+        # regra de "criterio sem coluna zera a contagem").
+        df = pd.DataFrame({
+            "CONSULTOR": ["João", "Maria"],
+            "grupo_dashboard": ["CNC", "CNC"],
+            "VALOR": [1000.0, 500.0],
+            "TIPO_PRODUTO": ["CNC", "CNC"],
+        })
+        distrib, moeda, numero = calcular_distribuicao_produtos(
+            df, somente_bmg_help=True
+        )
+        assert distrib.empty
+        # Comportamento observado: sobra so a coluna TOTAL (0 linhas),
+        # sem colunas de valor nem de quantidade.
+        assert list(distrib.columns) == ["CONSULTOR", "TOTAL"]
+        assert moeda == ["TOTAL"]
+        assert numero == []
+
+    def test_colisao_nome_clt_valor_e_clt_qtd_nao_se_suprimem(self):
+        # grupo_dashboard="CLT" produz a coluna de VALOR "CLT" (via
+        # PRODUTO_MIX) e a linha tambem bate no criterio de CLT (Qtd).
+        # Antes do sufixo " (Qtd)" as duas colunas homonimas colidiam no
+        # merge (CLT_x/CLT_y) e AS DUAS desapareciam — TOTAL zerava
+        # silenciosamente. Este teste falha se a colisão for
+        # reintroduzida.
+        df = pd.DataFrame({
+            "CONSULTOR": ["João"],
+            "grupo_dashboard": ["CLT"],
+            "categoria_codigo": ["CONSIG_PRIV"],
+            "TIPO OPER.": ["Emprestimo"],
+            "VALOR": [1500.0],
+            "TIPO_PRODUTO": ["CLT"],
+        })
+        distrib, moeda, numero = calcular_distribuicao_produtos(df)
+        assert "CLT" in distrib.columns
+        assert "CLT (Qtd)" in distrib.columns
+        joao = distrib.iloc[0]
+        assert joao["CLT"] == pytest.approx(1500.0)
+        assert joao["CLT (Qtd)"] == 1
+        assert joao["TOTAL"] == pytest.approx(1500.0)
+        assert "CLT" in moeda
+        assert "CLT (Qtd)" in numero
+
 
 @pytest.mark.unit
 class TestCalcularDistribuicaoProdutosPorLoja:
@@ -260,3 +377,85 @@ class TestCalcularDistribuicaoProdutosPorLoja:
         assert distrib.iloc[0]["LOJA"] == "A"
         assert distrib.iloc[0]["REGIAO"] == "R1"
         assert distrib.iloc[0]["TOTAL"] == pytest.approx(1500.0)
+
+    def test_clt_e_consignado_contados_por_loja(self):
+        # Loja A: CLT valido (Emprestimo) conta; CLT com Seguro
+        # Prestamista (minusculo, prova normalizacao) nao conta.
+        # Loja B: Consignado "novo " (CONSIG_BMG, espaco/caixa variados)
+        # conta; PORTABILIDADE com SUBTIPO=REFIN nao conta.
+        df = pd.DataFrame({
+            "LOJA": ["A", "A", "B", "B"],
+            "grupo_dashboard": ["CLT", "CLT", "CONSIGNADO", "CONSIGNADO"],
+            "categoria_codigo": [
+                "CONSIG_PRIV", "CONSIG_PRIV", "CONSIG_BMG", "PORTABILIDADE",
+            ],
+            "TIPO OPER.": ["Emprestimo", "seguro prestamista", "N/A", "N/A"],
+            "SUBTIPO": [None, None, "novo ", "REFIN"],
+            "VALOR": [1000.0, 500.0, 700.0, 900.0],
+            "TIPO_PRODUTO": ["CLT", "CLT", "CONSIGNADO", "CONSIGNADO"],
+        })
+        distrib, _, numero = calcular_distribuicao_produtos_por_loja(df)
+        assert {"CLT (Qtd)", "Consignado (Novo/Refin)"}.issubset(set(numero))
+        loja_a = distrib[distrib["LOJA"] == "A"].iloc[0]
+        assert loja_a["CLT (Qtd)"] == 1
+        loja_b = distrib[distrib["LOJA"] == "B"].iloc[0]
+        assert loja_b["Consignado (Novo/Refin)"] == 1
+
+    def test_toggle_somente_bmg_help_restringe_tabela_inteira_por_loja(self):
+        # Loja A: BANCO BMG. Loja B: BANCO ITAU (fora da lista).
+        df = pd.DataFrame({
+            "LOJA": ["A", "A", "B", "B"],
+            "grupo_dashboard": ["CNC", "CONSIGNADO", "CNC", "CONSIGNADO"],
+            "categoria_codigo": [None, "CONSIG_BMG", None, "CONSIG_ITAU"],
+            "SUBTIPO": [None, "NOVO", None, "REFIN"],
+            "BANCO": ["BMG", "BMG", "ITAU", "ITAU"],
+            "VALOR": [1000.0, 500.0, 800.0, 400.0],
+            "TIPO_PRODUTO": ["CNC", "CONSIGNADO", "CNC", "CONSIGNADO"],
+        })
+        distrib_off, _, _ = calcular_distribuicao_produtos_por_loja(df)
+        assert set(distrib_off["LOJA"]) == {"A", "B"}
+
+        distrib_on, _, numero_on = calcular_distribuicao_produtos_por_loja(
+            df, somente_bmg_help=True
+        )
+        assert set(distrib_on["LOJA"]) == {"A"}
+        loja_a = distrib_on.iloc[0]
+        assert loja_a["TOTAL"] == pytest.approx(1500.0)
+        assert loja_a["Consignado (Novo/Refin)"] == 1
+        assert "Consignado (Novo/Refin)" in numero_on
+
+    def test_banco_ausente_com_flag_zera_tabela_inteira_por_loja(self):
+        df = pd.DataFrame({
+            "LOJA": ["A", "B"],
+            "grupo_dashboard": ["CNC", "CNC"],
+            "VALOR": [1000.0, 500.0],
+            "TIPO_PRODUTO": ["CNC", "CNC"],
+        })
+        distrib, moeda, numero = calcular_distribuicao_produtos_por_loja(
+            df, somente_bmg_help=True
+        )
+        assert distrib.empty
+        assert list(distrib.columns) == ["LOJA", "TOTAL"]
+        assert moeda == ["TOTAL"]
+        assert numero == []
+
+    def test_colisao_nome_clt_valor_e_clt_qtd_nao_se_suprimem_por_loja(self):
+        # Mesma regressão de TestCalcularDistribuicaoProdutos, na visão
+        # por loja (implementação própria, mesmo literal "CLT (Qtd)").
+        df = pd.DataFrame({
+            "LOJA": ["A"],
+            "grupo_dashboard": ["CLT"],
+            "categoria_codigo": ["CONSIG_PRIV"],
+            "TIPO OPER.": ["Emprestimo"],
+            "VALOR": [1500.0],
+            "TIPO_PRODUTO": ["CLT"],
+        })
+        distrib, moeda, numero = calcular_distribuicao_produtos_por_loja(df)
+        assert "CLT" in distrib.columns
+        assert "CLT (Qtd)" in distrib.columns
+        loja_a = distrib.iloc[0]
+        assert loja_a["CLT"] == pytest.approx(1500.0)
+        assert loja_a["CLT (Qtd)"] == 1
+        assert loja_a["TOTAL"] == pytest.approx(1500.0)
+        assert "CLT" in moeda
+        assert "CLT (Qtd)" in numero

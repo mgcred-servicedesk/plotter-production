@@ -26,6 +26,16 @@ from src.shared.dias_uteis import calcular_dias_uteis
 # sem meta (listagens, rankings, distribuicao, detalhe dos cards).
 COL_PRODUTO_DETALHADO = "PRODUTO_DETALHADO"
 
+# Bancos aceitos pela flag "Somente BMG/Help". Valores JA normalizados
+# (strip + upper) — a comparacao normaliza a coluna antes do ``isin``.
+#
+# Duplicado de ``src/dashboard/tabs/produtos.py`` (``_BANCOS_BMG_HELP``,
+# origem da lista) **de proposito**: importar de la criaria import
+# cruzado UI -> KPI, invertendo a direcao de dependencia entre as
+# camadas. Se a lista mudar, mudar nos dois lugares. Ver
+# ``docs/agents/business-rules.md`` § 'Flag "Somente BMG/Help"'.
+_BANCOS_BMG_HELP = ("BMG", "BANCO BMG", "HELP", "BANCO HELP")
+
 
 def adicionar_produto_detalhado(df: pd.DataFrame) -> pd.DataFrame:
     """Acrescenta ``PRODUTO_DETALHADO`` desmembrando o grupo 'PACK'.
@@ -132,19 +142,47 @@ def calcular_kpis_por_produto(
     return pd.DataFrame(dados)
 
 
+def _mask_banco_bmg_help(df: pd.DataFrame) -> pd.Series:
+    """Mascara de ``BANCO`` normalizado dentro de :data:`_BANCOS_BMG_HELP`.
+
+    ``BANCO`` ausente do frame vira mascara toda-False — com a flag
+    ligada isso **zera a tabela inteira**, coerente com "criterio sem
+    coluna zera a contagem" (nunca devolve dado nao filtrado como se
+    filtrado fosse).
+    """
+    if "BANCO" not in df.columns:
+        return pd.Series(False, index=df.index)
+    return df["BANCO"].astype(str).str.strip().str.upper().isin(_BANCOS_BMG_HELP)
+
+
 def _mascaras_aceleradores(
     df: pd.DataFrame,
-) -> tuple[pd.Series, pd.Series, pd.Series, pd.Series]:
-    """Devolve as 4 mascaras de acelerador (bmg, seguro, emissao, super conta).
+) -> tuple[pd.Series, pd.Series, pd.Series, pd.Series, pd.Series, pd.Series]:
+    """Devolve as 6 mascaras de acelerador.
+
+    Ordem: bmg, seguro, emissao, super conta, CLT, consignado
+    (Novo/Refin).
 
     Criterio declarado cuja coluna nao existe no frame vira mascara
     toda-False (nunca infla contagem). Usado pelas distribuicoes por
     consultor e por loja — e recalculado apos qualquer filtro/reset_index,
     porque a mascara so vale para o indice em que foi construida.
+
+    CLT e Consignado reusam o criterio canonico de
+    ``docs/agents/business-rules.md`` § "CLT e Consignado (Novo/Refin)
+    pagos": CLT e ``CONSIG_PRIV`` menos ``SEGURO PRESTAMISTA`` (que e
+    seguro, nao credito); Consignado e ``CONSIG_{BMG,ITAU,C6}``
+    restrito a ``SUBTIPO ∈ {NOVO, REFIN}`` (Portabilidade e Refin da
+    Portabilidade se excluem sozinhos, porque mantem
+    ``categoria_codigo = PORTABILIDADE``; ``MARGEM COMPLEMENTAR`` fica
+    de fora por nao ser Novo nem Refin).
     """
 
     def _flag(col: str) -> pd.Series:
         return df.get(col, pd.Series(False, index=df.index)).fillna(False).astype(bool)
+
+    def _norm(col: str) -> pd.Series:
+        return df[col].astype(str).str.strip().str.upper()
 
     mask_bmg = _flag("is_bmg_med")
     mask_seg = _flag("is_seguro_vida")
@@ -158,18 +196,47 @@ def _mascaras_aceleradores(
         if "SUBTIPO" in df.columns
         else pd.Series(False, index=df.index)
     )
-    return mask_bmg, mask_seg, mask_em, mask_sc
+    mask_clt = (
+        (df["categoria_codigo"] == "CONSIG_PRIV")
+        & (_norm("TIPO OPER.") != "SEGURO PRESTAMISTA")
+        if {"categoria_codigo", "TIPO OPER."}.issubset(df.columns)
+        else pd.Series(False, index=df.index)
+    )
+    mask_consig = (
+        df["categoria_codigo"].isin({"CONSIG_BMG", "CONSIG_ITAU", "CONSIG_C6"})
+        & _norm("SUBTIPO").isin({"NOVO", "REFIN"})
+        if {"categoria_codigo", "SUBTIPO"}.issubset(df.columns)
+        else pd.Series(False, index=df.index)
+    )
+    return mask_bmg, mask_seg, mask_em, mask_sc, mask_clt, mask_consig
 
 
 def calcular_distribuicao_produtos(
     df: pd.DataFrame,
     df_supervisores: Optional[pd.DataFrame] = None,
+    somente_bmg_help: bool = False,
 ) -> tuple[pd.DataFrame, list[str], list[str]]:
     """Distribuicao de valor e quantidade por consultor.
 
     Produtos de valor (CNC, SAQUE, etc.): agrega por VALOR (R$).
-    Aceleradores (BMG Med, Vida Familiar, Emissao, Super Conta):
-    agrega por quantidade de contratos.
+    Aceleradores (BMG Med, Vida Familiar, Emissao, Super Conta, CLT,
+    Consignado (Novo/Refin)): agrega por quantidade de contratos.
+
+    CLT e Consignado sao colunas de **quantidade acrescentadas por
+    cima**: o valor em R$ desses produtos ja aparece nas colunas de
+    valor do pivot (via ``grupo_dashboard`` 'CLT'/'CONSIGNADO'), e por
+    isso eles **nao** sao excluidos de ``mask_cred`` — mesmo tratamento
+    que Super Conta ja recebe (conta duas vezes, em valor e em
+    quantidade). Criterio em ``docs/agents/business-rules.md``
+    § "CLT e Consignado (Novo/Refin) pagos".
+
+    ``somente_bmg_help`` restringe a **tabela inteira** (todas as
+    colunas: valor, quantidade e TOTAL) a ``BANCO ∈``
+    :data:`_BANCOS_BMG_HELP` — o recorte entra no topo, antes de
+    qualquer mascara, entao todo o pipeline ja o herda. Escopo
+    **diferente** do toggle homonimo de "Emissao e Seguros — Analise
+    Regional" (``src/dashboard/tabs/produtos.py``), que so existe dentro
+    das abas CLT/Consignado e so afeta a aba onde esta ligado.
 
     Visao consultor-level → aplica ``excluir_supervisores``
     (``docs/agents/business-rules.md`` § "Exclusao de supervisores").
@@ -179,13 +246,21 @@ def calcular_distribuicao_produtos(
     if "CONSULTOR" not in df.columns:
         return pd.DataFrame(), [], []
 
-    mask_bmg, mask_seg, mask_em, mask_sc = _mascaras_aceleradores(df)
+    if somente_bmg_help:
+        # Recorte no topo: pivot de valor, 6 mascaras, TOTAL e os merges
+        # de LOJA/REGIAO abaixo passam a ler o frame ja filtrado, sem
+        # branch por coluna. Sem ``BANCO``, zera a tabela inteira.
+        df = df[_mask_banco_bmg_help(df)].copy()
 
-    mask_all = (df["VALOR"] > 0) | mask_bmg | mask_seg | mask_em | mask_sc
+    mask_bmg, mask_seg, mask_em, mask_sc, mask_clt, mask_consig = _mascaras_aceleradores(df)
+
+    mask_all = (
+        (df["VALOR"] > 0) | mask_bmg | mask_seg | mask_em | mask_sc | mask_clt | mask_consig
+    )
     df_v = excluir_supervisores(df[mask_all].copy().reset_index(drop=True), df_supervisores)
 
     # Recompute flags on filtered df
-    bmg_v, seg_v, em_v, sc_v = _mascaras_aceleradores(df_v)
+    bmg_v, seg_v, em_v, sc_v, clt_v, consig_v = _mascaras_aceleradores(df_v)
 
     # ── Pivot de VALOR (produtos de crédito) ────────────────────────────────
     mask_cred = (df_v["VALOR"] > 0) & ~bmg_v & ~seg_v & ~em_v
@@ -217,6 +292,16 @@ def calcular_distribuicao_produtos(
         ("Vida Familiar", seg_v),
         ("Emissao", em_v),
         ("Super Conta", sc_v),
+        # "CLT (Qtd)", e nao "CLT": ``CONSIG_PRIV`` tem
+        # ``grupo_dashboard = 'CLT'`` (database/schema.sql), entao o pivot
+        # de VALOR ja emite uma coluna chamada "CLT". Nomes iguais fazem o
+        # merge virar "CLT_x"/"CLT_y", e ai os filtros ``c in
+        # distrib.columns`` derrubam AS DUAS — o R$ de CLT sumiria do
+        # TOTAL silenciosamente. "CONSIGNADO" (valor) x "Consignado
+        # (Novo/Refin)" (qtd) nao colidem, por isso so CLT precisa do
+        # sufixo.
+        ("CLT (Qtd)", clt_v),
+        ("Consignado (Novo/Refin)", consig_v),
     ]
     pv_qtd = pd.DataFrame({"CONSULTOR": df_v["CONSULTOR"].unique()})
     cols_qtd: list[str] = []
@@ -261,11 +346,16 @@ def calcular_distribuicao_produtos(
 
 def calcular_distribuicao_produtos_por_loja(
     df: pd.DataFrame,
+    somente_bmg_help: bool = False,
 ) -> tuple[pd.DataFrame, list[str], list[str]]:
     """Distribuicao de valor e quantidade por LOJA.
 
     Mesmas mascaras e mesmos pivots de
-    :func:`calcular_distribuicao_produtos`, com duas diferencas centrais:
+    :func:`calcular_distribuicao_produtos` — incluindo as colunas de
+    quantidade CLT e Consignado (Novo/Refin) e o parametro
+    ``somente_bmg_help``, que aqui tambem recorta a **tabela inteira**
+    (valor + quantidade + TOTAL) a ``BANCO ∈`` :data:`_BANCOS_BMG_HELP`,
+    e nao apenas as duas colunas novas. Com duas diferencas centrais:
 
     1. **Eixo de agregacao**: ``LOJA`` no lugar de ``CONSULTOR``.
     2. **Nao exclui supervisor**: a producao do proprio supervisor entra
@@ -283,14 +373,22 @@ def calcular_distribuicao_produtos_por_loja(
     if "LOJA" not in df.columns:
         return pd.DataFrame(), [], []
 
-    mask_bmg, mask_seg, mask_em, mask_sc = _mascaras_aceleradores(df)
+    if somente_bmg_help:
+        # Recorte no topo: pivot de valor, 6 mascaras, TOTAL e o merge
+        # de REGIAO abaixo passam a ler o frame ja filtrado, sem branch
+        # por coluna. Sem ``BANCO``, zera a tabela inteira.
+        df = df[_mask_banco_bmg_help(df)].copy()
 
-    mask_all = (df["VALOR"] > 0) | mask_bmg | mask_seg | mask_em | mask_sc
+    mask_bmg, mask_seg, mask_em, mask_sc, mask_clt, mask_consig = _mascaras_aceleradores(df)
+
+    mask_all = (
+        (df["VALOR"] > 0) | mask_bmg | mask_seg | mask_em | mask_sc | mask_clt | mask_consig
+    )
     # Sem excluir_supervisores: producao de supervisor conta pra loja.
     df_v = df[mask_all].copy().reset_index(drop=True)
 
     # Recompute flags on filtered df
-    bmg_v, seg_v, em_v, sc_v = _mascaras_aceleradores(df_v)
+    bmg_v, seg_v, em_v, sc_v, clt_v, consig_v = _mascaras_aceleradores(df_v)
 
     # ── Pivot de VALOR (produtos de crédito) ────────────────────────────────
     mask_cred = (df_v["VALOR"] > 0) & ~bmg_v & ~seg_v & ~em_v
@@ -322,6 +420,16 @@ def calcular_distribuicao_produtos_por_loja(
         ("Vida Familiar", seg_v),
         ("Emissao", em_v),
         ("Super Conta", sc_v),
+        # "CLT (Qtd)", e nao "CLT": ``CONSIG_PRIV`` tem
+        # ``grupo_dashboard = 'CLT'`` (database/schema.sql), entao o pivot
+        # de VALOR ja emite uma coluna chamada "CLT". Nomes iguais fazem o
+        # merge virar "CLT_x"/"CLT_y", e ai os filtros ``c in
+        # distrib.columns`` derrubam AS DUAS — o R$ de CLT sumiria do
+        # TOTAL silenciosamente. "CONSIGNADO" (valor) x "Consignado
+        # (Novo/Refin)" (qtd) nao colidem, por isso so CLT precisa do
+        # sufixo.
+        ("CLT (Qtd)", clt_v),
+        ("Consignado (Novo/Refin)", consig_v),
     ]
     pv_qtd = pd.DataFrame({"LOJA": df_v["LOJA"].unique()})
     cols_qtd: list[str] = []
