@@ -29,6 +29,7 @@ from src.dashboard.auth import (
     tela_login,
     usuario_logado,
 )
+from src.dashboard.chat_ia.tools import ChatContext
 from src.dashboard.components.tables import exibir_tabela
 from src.dashboard.kpis.gerais import (
     calcular_kpis_analise,
@@ -63,6 +64,7 @@ from src.dashboard.rls import (
     aplicar_rls_metas,
 )
 from src.dashboard.tabs.analiticos import render_tab_analiticos
+from src.dashboard.tabs.chat_ia import limpar_cache_chat_ia, render_tab_chat_ia
 from src.dashboard.tabs.detalhes import render_tab_detalhes
 from src.dashboard.tabs.em_analise import render_tab_em_analise
 from src.dashboard.tabs.evolucao import render_tab_evolucao
@@ -156,10 +158,10 @@ def _limpar_caches_periodo() -> None:
 
     Composta AQUI porque cada cache pertence a um modulo diferente e
     ninguem sozinho conhece o conjunto: ``main()`` e quem orquestra os
-    tres. Cada modulo dono expoe a propria funcao de limpeza — a
-    alternativa (a sidebar dar ``pop`` nas sete chaves pelo nome) ja
-    custou um bugfix quando um par de chaves novo nasceu num modulo e
-    nao foi lembrado no botao.
+    quatro. Cada modulo dono expoe a propria funcao de limpeza — a
+    alternativa (a sidebar dar ``pop`` nas chaves pelo nome) ja custou
+    um bugfix quando um par de chaves novo nasceu num modulo e nao foi
+    lembrado no botao.
 
     ``_periodo_carregado`` e estado do proprio ``main()`` (controla o
     skeleton da primeira carga do periodo), por isso e a unica chave
@@ -168,6 +170,7 @@ def _limpar_caches_periodo() -> None:
     st.cache_data.clear()
     limpar_cache_kpis(st.session_state)
     limpar_cache_comparativos()
+    limpar_cache_chat_ia()
     st.session_state.pop("_periodo_carregado", None)
 
 
@@ -581,6 +584,14 @@ def main():
             logger.exception("Falha ao carregar Reconquista")
             dados_reconquista = None
 
+        # Contexto do chat de IA. Nasce None e so e preenchido dentro do
+        # bloco `cards_gerenciais` abaixo, que e onde os grupos de KPI
+        # que ele carrega (pipeline, medias, quantidades) sao calculados.
+        # Hoje a matriz libera esse bloco aos cinco perfis, mas isso e
+        # estado da matriz, nao garantia estrutural: se ela mudar, a aba
+        # avisa que nao ha contexto em vez de estourar NameError.
+        chat_context = None
+
         # Consultor nao ve cards gerenciais; sua aba
         # renderiza os cards pessoais
         if pode_ver("cards_gerenciais", role):
@@ -683,6 +694,28 @@ def main():
             # Sem cache: calculo puro e barato sobre um frame ja em
             # memoria (ver docstring de `serie_diaria_pago`).
             daily_pago = serie_diaria_pago(df_f)
+
+            # Contexto do assistente de IA: so frames POS-RLS+filtros e
+            # os KPIs ja calculados acima. Nenhum `*_full` entra aqui —
+            # as tools fecham sobre este contexto e herdariam o escopo
+            # pre-RLS (ver docstring de ChatContext).
+            chat_context = ChatContext(
+                df=df_f,
+                df_metas=df_metas_f,
+                df_sup=df_sup_f,
+                df_analise=df_analise_f,
+                df_cancelados=df_cancelados_f,
+                kpis=kpis,
+                kpis_qtd=kpis_qtd,
+                kpis_analise=kpis_analise,
+                kpis_cancel=kpis_cancel,
+                medias=medias,
+                mes=mes,
+                ano=ano,
+                dia_atual=dia_atual,
+                du_decorridos=du_decorridos,
+                role=role,
+            )
 
             # KPIs Principais Reformulados
             # (3 principais + contexto + MIX + Aceleradores
@@ -892,6 +925,20 @@ def main():
                 "Gestao",
                 "filter_alt",
                 _render_gestao,
+            ),
+            # `chat_context` so existe se o bloco `cards_gerenciais`
+            # rodou. Sem ele a aba avisa, em vez de quebrar.
+            _AbaNav(
+                "tab_chat_ia",
+                "Assistente IA",
+                "smart_toy",
+                lambda: (
+                    render_tab_chat_ia(chat_context)
+                    if chat_context is not None
+                    else st.info(
+                        "Assistente de IA nao disponivel para o seu perfil."
+                    )
+                ),
             ),
         )
 

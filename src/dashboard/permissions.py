@@ -16,6 +16,8 @@ Elementos (keys):
     tab_em_analise        Pipeline em analise
     tab_detalhes          Tabela detalhada
     tab_pagamentos_online Estimativa horaria do extrator DNA
+    tab_chat_ia           Aba Assistente de IA (chat com tool-use
+                          sobre os KPIs ja calculados do periodo)
     cards_gerenciais      Cards agregados (num consultores,
                           ticket medio/consultor etc.)
     cards_drilldown       Botoes de detalhe (drill-down) dos
@@ -101,6 +103,16 @@ MATRIZ: dict[str, dict[str, bool]] = {
         "gerente_comercial": True,
         "supervisor": False,
         "consultor": False,
+    },
+    # Aba visivel aos cinco perfis para sinalizar roadmap. No rollout
+    # inicial, somente admin usa o chat; os demais perfis veem estado
+    # "Em breve" no renderer da aba.
+    "tab_chat_ia": {
+        "admin": True,
+        "gestor": True,
+        "gerente_comercial": True,
+        "supervisor": True,
+        "consultor": True,
     },
     # Grupos de cards
     "cards_gerenciais": {
