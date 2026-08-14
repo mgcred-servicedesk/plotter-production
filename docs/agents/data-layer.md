@@ -27,6 +27,30 @@ Migrações em `database/migrations/` (numeradas sequencialmente a partir de 001
 `contratos` diretamente quando uma view cobre o caso — a view já
 encapsula joins, filtros de status e resolução de `grupo_dashboard`/`grupo_meta`.
 
+### Atributos obrigatórios em toda função SQL nova
+
+Não são opcionais nem estilísticos — cada um tem consequência observável:
+
+| Atributo | Por quê |
+|---|---|
+| `SET search_path = ''` (ou `= public` se a função referenciar tabelas sem qualificar) | O Supabase Security Advisor sinaliza o que faltar (`function_search_path_mutable`). `pg_catalog` continua sendo pesquisado implicitamente, então builtins e operadores resolvem normalmente com o path vazio |
+| `PARALLEL SAFE` quando a função é pura | O default é `PARALLEL UNSAFE`, e **uma** função unsafe na lista de SELECT desabilita plano paralelo para *toda* query sobre a view que a usa |
+| `IMMUTABLE` / `STABLE` conforme o caso | O default é `VOLATILE`, que impede qualquer avaliação antecipada |
+
+> **`CREATE OR REPLACE FUNCTION` não herda atributo omitido.** O manual: *"All
+> other function properties are assigned the values specified or implied in the
+> command"* — o que não for **repetido** volta ao default. Ao substituir uma
+> função, reemita `IMMUTABLE`/`STABLE`, `PARALLEL SAFE` e o `SET search_path`
+> mesmo que não sejam o objeto da mudança, e confirme depois com
+> `SELECT provolatile, proparallel, prosecdef, proconfig FROM pg_proc WHERE proname = '...'`.
+
+Custo conhecido de `SET search_path`: a cláusula grava `pg_proc.proconfig`, e o
+planner **recusa inlinear** função SQL nessa condição (`inline_function`,
+`clauses.c`) — a função passa a custar ~1-3 µs por chamada em vez de virar
+expressão. Isso quase nunca importa (ver migration 069: ~32k chamadas ⇒
+~30-100 ms, uma vez a cada 30 min de cache). Se em algum caso importar, **meça
+o `EXPLAIN ANALYZE` antes** de abrir exceção, e registre a medição.
+
 ## Loaders (`src/dashboard/loaders.py`)
 
 Todas as funções `carregar_*` consumidas pelo `app.py` vivem em um

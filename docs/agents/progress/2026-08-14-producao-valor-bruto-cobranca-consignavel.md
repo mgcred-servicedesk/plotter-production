@@ -47,16 +47,16 @@ cliente usa parte do valor para quitar débitos com o banco, e o `VLR BRUTO`
   qualifica. Como função, as duas não têm como divergir, e alterar a regra
   vira `CREATE OR REPLACE FUNCTION` sem reescrever a view (evitando a
   restrição de ordem de colunas do `CREATE OR REPLACE VIEW`).
-- **`fn_eh_cobranca_consignavel` SEM `SET search_path = ''`** — desvio
-  consciente da convenção das migrations 019/066. A cláusula `SET` grava
+- ~~**`fn_eh_cobranca_consignavel` SEM `SET search_path = ''`**~~ — **REVERTIDO
+  pela migration 069** (ver "Reversão do desvio de `search_path`" abaixo). O
+  raciocínio original fica registrado porque a parte do `proconfig` continua
+  verdadeira e não deve ser redescoberta do zero: a cláusula `SET` grava
   `pg_proc.proconfig` e o planner **recusa inlinear** função SQL com
-  `proconfig` (`inline_function`, `clauses.c`); sem inlining seriam ~64k
-  chamadas por carga de período num compute Nano. A convenção protege funções
-  `SECURITY DEFINER` e/ou que referenciam tabelas; esta é `SECURITY INVOKER` e
-  não toca objeto nenhum — só argumentos e builtins, qualificados com
-  `pg_catalog.`. **Não reintroduzir "por convenção" sem medir o EXPLAIN.**
-  `PARALLEL SAFE` é obrigatório pelo mesmo tipo de razão: o default é
-  `PARALLEL UNSAFE`, que desabilitaria plano paralelo em *toda* query da view.
+  `proconfig` (`inline_function`, `clauses.c`). O que estava errado era a
+  magnitude (ver abaixo), não o mecanismo.
+  `PARALLEL SAFE` é obrigatório pelo mesmo tipo de razão e **segue valendo**: o
+  default é `PARALLEL UNSAFE`, que desabilitaria plano paralelo em *toda* query
+  da view.
 - **`GREATEST` (nunca reduzir), decidido contra o literal da regra.** Se o
   `VLR BRUTO` vier menor que o `VLR BASE` (dado sujo do ETL), a produção não
   cai. A linha **continua** contando no contador — o critério de lá é
@@ -257,8 +257,64 @@ importações recentes; nos meses anteriores é NULL, o `COALESCE` devolve
 `"valor": "VALOR"`. Instantâneo e suficiente; a view com colunas extras não
 incomoda ninguém (`CREATE OR REPLACE VIEW` não remove colunas de qualquer forma).
 
+## Reversão do desvio de `search_path` (migration 069)
+
+Disparado pelo Supabase Security Advisor, ainda nesta sessão: o lint
+`function_search_path_mutable` apontou `fn_eh_cobranca_consignavel` — que, depois
+da 067, era a **única** função do projeto sem a cláusula (as ~30 outras, em
+`schema.sql` e nas migrations 001…068, usam `SET search_path = ''`, ou `= public`
+nas duas de escrita, 015 e 063).
+
+**O aviso é verdadeiro pela regra e inofensivo pelo risco.** A função é
+`SECURITY INVOKER` (sem escalonamento de privilégio), não referencia objeto
+algum — só parâmetros, literais e builtins já qualificados com `pg_catalog.` — e
+o projeto usa uma única chave `service_role`, sem usuários SQL não confiáveis
+([[project_auth_model_client_side_rls]]). Não há superfície prática de sequestro.
+
+**Mesmo assim reverteu-se, por dois motivos:**
+
+1. **A conta de custo da 067 estava errada, e para mais.** Ela estimava "~64k
+   chamadas por carga de período (~16k linhas × 2 colunas × 2 queries)". O código
+   que de fato ficou chama menos: `_fetch_contratos_pagos` seleciona **só**
+   `valor_consolidado` (1 chamada/linha, ~16k) e `_fetch_cobranca_consignavel`
+   avalia o predicado no `WHERE` via `.eq("is_cobranca_consignavel", True)`
+   (~16k) — a lista de SELECT roda apenas nas ~2 linhas sobreviventes. Total
+   **~32k, não ~64k**. A ~1-3 µs por chamada de função SQL não inlinada, são
+   **~30-100 ms por carga de período, uma vez a cada 30 min** (TTL do
+   `@st.cache_data`), dentro de uma query que já serializa ~16k linhas de JSON
+   por HTTPS. Custo irrelevante — a justificativa não se sustentava.
+2. **O custo de ser a exceção é real.** O advisor não tem supressão por objeto:
+   o WARN ficaria permanente, e ruído fixo mascara o próximo aviso, que pode ser
+   de verdade. Convenção uniforme é o que permite revisar por exceção.
+
+**O corpo não mudou.** `search_path = ''` não quebra nada aqui: `pg_catalog` é
+sempre pesquisado implicitamente quando não nomeado no path, então operadores
+(`=`, `>`, `-`, `AND`, `IN`) e builtins continuam resolvendo; `upper`/`btrim`/
+`abs` já estavam qualificados e `COALESCE` é construção da gramática. Como a
+função não lê tabela alguma, `''` (o mais estrito) é o correto — não `= public`.
+
+**A armadilha da 069, registrada porque vai reaparecer:** `CREATE OR REPLACE
+FUNCTION` **não** preserva atributos omitidos ("All other function properties are
+assigned the values specified or implied in the command"). Omitir `PARALLEL SAFE`
+faria a função voltar ao default `PARALLEL UNSAFE` e desabilitar plano paralelo
+em *toda* query sobre `v_contratos_dashboard`; omitir `IMMUTABLE` a tornaria
+`VOLATILE`. Ambos estão repetidos na 069 e verificados pela query 2.1
+(`provolatile='i'`, `proparallel='s'`, `proconfig={"search_path="}`).
+
+A view **não** foi reemitida: a referência é por OID, que `CREATE OR REPLACE`
+preserva. Migration semanticamente neutra — mesmos valores, mesmas flags,
+validado pela query 2.4 (08/2026: `qualificam = 2`, `uplift = 15429.70`).
+
+A 067 é imutável e seu cabeçalho ainda contém a seção "POR QUE SEM `SET
+search_path`" — **superseeded** pela 069, que diz isso explicitamente no próprio
+cabeçalho.
+
 ## Pendências / follow-ups
 
+- **Aplicar a migration 069** e rodar as validações 2.1-2.5. A 2.5 (nenhuma
+  função com `proconfig IS NULL`) é a que fecha o advisor. Opcionalmente a seção
+  3 mede o inlining perdido — se o delta passar de ~1 s (não esperado),
+  reemitir sem a cláusula numa 070, nunca editando a 069.
 - **Deploy do código Python** — 067/068 já estão no banco e validadas; o
   dashboard em produção ainda roda a versão que lê `valor` como `VALOR`. Sem
   risco no intervalo: as colunas novas existem e são ignoradas pelo select
