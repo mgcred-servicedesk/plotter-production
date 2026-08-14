@@ -13,7 +13,7 @@ def _sb():
 
 | Objeto | Tipo | Uso |
 |---|---|---|
-| `v_contratos_dashboard` | view | contratos pagos com joins + flags já resolvidos + `created_at` (rótulo "Atualizado em" no status bar) |
+| `v_contratos_dashboard` | view | contratos pagos com joins + flags já resolvidos + `created_at` (rótulo "Atualizado em" no status bar). Expõe também `valor_bruto`/`valor_liquido` (065, com `COALESCE` para `valor`) e `is_cobranca_consignavel`/`valor_consolidado` (067) — **nenhuma delas é NULL** |
 | `v_contratos_cancelados` | view | contratos cancelados agregados |
 | `obter_cancelados_classificados(p_mes, p_ano)` | RPC | cancelados (30 dias) + coluna `classificacao` (redigitada/recuperada/liquido); matching por nome+categoria no banco (ver [business-rules.md](business-rules.md)) |
 | `obter_pontuacao_periodo(p_mes, p_ano)` | RPC | pontuação final por consultor/loja/região |
@@ -182,6 +182,31 @@ def _contratos_pagos_historico(mes: int, ano: int) -> pd.DataFrame:
 
 Config estática sem `mes`/`ano` pode usar um único `@st.cache_data(ttl=86400)`.
 
+### Invalidar cache quando a **semântica** muda (`_cache_version`)
+
+TTL resolve dado velho, não **definição** velha. Quando o significado de
+uma coluna muda (ex: `VALOR` passando de `VLR BASE` para
+`valor_consolidado` na migration 067), o cache de 24 h do histórico
+continuaria servindo o número calculado pela regra antiga.
+
+O mecanismo canônico do projeto é um parâmetro `_cache_version: int` na
+assinatura da função cacheada: ele entra na chave do `@st.cache_data`, e
+incrementá-lo invalida todas as entradas de uma vez.
+
+```python
+def consolidar_dados(mes, ano):
+    if _eh_mes_atual(mes, ano):
+        resultado = _consolidar_atual(mes, ano, _cache_version=4)
+    else:
+        resultado = _consolidar_historico(mes, ano, _cache_version=4)
+```
+
+Bumpar ao mudar a semântica de um frame, **sempre com comentário dizendo
+o porquê** (o histórico de bumps é a única trilha do que mudou). Cobre o
+deploy de *código*; mudança de *dado* com o app no ar (ex: o ETL passando
+a popular uma coluna) é resolvida pelo botão de refresh do seletor de
+período (`_limpar_caches_periodo` → `st.cache_data.clear()`).
+
 ## Colunas padronizadas após `_fetch_*`
 
 | Coluna | Tipo | Notas |
@@ -192,7 +217,8 @@ Config estática sem `mes`/`ano` pode usar um único `@st.cache_data(ttl=86400)`
 | `TIPO_PRODUTO` | str | uppercase |
 | `TIPO OPER.` | str | de `tipo_operacao` — identifica BMG MED, Seguro, etc. |
 | `SUBTIPO` | str | uppercase; subproduto (`NOVO`, `REFIN`, `MARGEM COMPLEMENTAR`, `SUPER CONTA`, `13º`). Exibido como "Subproduto" na aba Analíticos |
-| `VALOR` | float | sempre `float(c.get("valor", 0))` |
+| `VALOR` | float | **valor CONSOLIDADO** — vem de `valor_consolidado` (migration 067), não de `valor`. Igual ao `VLR BASE` fora da Cobrança Consignável; `VLR BRUTO` nela. É o que todo KPI de produção e a pontuação somam. Ver [business-rules.md](business-rules.md#produção-pelo-vlr-bruto-valor-consolidado) |
+| `VALOR_BASE` | float | `VLR BASE` cru (`contratos.valor`), só auditoria/exibição. **Nunca somar como produção**: não recebe os zeramentos de `conta_valor`/emissão que o `VALOR` recebe. Invariante na camada de fetch: `VALOR >= VALOR_BASE` |
 | `pontos` | float | lowercase — campo computado |
 | `DATA` | datetime | `pd.to_datetime(..., errors="coerce")` |
 | `CREATED_AT` | datetime (UTC) | `pd.to_datetime(..., utc=True)`; usado pelo status bar para "Atualizado em" (convertido para `America/Sao_Paulo` na exibição) |

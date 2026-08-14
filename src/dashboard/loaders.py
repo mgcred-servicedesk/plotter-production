@@ -62,7 +62,15 @@ _COLS_CONTRATOS_PAGOS = {
     "tipo_produto": "TIPO_PRODUTO",
     "subtipo": "SUBTIPO",
     "tipo_operacao": "TIPO OPER.",
-    "valor": "VALOR",
+    # VALOR = valor CONSOLIDADO (migration 067). Igual ao VLR BASE em
+    # toda linha que nao e Cobranca Consignavel; VLR BRUTO nas que sao
+    # (GREATEST, nunca reduz). Todo KPI de producao e a pontuacao
+    # (VALOR x PTS) leem esta coluna — ver business-rules.md.
+    "valor_consolidado": "VALOR",
+    # VLR BASE cru, so para auditoria/exibicao. NAO passa pelas regras
+    # da consolidacao (conta_valor/emissao zeram VALOR, nao
+    # VALOR_BASE): nunca somar VALOR_BASE como producao.
+    "valor": "VALOR_BASE",
     "prazo": "PRAZO",
     "valor_parcela": "VALOR_PARCELA",
     "banco": "BANCO",
@@ -359,6 +367,12 @@ def _fetch_contratos_pagos(mes: int, ano: int) -> pd.DataFrame:
     # Colunas de texto e flags (conta_valor/conta_pontuacao) ficam
     # como vieram — None de LEFT JOIN preservado, como antes.
     df["VALOR"] = pd.to_numeric(df["VALOR"], errors="coerce").fillna(0.0)
+    # VALOR_BASE (VLR BASE) segue o mesmo tratamento do VALOR. A view
+    # garante valor_consolidado >= valor e nenhum NULL; o fillna e a
+    # mesma rede que ja existia para VALOR.
+    df["VALOR_BASE"] = pd.to_numeric(
+        df["VALOR_BASE"], errors="coerce"
+    ).fillna(0.0)
     df["VALOR_PARCELA"] = pd.to_numeric(
         df["VALOR_PARCELA"], errors="coerce"
     ).fillna(0.0)
@@ -1534,11 +1548,13 @@ def consolidar_dados(
     Returns:
         (df_consolidado, df_metas, df_supervisores)
     """
-    # Cache version bump = 3 (forca recalculo apos fix super_conta)
+    # Cache version bump = 4 (VALOR passa a vir de valor_consolidado —
+    # migration 067; os caches de 24h do historico guardariam o VLR
+    # BASE antigo)
     if _eh_mes_atual(mes, ano):
-        resultado = _consolidar_atual(mes, ano, _cache_version=3)
+        resultado = _consolidar_atual(mes, ano, _cache_version=4)
     else:
-        resultado = _consolidar_historico(mes, ano, _cache_version=3)
+        resultado = _consolidar_historico(mes, ano, _cache_version=4)
 
     df, df_metas, df_supervisores, diag = resultado
 
@@ -1553,7 +1569,7 @@ def consolidar_dados(
 def _consolidar_atual(
     mes: int,
     ano: int,
-    _cache_version: int = 3,  # bump v3: fix super conta
+    _cache_version: int = 4,  # bump v4: VALOR = valor_consolidado
 ) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, Optional[dict]]:
     """Consolidacao — mes corrente. TTL 30min."""
     return _executar_consolidacao(mes, ano)
@@ -1563,7 +1579,7 @@ def _consolidar_atual(
 def _consolidar_historico(
     mes: int,
     ano: int,
-    _cache_version: int = 3,  # bump v3: fix super conta
+    _cache_version: int = 4,  # bump v4: VALOR = valor_consolidado
 ) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, Optional[dict]]:
     """Consolidacao — historico. TTL 24h."""
     return _executar_consolidacao(mes, ano)
@@ -2202,17 +2218,14 @@ _ACELERADOR_INICIO = (2026, 8)
 # Perfis para os quais o acelerador e apurado.
 _ACELERADOR_PERFIS = ("consultor", "supervisor")
 
-# Banco elegivel a Cobranca Consignavel (normalizado). Recorte mais
-# estreito que a flag "BMG/Help" da aba Produtos: aqui HELP nao entra.
-_BANCOS_COBRANCA_CONSIGNAVEL = ("BMG", "BANCO BMG")
-
-# Diferenca minima (R$) entre VLR BRUTO e VLR BASE para a linha contar.
-# Meio centavo evita ruido de float; a view ja aplica
-# COALESCE(valor_bruto, valor), entao "sem valor bruto" => 0 diferenca.
-_TOLERANCIA_VALOR = 0.005
-
 # Colunas de v_contratos_dashboard usadas na Cobranca Consignavel.
+# contrato_id/num_proposta identificam a proposta na listagem (Nº ADE,
+# mesmo padrao de _COLS_CONTRATOS_PAGOS). tipo_operacao/subtipo/
+# categoria_codigo nao entram em mascara nenhuma desde a migration 067
+# (o criterio virou filtro server-side) — ficam para o CSV de auditoria.
 _COLS_COBRANCA_CONSIGNAVEL = {
+    "contrato_id": "CONTRATO_ID",
+    "num_proposta": "NUM_PROPOSTA",
     "consultor": "CONSULTOR",
     "loja": "LOJA",
     "regiao": "REGIAO",
@@ -2221,7 +2234,12 @@ _COLS_COBRANCA_CONSIGNAVEL = {
     "subtipo": "SUBTIPO",
     "banco": "BANCO",
     "categoria_codigo": "CATEGORIA_CODIGO",
-    "valor": "VALOR",
+    # Mesmo vocabulario de _COLS_CONTRATOS_PAGOS: VALOR e sempre o
+    # consolidado (o que conta como producao), VALOR_BASE e o VLR BASE
+    # cru. VALOR_BRUTO entra aqui — e nao no frame principal — porque a
+    # sub-aba exibe o trio Base/Bruto/Considerado para auditoria.
+    "valor_consolidado": "VALOR",
+    "valor": "VALOR_BASE",
     "valor_bruto": "VALOR_BRUTO",
     "data_status_pagamento": "DATA",
 }
@@ -2285,24 +2303,23 @@ def carregar_cobranca_consignavel(mes: int, ano: int) -> pd.DataFrame:
 def _fetch_cobranca_consignavel(mes: int, ano: int) -> pd.DataFrame:
     """Executa a query da Cobranca Consignavel sem cache.
 
-    Criterio (AND): pago ao cliente com `data_status_pagamento` no mes
-    (o filtro server-side e por `periodo_id`, que e DERIVADO dele —
-    ver schema.sql; o mes e reconferido no frame), `TIPO OPER.` =
-    CONTRATO NOVO, `SUBTIPO` = NOVO (MARGEM COMPLEMENTAR fica fora),
-    `categoria_codigo` = CONSIG_BMG, banco BMG e VLR BRUTO != VLR BASE.
-    Comparacoes de texto normalizadas — a base nao e uniformemente
-    maiuscula.
+    O criterio de negocio vive em `fn_eh_cobranca_consignavel`
+    (migration 067), exposto como `is_cobranca_consignavel` em
+    `v_contratos_dashboard`: TIPO OPER. = CONTRATO NOVO, SUBTIPO =
+    NOVO (MARGEM COMPLEMENTAR fora), categoria_codigo = CONSIG_BMG,
+    banco BMG e |VLR BRUTO - VLR BASE| > 0,005. Ver
+    docs/agents/business-rules.md — **nao reimplementar a mascara
+    aqui**: duas fontes do mesmo criterio, em duas linguagens, e
+    exatamente o drift que a 067 existe para eliminar.
 
-    `categoria_codigo` e o que distingue Consignado (INSS/publico) de
-    CLT (Consignado Privado e-Social): as duas linhas de produto
-    compartilham TIPO OPER.='Contrato Novo' + SUBTIPO='NOVO', so
-    divergem em categoria_codigo (CONSIG_BMG vs NULL — CLT chega sem
-    categoria da view, so vira CONSIG_PRIV depois via
-    `_preencher_categoria_fallback` no app; ver business-rules.md).
-    Sem esse filtro, CLT contaminaria a contagem de Cobranca
-    Consignavel. Portabilidade/Refin-Portabilidade JA saem pelo
-    TIPO OPER. (nunca e 'Contrato Novo' — sempre 'Portabilidade' ou
-    'Refin-Portabilidade'), confirmado contra a base real.
+    O filtro e server-side, entao esta funcao traz apenas as linhas
+    que ja qualificam — antes da 067 ela paginava o periodo INTEIRO
+    (~16k linhas) para ficar com algumas dezenas.
+
+    Resta em Python so a reconferencia de mes: o recorte server-side e
+    por `periodo_id`, que e DERIVADO de `data_status_pagamento` (ver
+    schema.sql); linha com DATA fora do mes indicaria `periodo_id`
+    inconsistente.
     """
     vazio = pd.DataFrame(columns=list(_COLS_COBRANCA_CONSIGNAVEL.values()))
     periodo = carregar_periodo(mes, ano)
@@ -2318,15 +2335,20 @@ def _fetch_cobranca_consignavel(mes: int, ano: int) -> pd.DataFrame:
                 .select(colunas)
                 .eq("periodo_id", periodo["id"])
                 .eq("status_pagamento_cliente", "PAGO AO CLIENTE")
+                .eq("is_cobranca_consignavel", True)
                 .order("id")
                 .limit(_PAGE_SIZE)
             ),
             "id",
         )
     except Exception:
-        # `valor_bruto` depende da migration 065 estar aplicada. Enquanto
-        # nao estiver, loga o erro e devolve vazio (Cobranca Consignavel
-        # = 0) em vez de derrubar a aba inteira de Reconquista.
+        # `is_cobranca_consignavel`/`valor_consolidado` dependem da
+        # migration 067 estar aplicada. Enquanto nao estiver, loga o erro
+        # e devolve vazio (Cobranca Consignavel = 0) em vez de derrubar a
+        # aba inteira de Reconquista. Degradar aqui e aceitavel porque o
+        # zero e o caso NEUTRO documentado de um contador de acelerador
+        # (business-rules.md) — diferente do frame principal de pagos,
+        # que falha alto de proposito (nao ha "producao neutra").
         logger.exception(
             "Falha ao carregar Cobranca Consignavel (%02d/%d)", mes, ano
         )
@@ -2341,22 +2363,19 @@ def _fetch_cobranca_consignavel(mes: int, ano: int) -> pd.DataFrame:
         .rename(columns=_COLS_COBRANCA_CONSIGNAVEL)
     )
     df["VALOR"] = pd.to_numeric(df["VALOR"], errors="coerce").fillna(0.0)
-    # VLR BRUTO ausente => trata como igual ao VALOR (mesmo efeito do
-    # COALESCE da view): sem diferenca conhecida, a linha nao conta.
+    df["VALOR_BASE"] = pd.to_numeric(
+        df["VALOR_BASE"], errors="coerce"
+    ).fillna(0.0)
+    # VLR BRUTO ausente => cai no VLR BASE (mesmo efeito do COALESCE da
+    # view). Note que o fallback e VALOR_BASE, nao VALOR: este ultimo ja
+    # e o consolidado desde a 067.
     df["VALOR_BRUTO"] = pd.to_numeric(
         df["VALOR_BRUTO"], errors="coerce"
-    ).fillna(df["VALOR"])
+    ).fillna(df["VALOR_BASE"])
     df["DATA"] = pd.to_datetime(df["DATA"], errors="coerce")
 
-    mask = (
-        (_norm_texto(df["TIPO OPER."]) == "CONTRATO NOVO")
-        & (_norm_texto(df["SUBTIPO"]) == "NOVO")
-        & (_norm_texto(df["CATEGORIA_CODIGO"]) == "CONSIG_BMG")
-        & _norm_texto(df["BANCO"]).isin(list(_BANCOS_COBRANCA_CONSIGNAVEL))
-        & ((df["VALOR_BRUTO"] - df["VALOR"]).abs() > _TOLERANCIA_VALOR)
-        & (df["DATA"].dt.month == mes)
-        & (df["DATA"].dt.year == ano)
-    )
+    # Unica mascara que sobrou em Python: o criterio esta no servidor.
+    mask = (df["DATA"].dt.month == mes) & (df["DATA"].dt.year == ano)
     return df[mask].reset_index(drop=True)
 
 
@@ -2656,6 +2675,9 @@ def carregar_reconquista(mes: int, ano: int) -> Dict:
             "por_loja": DataFrame,   # quebra por loja (elegiveis)
             "por_consultor": DataFrame,  # acelerador combinado por consultor
             "clientes": DataFrame,   # detalhe (TODOS os clientes + flag)
+            "cobranca_consignavel_contratos": DataFrame,  # propostas RLS'd
+                                     # que compoem totais["cobranca_consignavel"]
+                                     # (vazio fora da vigencia)
             "prox":     dict,        # previa da apuracao seguinte (mes+1)
         }
 
@@ -2732,6 +2754,7 @@ def carregar_reconquista(mes: int, ano: int) -> Dict:
             else 0
         )
     else:
+        contratos_consignavel = pd.DataFrame()
         totais["cobranca_consignavel"] = 0
     # Faixa do total agregado (barra-resumo). Depende das duas chaves
     # acima, entao vem depois delas.
@@ -2744,6 +2767,7 @@ def carregar_reconquista(mes: int, ano: int) -> Dict:
         "por_loja": _por_loja_reconquista(clientes),
         "por_consultor": por_consultor,
         "clientes": clientes,
+        "cobranca_consignavel_contratos": contratos_consignavel,
         "prox": prox,
     }
 

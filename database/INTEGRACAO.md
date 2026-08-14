@@ -464,7 +464,9 @@ ON CONFLICT (contrato_id) DO UPDATE SET
 |-----------------------------|--------------|-------------|-----------|
 | contrato_id                 | BIGINT       | **Sim**     | ID sistema origem (chave dedup) |
 | loja_id                     | UUID         | **Sim**     | FK → `lojas.id` |
-| valor                       | NUMERIC(15,2)| **Sim**     | Valor base do contrato |
+| valor                       | NUMERIC(15,2)| **Sim**     | Valor base do contrato (`VLR BASE`) |
+| valor_bruto                 | NUMERIC(15,2)| Não†        | `VLR BRUTO` — valor cheio da operação |
+| valor_liquido               | NUMERIC(15,2)| Não†        | `VLR LIQUIDO` |
 | periodo_id                  | UUID         | Não*        | FK → `periodos.id` |
 | consultor_id                | UUID         | Não         | FK → `consultores.id` |
 | produto_id                  | UUID         | Não         | FK → `produtos.id` |
@@ -481,6 +483,26 @@ ON CONFLICT (contrato_id) DO UPDATE SET
 | convenio                    | TEXT         | Não         | Convênio (INSS, SIAPE...) |
 | num_proposta                | TEXT         | Não         | Número da proposta |
 | sub_status_banco            | TEXT         | Não         | Sub-status |
+
+#### † `valor_bruto` / `valor_liquido` — ausência ≠ zero
+
+Colunas adicionadas na migration `065`, alimentadas pelas colunas
+`VLR BRUTO` / `VLR LIQUIDO` do layout gerencial da planilha.
+
+> ⚠️ **Quando o valor não vier na planilha, NÃO envie a chave no
+> payload** (omitir do UPSERT). Nunca gravar `0` nem `NULL` explícito.
+
+O motivo é uma regra de negócio, não estética: a modalidade **Cobrança
+Consignável** é identificada por `VLR BRUTO ≠ VLR BASE`. Gravar `0`
+faria **todo** contrato com `valor > 0` parecer qualificado — falso
+positivo em massa, que além de inflar o contador do acelerador
+**aumentaria indevidamente a produção** de lojas e consultores (desde a
+migration `067` a produção usa `GREATEST(valor_bruto, valor)` nessas
+linhas). Ausente é o caso neutro: a view aplica
+`COALESCE(valor_bruto, valor)` e nada muda.
+
+Conferir após a primeira carga com o layout novo — bloco de validação da
+migration `067`, queries 4 e 5.
 
 #### Regras para `periodo_id`
 

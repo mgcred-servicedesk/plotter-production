@@ -1018,6 +1018,78 @@ def _render_reconquista(reconquista: dict | None):
         _render_reconquista_detalhamento(clientes)
 
 
+def _render_cobranca_consignavel(reconquista: dict | None) -> None:
+    """Sub-aba: propostas que compõem a Cobrança Consignável do mês.
+
+    Lista os contratos RLS'd já calculados em `carregar_reconquista`
+    (mesmo dado usado para a contagem do card do acelerador combinado —
+    ver business-rules.md "Cobrança Consignável — critério"), sem novo
+    fetch. Vazio tanto fora da vigência (< 08/2026) quanto quando não há
+    propostas no período — mesmo tratamento das abas irmãs.
+    """
+    contratos = (reconquista or {}).get(
+        "cobranca_consignavel_contratos", pd.DataFrame()
+    )
+    if contratos is None or contratos.empty:
+        st.info("Nenhuma proposta de Cobrança Consignável no período.")
+        return
+
+    st.caption(
+        "Contrato Novo/Novo, banco BMG, com VLR BRUTO diferente do VLR "
+        "BASE — critério do acelerador combinado (ver sub-aba "
+        "Reconquista). **Nestas operações a produção considera o VLR "
+        "BRUTO**, não o VLR BASE."
+    )
+
+    df_f = _filtrar_loja_consultor(contratos, "cobr_consig")
+
+    total_valor = (
+        float(df_f["VALOR"].sum()) if "VALOR" in df_f.columns else 0.0
+    )
+    col1, col2 = st.columns(2)
+    with col1:
+        st.metric("Quantidade", formatar_numero(len(df_f)))
+    with col2:
+        st.metric("Valor Considerado", formatar_moeda(total_valor))
+
+    df_f = df_f.copy()
+    df_f["NR_ADE"] = _nr_ade(df_f)
+    cols = ["NR_ADE", "DATA", "LOJA", "CONSULTOR"]
+    if "REGIAO" in df_f.columns:
+        cols.append("REGIAO")
+    # Base -> Bruto -> Considerado conta a historia da regra ("era X, a
+    # venda cheia foi Y, entrou Y na producao") e deixa visivel o
+    # GREATEST da migration 067 quando o bruto vem menor que a base
+    # (Considerado = Base).
+    cols += ["BANCO", "VALOR_BASE", "VALOR_BRUTO", "VALOR"]
+    cols_disp = [c for c in cols if c in df_f.columns]
+
+    df_tab = (
+        df_f[cols_disp]
+        .sort_values("DATA", ascending=False)
+        .rename(columns={
+            "NR_ADE": "Nº ADE",
+            "DATA": "Data Pagamento",
+            "LOJA": "Loja",
+            "CONSULTOR": "Consultor",
+            "REGIAO": "Regiao",
+            "BANCO": "Banco",
+            "VALOR_BASE": "Valor Base",
+            "VALOR_BRUTO": "Valor Bruto",
+            "VALOR": "Valor Considerado",
+        })
+    )
+    exibir_tabela(
+        df_tab,
+        colunas_moeda=["Valor Base", "Valor Bruto", "Valor Considerado"],
+        paginacao=100,
+        key="tab_cobr_consignavel",
+    )
+    _exportar_csv(
+        df_tab, "cobranca_consignavel", "exp_cobr_consignavel"
+    )
+
+
 def _render_distribuicao_por_loja(df, somente_bmg_help: bool = False) -> None:
     """Distribuicao agregada por LOJA (inclui producao de supervisor)."""
     df_dist, cols_moeda, cols_num = calcular_distribuicao_produtos_por_loja(
@@ -1152,6 +1224,7 @@ def render_tab_analiticos(
         sac.TabsItem(label="Cancelados", icon="x-circle"),
         sac.TabsItem(label="Aceleradores", icon="lightning-charge"),
         sac.TabsItem(label="Reconquista", icon="arrow-clockwise"),
+        sac.TabsItem(label="Cobranca Consignavel", icon="cash-coin"),
     ]
     if not _is_consultor:
         tab_items.append(
@@ -1182,6 +1255,9 @@ def render_tab_analiticos(
 
     elif menu == "Reconquista":
         _render_reconquista(reconquista)
+
+    elif menu == "Cobranca Consignavel":
+        _render_cobranca_consignavel(reconquista)
 
     elif menu == "Distribuicao de Produtos":
         _render_distribuicao_produtos(df, df_sup, perfil)

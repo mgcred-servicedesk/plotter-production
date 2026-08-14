@@ -603,10 +603,22 @@ o frame de contratos pagos (`v_contratos_dashboard`):
 | Período | `status_pagamento_cliente = 'PAGO AO CLIENTE'` **e** `data_status_pagamento` dentro do mês/ano de apuração — **nunca** `data_cadastro` |
 | `TIPO OPER.` | normalizado = `CONTRATO NOVO` (a base grava `Contrato Novo`) |
 | `SUBTIPO` | normalizado = `NOVO`; `MARGEM COMPLEMENTAR` fica **explicitamente fora** (mesmo recorte do contador [Consignado (Novo/Refin)](#clt-e-consignado-novorefin-pagos)) |
+| `categoria_codigo` | = `CONSIG_BMG` — é o que separa Consignado (INSS/público) de **CLT** (Consignado Privado e-Social): as duas linhas compartilham `TIPO OPER.`/`SUBTIPO` e só divergem aqui. Sem ele, CLT contaminaria a contagem |
 | `BANCO` | normalizado ∈ {`BMG`, `BANCO BMG`} — mesma normalização da [flag "Somente BMG/Help"](#flag-somente-bmghelp), **sem** `HELP` |
-| Valor | `valor_bruto <> valor` (`VLR BRUTO` ≠ `VLR BASE`) |
+| Valor | `valor_bruto <> valor` (`VLR BRUTO` ≠ `VLR BASE`), com tolerância de meio centavo |
 
-- Normalização = `.astype(str).str.strip().str.upper()` (`_norm` /
+> **Onde a regra mora:** desde a migration 067 o critério é a função SQL
+> `fn_eh_cobranca_consignavel`, exposta como coluna
+> `is_cobranca_consignavel` em `v_contratos_dashboard`. A tabela acima é
+> **espelho documental** — alterar a regra é `CREATE OR REPLACE FUNCTION`
+> numa migration nova, nunca reimplementar a máscara em Python. O loader
+> aplica o filtro server-side (`.eq("is_cobranca_consignavel", True)`); o
+> único resto em pandas é a reconferência de mês.
+> A suíte de testes do critério é o **bloco de validação da própria
+> migration** (seção 4) — o pytest não alcança SQL.
+
+- Normalização em SQL = `upper(btrim(coalesce(x, '')))`, equivalente ao
+  `.astype(str).str.strip().str.upper()` usado no resto do projeto (`_norm` /
   `_mask_banco`, [`src/dashboard/tabs/produtos.py`](../../src/dashboard/tabs/produtos.py)),
   pelo mesmo motivo de sempre: a base não é uniformemente maiúscula.
 - **O filtro de período já vem satisfeito por construção** no frame mensal:
@@ -628,7 +640,46 @@ o frame de contratos pagos (`v_contratos_dashboard`):
   `flag_elegibilidade` NULL ⇒ ELEGIVEL), **não** falha silenciosa: o dia
   em que o ETL mandar o valor real, o upsert por `contrato_id` corrige
   sozinho. Zero persistente após a carga do ETL é sinal de coluna não
-  populada — investigar a origem, não a regra.
+  populada — investigar a origem, não a regra. O mesmo vale para o valor
+  consolidado (abaixo): sem `valor_bruto`, `valor_consolidado = valor` e
+  **nenhum número do dashboard muda**.
+
+### Produção pelo VLR BRUTO (valor consolidado)
+
+Consequência **financeira** da Cobrança Consignável, não apenas de
+contagem: nessas operações o cliente usa parte do valor para quitar
+débitos com o banco, então o `VLR BASE` não representa a venda. **A
+produção considera o VLR BRUTO** — o valor cheio da operação.
+
+`v_contratos_dashboard.valor_consolidado` (migration 067) é a coluna que
+materializa isso:
+
+```
+valor_consolidado = GREATEST(valor_bruto, valor)  quando is_cobranca_consignavel
+                  = valor                          nos demais casos
+```
+
+| Aspecto | Regra |
+|---|---|
+| Coluna `VALOR` do dashboard | vem de `valor_consolidado`. **Todo** KPI de produção, ranking, ticket médio, meta e gráfico lê essa coluna — nenhum deles precisou mudar |
+| Pontuação | `pontos = VALOR × PTS` segue inalterado, logo **pontua sobre o consolidado**. Metas em pontos, meta diária e projeção acompanham |
+| `VALOR_BASE` | o `VLR BASE` **cru**, só para auditoria/exibição. **Nunca somar como produção**: não recebe os zeramentos de `conta_valor = False` nem de emissão que o `VALOR` recebe na consolidação (mesma relação de `PONTOS` cru × `pontos` calculado) |
+| Escopo | **somente contratos pagos**. Pipeline em análise (`v_contratos_em_analise`), cancelados (`v_contratos_cancelados`) e digitação diária (RPCs `obter_digitacao_diaria*`) seguem em `VLR BASE` |
+
+- **Nunca reduz.** Se o `VLR BRUTO` vier **menor** que o `VLR BASE` (dado
+  sujo na origem), o `GREATEST` mantém o `VLR BASE` — produção não cai por
+  erro de ETL. A linha **continua** contando no contador, cujo critério é
+  `|bruto − base| > 0,005` em qualquer direção. Invariante permanente:
+  `valor_consolidado >= valor`.
+- **Divergência conhecida com o fallback de categoria.**
+  `_preencher_categoria_fallback` mapeia `TIPO_PRODUTO ∈ {CONSIG,
+  CONSIG BMG}` → `CONSIG_BMG` quando `produtos.categoria_id` é NULL
+  (migration 061); o SQL usa `cp.codigo` cru e não enxerga esse fallback.
+  Uma linha assim **não recebe o uplift** — subnotifica, nunca
+  superestima. Já era o comportamento do contador antes da 067 (o frame
+  da Cobrança Consignável nunca aplicou o fallback), então a contagem não
+  mudou. Medido pela query 6 do bloco de validação da migration; se der
+  > 0, corrigir a **origem** (ETL), não a regra.
 
 ### Supervisor — 70% do prêmio de cada consultor
 
