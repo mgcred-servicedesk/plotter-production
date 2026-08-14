@@ -129,6 +129,60 @@ Blocos de validação das duas migrations, executados contra a base:
   100% das linhas** — nenhum histórico mudou, como previsto.
 - `streamlit run app.py` → HTTP 200, sem erro no log.
 
+### Auditoria de consolidação — todo KPI que soma valor
+
+Método: cada KPI rodado **duas vezes** sobre 08/2026 — com o frame real
+(`VALOR` = consolidado) e com um frame-controle (`VALOR := VALOR_BASE`,
+simulando o dashboard pré-067). Delta esperado = R$ 15.429,70. KPI que deveria
+mover e não move seria bug.
+
+**Todos os 20 pontos de agregação propagaram o valor consolidado:**
+
+| Módulo | Delta |
+|---|---|
+| `gerais.calcular_kpis_gerais` → `total_vendas` | 15.429,70 |
+| produção por loja (HELP BANGU / SÃO GONÇALO) | 3.421,21 / 12.008,49 |
+| pontos totais (`VALOR × PTS`) | 15.429,70 |
+| `rankings`: lojas, consultores, ticket médio, média/DU | 15.429,70 (cada) |
+| `regioes.calcular_kpis_por_regiao` | 15.429,70 |
+| `produtos`: `kpis_por_produto`, distribuição (TOTAL e CONSIGNADO), por loja | 15.429,70 |
+| `evolucao.calcular_evolucao_diaria` | 15.429,70 |
+| `comparativos.calcular_evolucao_por_entidade` | 15.429,70 |
+| `gestao.construir_tabela` (Total e Consignado) | 15.429,70 |
+| `detalhes_cards.aplicar_conta_valor` | 15.429,70 |
+| `prioridades_acao`: loja, consultor, região | propaga (soma mista de gaps/percentuais) |
+
+Casos com delta **diferente** de 15.429,70, todos explicados:
+
+- `regioes.calcular_kpis_por_produto_regiao` → 48.291,91 = `Valor` (15.429,70)
+  + `Projeção` (32.402,37, o uplift escalado pelos DU restantes) + `Ticket
+  Médio` (457,14) + percentuais. Colunas **derivadas** do Valor.
+- `heatmap_regiao_produto[0]` (ranking) → delta 0. **Correto**: R$ 15 mil não
+  muda posição de região. Já o `[1]` (% atingimento) moveu: GLENDA/CONSIGNADO
+  +0,21 p.p. e JACQUELINE/CONSIGNADO +0,66 p.p.
+- `aceleradores_loja`/`_consultor` → delta 0. **Correto**: são contagem.
+- `indice_perda` → imune, calculado sobre **quantidade**.
+
+**Inventário das fontes de valor** (só 2 pontos leem `v_contratos_dashboard`,
+ambos via mapa do loader — sem bypass no código):
+
+| Fonte | Valor | Escopo |
+|---|---|---|
+| `v_contratos_dashboard` → pagos e Cobrança Consignável | **consolidado** | ✅ na regra |
+| RPC em análise / cancelados / digitação diária | VLR BASE | fora, por decisão |
+| `v_pagamentos_online_efetivo` | fonte própria | não relacionado |
+| `v_reconquista` (`saldo_contabil`) | não é valor de contrato | não relacionado |
+
+**Mistura consolidado × base — 2 pontos, ambos aceitáveis e medidos:**
+
+1. `gerais.py:347` `valor_total_digitado = pagos + análise` — só denominador de
+   `variacao_analise`, nunca exibido como produção. Efeito medido: **−0,09 p.p.**
+   (30,3023% → 30,2122%). Comentário no código esclarecido nesta sessão, porque
+   a palavra "base" ali virou ambígua depois que `VALOR_BASE` passou a existir.
+2. `prioridades_acao.calcular_prioridades_produto` → `perc_se_pagos` projeta
+   "se os contratos em análise forem pagos" somando pipeline (base) ao
+   realizado (consolidado). Direção **conservadora** — subestima a projeção.
+
 ### Estado do ambiente encontrado na auditoria (antes de aplicar)
 
 A auditoria somente-leitura corrigiu três premissas do plano original:
@@ -253,6 +307,13 @@ Bug encontrado na auditoria e **corrigido nesta sessão** por
 - Vale confirmar com o negócio se **CLT** também pode ter Cobrança Consignável.
   Os dados dizem que não (razão constante de 1,0753 = spread estrutural), mas é
   uma leitura de dado, não uma regra escrita.
+- **Decisão de UI em aberto (levantada na auditoria):** a sub-aba "Propostas
+  Pagas" exibe a coluna "Valor" já **consolidada**. Nas 2 propostas de Cobrança
+  Consignável isso diverge do `VLR BASE` do arquivo de origem, e ali não há
+  coluna de VLR BASE para conciliar. Hoje o trio Base/Bruto/Considerado só
+  existe na sub-aba Cobrança Consignável. Opções: (a) manter — quem concilia
+  usa a sub-aba dedicada; (b) acrescentar "Valor Base" em Propostas Pagas.
+  Não alterado sem decisão sua.
 - Verificação visual em browser não feita — sem credenciais de teste nesta
   sessão (mesma lacuna do progress de 2026-08-13).
 

@@ -343,7 +343,14 @@ def calcular_kpis_analise(
         valor_analise / du_decorridos if du_decorridos > 0 else 0
     )
 
-    # Valor total digitado no mes (pagos + em analise base)
+    # Valor total digitado no mes = pagos + pipeline em analise.
+    # Denominador de `variacao_analise` apenas — nao e exibido como
+    # producao. Soma DUAS definicoes de valor: `df` (pagos) vem
+    # consolidado (VLR BRUTO na Cobranca Consignavel, migration 067) e
+    # `df_analise` segue em VLR BASE, porque a regra vale so para pagos
+    # (ver business-rules.md "Producao pelo VLR BRUTO"). O efeito e de
+    # centesimo de ponto percentual e a direcao e conservadora — o
+    # pipeline nunca infla a variacao.
     valor_total_digitado = df["VALOR"].sum() + valor_analise
 
     # Variacao = % do valor em analise vs media do total digitado
