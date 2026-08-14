@@ -1035,10 +1035,8 @@ def _render_cobranca_consignavel(reconquista: dict | None) -> None:
         return
 
     st.caption(
-        "Contrato Novo/Novo, banco BMG, com VLR BRUTO diferente do VLR "
-        "BASE — critério do acelerador combinado (ver sub-aba "
-        "Reconquista). **Nestas operações a produção considera o VLR "
-        "BRUTO**, não o VLR BASE."
+        "Contratos de Cobrança Consignável são considerados os valores cheios "
+        "(Valor bruto), para os clientes o valor recebível é o Valor Base."
     )
 
     df_f = _filtrar_loja_consultor(contratos, "cobr_consig")
