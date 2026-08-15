@@ -1,4 +1,27 @@
-# 📊 Novos Recursos do Dashboard - Analíticos e Rankings
+# Histórico Devin — Analíticos e Rankings (março de 2026)
+
+> **Documento histórico, não autoritativo.** Este registro descreve uma
+> versão de março de 2026. Módulos como `src/dashboard/kpi_analiticos.py` e o
+> pipeline Excel/PDF citado abaixo foram removidos ou reorganizados. Não use
+> os caminhos desta página para implementar features novas.
+
+## Estado atual e colaboração
+
+- Entrypoint atual: `app.py`.
+- Arquitetura e árvore vigentes: `docs/agents/architecture.md`.
+- Regras de negócio vigentes: `docs/agents/business-rules.md`.
+- Componentes e renderers: `src/dashboard/{kpis,tabs,ui,pages}/`.
+- Evolução cronológica: `docs/agents/progress/` (append-only).
+- Papéis de Codex, Claude e Devin: `docs/agents/collaboration.md`.
+
+Devin atua como canal paralelo de desenvolvimento do dashboard quando
+designado. Claude mantém a orquestração e cobre o mesmo trabalho por meio de
+subagentes quando Devin estiver ausente; Codex revisa as decisões. O conteúdo
+abaixo é preservado apenas como registro da evolução do produto.
+
+---
+
+## Registro original
 
 ## 🎯 Resumo das Implementações
 

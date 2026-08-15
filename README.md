@@ -1,114 +1,122 @@
 # Dashboard de Performance Comercial — MGCred
 
-Dashboard interativo de vendas em Streamlit, alimentado **diretamente pelo
-Supabase** (PostgreSQL). Consolida pontuação, metas, análises por
-região/loja/consultor e KPIs de performance, com autenticação e
-Row-Level Security por perfil.
+Dashboard interno para acompanhamento da operação comercial da MGCred.
+Consolida produção, pontuação, metas, pipeline e desempenho de múltiplas
+equipes em uma interface Streamlit conectada ao Supabase.
 
-> **Entrypoint único:** [`app.py`](app.py) na raiz. Toda a lógica vive em
-> [`src/`](src/). O projeto não gera mais relatórios Excel/PDF — esse
-> pipeline foi descontinuado; os dados são lidos do Supabase em tempo real.
+O produto atende da visão executiva ao acompanhamento individual, com
+recortes por região, loja, supervisor e consultor.
 
-## 📋 Funcionalidades
+## Principais recursos
 
-- **Dashboard interativo** com Streamlit + streamlit-antd-components
-- **Sistema de pontuação** por produto (`pontos = VALOR × PTS`) e metas
-- **Análises comparativas** entre regiões, lojas e consultores
-- **KPIs de performance**, projeção de fechamento e prioridades de ação
-- **Autenticação e Row-Level Security (RLS)** por perfil
+- KPIs de produção, pontuação, metas, ritmo por dia útil e projeção de
+  fechamento.
+- Análises por produto, região, loja e consultor, com comparativos mensais e
+  anuais.
+- Rankings, distribuição do mix, consultores sem produção e exportação CSV.
+- Acompanhamento de contratos pagos, em análise e cancelados, com drill-downs.
+- Gestão por critérios combinados, metas relativas, aceleradores, períodos
+  personalizados e presets compartilháveis.
+- Indicadores específicos de Reconquista, Cobrança Consignável, emissão e
+  seguros.
+- Monitoramento de Pagamentos Online.
+- Assistente de IA baseado nos KPIs validados do dashboard, em rollout beta
+  para administradores.
 
-## 📚 Documentação
+As regras detalhadas de pontuação e contabilização dos produtos estão em
+[`docs/agents/business-rules.md`](docs/agents/business-rules.md).
 
-O conhecimento de projeto (arquitetura, regras de negócio, convenções) é
-mantido em **[`docs/agents/`](docs/agents/README.md)** — fonte única de
-verdade. Comece por:
+## Arquitetura
 
-- [`AGENTS.md`](AGENTS.md) — princípios inegociáveis e ponto de entrada
-- [`docs/agents/architecture.md`](docs/agents/architecture.md) — entrypoint, árvore, banco
-- [`docs/agents/business-rules.md`](docs/agents/business-rules.md) — regras de pontuação, cartão, seguros, metas
-- [`docs/agents/rls.md`](docs/agents/rls.md) — ordem de RLS e hierarquia de perfis
+[`app.py`](app.py) é o único entrypoint. Ele autentica o usuário, carrega o
+período, aplica as restrições de acesso e despacha as páginas do dashboard.
+A lógica fica organizada por responsabilidade:
 
-## 🚀 Instalação
+```text
+app.py                         # orquestrador Streamlit
+src/dashboard/
+  loaders.py                  # Supabase e cache atual/histórico
+  kpis/                       # cálculos de negócio
+  tabs/                       # páginas analíticas
+  ui/                         # cards, gráficos, tema e sidebar
+  pages/                      # páginas e drill-downs
+  chat_ia/                    # tools e orquestração do assistente
+database/migrations/          # evolução do schema Supabase
+tests/                        # testes automatizados
+```
 
-Pré-requisitos: Python 3.11+.
+Os dados são consultados diretamente no Supabase por views e RPCs. O mês
+corrente usa cache de curta duração; períodos históricos usam cache mais
+longo. O antigo pipeline de relatórios Excel/PDF foi removido.
+
+Consulte a [arquitetura completa](docs/agents/architecture.md) e o
+[padrão da camada de dados](docs/agents/data-layer.md).
+
+## Acesso e segurança
+
+O dashboard exige autenticação e aplica acesso fail-closed conforme cinco
+perfis:
+
+| Perfil | Escopo |
+|---|---|
+| `admin` | Visão global, configurações e simulação de outros perfis |
+| `gestor` | Visão consolidada da operação |
+| `gerente_comercial` | Regiões atribuídas |
+| `supervisor` | Lojas atribuídas |
+| `consultor` | Produção individual |
+
+A ordem de aplicação das restrições é parte do contrato de segurança.
+Veja [`docs/agents/rls.md`](docs/agents/rls.md).
+
+## Executando localmente
+
+Requisitos: Python 3.11+ e credenciais de acesso ao Supabase.
 
 ```bash
-# 1. Ambiente virtual
 python -m venv .venv
-source .venv/bin/activate          # Linux/Mac
-
-# 2. Dependências
-pip install -r requirements.txt    # requirements-dev.txt para dev (ruff, pytest)
-
-# 3. Variáveis de ambiente
+.venv/bin/pip install -r requirements.txt
 cp .env.example .env
-# Edite .env e defina ao menos SUPABASE_URL e SUPABASE_KEY
+# Preencha SUPABASE_URL e SUPABASE_KEY no .env
+
+.venv/bin/streamlit run app.py
 ```
 
-## 📊 Como Usar
+O dashboard fica disponível, por padrão, em `http://localhost:8501`.
+
+## Stack
+
+O baseline atual está definido em [`requirements.txt`](requirements.txt):
+
+- Streamlit 1.61.1 e streamlit-antd-components ≥ 0.3.2
+- Pandas 3.0.5 e NumPy 2.5.1
+- Plotly 6.9.0
+- Supabase Python 2.31.0
+- Anthropic ≥ 0.70.0 e OpenAI ≥ 1.109.1 para o Assistente IA
+- bcrypt ≥ 5.0.0 e python-dotenv 1.2.2
+
+## Qualidade
+
+Use sempre os binários da `.venv`:
 
 ```bash
-streamlit run app.py
+.venv/bin/python -m pytest tests/
+.venv/bin/ruff check src/ app.py
 ```
 
-O dashboard fica disponível em `http://localhost:8501`.
+A suíte cobre KPIs, regras de produto, loaders, RLS, permissões, componentes
+de UI, Gestão e ferramentas do Assistente IA.
 
-## 🗂️ Estrutura (resumo)
+## Documentação e agentes
 
-```
-app.py                  ← entrypoint único (orquestrador)
-src/
-  config/               ← supabase_client, settings (constantes de negócio)
-  shared/               ← dias_uteis
-  dashboard/
-    auth, rls, permissions, loaders, user_mgmt, feriados_mgmt
-    kpis/  tabs/  ui/  pages/  components/
-configuracao/           ← planilhas auxiliares (HC, lojas, supervisores)
-database/migrations/    ← migrations SQL numeradas
-assets/                 ← logotipo, design system (CSS)
-tests/                  ← suíte pytest
-```
+Antes de contribuir, leia [`AGENTS.md`](AGENTS.md) e o índice em
+[`docs/agents/README.md`](docs/agents/README.md). Essa pasta é a fonte
+canônica de arquitetura, regras de negócio, convenções e progresso.
 
-Árvore completa e fluxo de carregamento em
-[`docs/agents/architecture.md`](docs/agents/architecture.md).
+O desenvolvimento assistido opera com Claude como executor/orquestrador,
+Devin como canal paralelo do dashboard quando disponível e Codex na revisão
+de decisões. O contrato está em
+[`docs/agents/collaboration.md`](docs/agents/collaboration.md).
 
-## 🔐 Autenticação e Controle de Acesso
-
-- Login obrigatório; usuários ficam na tabela `usuarios` do **Supabase**
-  (senhas com hash bcrypt). Gerenciamento via página de admin
-  ([`user_mgmt.py`](src/dashboard/user_mgmt.py)).
-- Acesso filtrado por **Row-Level Security** conforme o perfil
-  (`admin`, `gerente_comercial`, `supervisor`, `consultor`). `admin` pode
-  simular outros perfis via "Visualizar Como".
-- Detalhes e ordem obrigatória de aplicação em
-  [`docs/agents/rls.md`](docs/agents/rls.md).
-
-Seed inicial de admin: [`scripts/seed_admin.py`](scripts/seed_admin.py).
-
-## 🛠️ Tecnologias
-
-- **Python 3.11+**
-- **Streamlit 1.35+** + **streamlit-antd-components** — frontend
-- **Supabase (PostgreSQL)** — fonte de dados (views `v_*` e RPCs)
-- **Pandas 2.2+** / **NumPy 1.26+** — manipulação de dados
-- **Plotly 5.20+** — gráficos interativos
-- **openpyxl** — leitura das planilhas auxiliares de `configuracao/`
-- **bcrypt** — hash de senhas
-- **ruff** / **pytest** — lint e testes
-
-## 🧪 Testes e Lint
-
-```bash
-pytest tests/
-ruff check src/ app.py
-```
-
-## 👥 Contribuindo
-
-1. Leia [`AGENTS.md`](AGENTS.md) e o doc de [`docs/agents/`](docs/agents/README.md) da área que vai tocar.
-2. Siga PEP 8; docstrings em português.
-3. Adicione testes para novas funcionalidades e rode `ruff check` antes de abrir PR.
-
-## 📄 Licença
+## Licença
 
 Uso interno da empresa.

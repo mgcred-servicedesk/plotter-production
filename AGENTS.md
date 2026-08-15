@@ -20,6 +20,7 @@ convenções e componentes de UI) mora em
 
 Coordenação (tarefas não triviais):
 
+- Colaboração Codex/Claude/Devin: [`docs/agents/collaboration.md`](docs/agents/collaboration.md)
 - Orquestração: [`docs/agents/orchestrator.md`](docs/agents/orchestrator.md)
 - Catálogo de subagentes: [`docs/agents/subagents/README.md`](docs/agents/subagents/README.md)
 - Protocolo RPI obrigatório: [`docs/agents/rpi-workflow.md`](docs/agents/rpi-workflow.md)
@@ -35,6 +36,13 @@ Coordenação (tarefas não triviais):
 ---
 
 ## Orquestração e delegação a subagentes
+
+O desenvolvimento opera em dois canais coordenados: Claude é o caminho
+principal de execução/orquestração e Devin atua em paralelo no dashboard
+quando estiver disponível. Codex revisa decisões dos dois canais. Na ausência
+de Devin, Claude cobre suas subtarefas por meio dos subagentes especializados;
+a entrega não fica bloqueada. Papéis, handoff e regra de continuidade em
+[`docs/agents/collaboration.md`](docs/agents/collaboration.md).
 
 Tarefas **não triviais** podem ser decompostas e delegadas a
 subagentes especializados. Protocolo canônico (tool-neutral) em

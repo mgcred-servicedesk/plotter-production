@@ -26,6 +26,7 @@ da respectiva ferramenta.
 
 | Arquivo | Escopo |
 |---|---|
+| [collaboration.md](collaboration.md) | Papéis de Codex, Claude e Devin; dois canais, continuidade e handoff |
 | [rpi-workflow.md](rpi-workflow.md) | Protocolo obrigatório Research → Plan → Implement |
 | [orchestrator.md](orchestrator.md) | Decomposição, delegação, handoff e rastreamento de subtarefas |
 | [subagents/README.md](subagents/README.md) | Catálogo de subagentes (slug → harness) e protocolo de ativação |

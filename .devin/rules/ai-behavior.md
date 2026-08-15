@@ -4,6 +4,20 @@ trigger: always_on
 
 # AI Behavior & Interaction Rules
 
+## Collaboration and Handoff
+
+- Follow `docs/agents/collaboration.md` before non-trivial dashboard work.
+- Work only on the atomic subtask assigned to the Devin channel.
+- Treat Claude as the execution/orchestration owner and Codex as the reviewer
+  of durable and cross-domain decisions.
+- Do not edit the same files concurrently with Claude or one of its subagents.
+- If the task requires another domain, stop and return the objective, affected
+  files, dependency and acceptance criteria to Claude for re-orchestration.
+- End a handoff with tests run, visual/operational QA performed, open risks and
+  any decision that must be recorded in `docs/agents/progress/`.
+- Devin's absence must never block delivery; Claude may cover the work through
+  the specialized subagents documented in `CLAUDE.md`.
+
 ## Before Coding
 
 - State your understanding of the task before writing any code.

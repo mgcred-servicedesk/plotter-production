@@ -20,6 +20,7 @@ apenas indica onde procurar.
 
 | Tópico | Doc |
 |---|---|
+| Papel do Devin, handoff e continuidade via Claude | `docs/agents/collaboration.md` |
 | Árvore de arquivos, entrypoint, banco | `docs/agents/architecture.md` |
 | Pontuação, cartão, seguros, super conta, pipeline, metas | `docs/agents/business-rules.md` |
 | Supabase views/RPCs, paginação, cache `_atual`/`_historico`, TTLs | `docs/agents/data-layer.md` |
@@ -29,7 +30,11 @@ apenas indica onde procurar.
 
 ## Fluxo recomendado
 
-1. Leia `AGENTS.md` e `docs/agents/README.md` (primeira sessão).
-2. Para a tarefa: abra o doc específico da tabela acima.
-3. Se a tarefa introduz padrão novo, documente em `docs/agents/patterns/`.
-4. Ao fechar tarefa com decisão não óbvia, registre em `docs/agents/progress/`.
+1. Leia `AGENTS.md`, `docs/agents/README.md` e
+   `docs/agents/collaboration.md` (primeira sessão).
+2. Confirme que a subtarefa pertence ao canal Devin e não sobrepõe arquivos
+   em edição por Claude/subagentes.
+3. Para a tarefa: abra o doc específico da tabela acima.
+4. Se detectar outro domínio, pare e devolva o handoff para Claude.
+5. Se a tarefa introduz padrão novo, documente em `docs/agents/patterns/`.
+6. Ao fechar tarefa com decisão não óbvia, registre em `docs/agents/progress/`.

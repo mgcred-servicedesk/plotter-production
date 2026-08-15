@@ -17,6 +17,7 @@ negócio, padrões, convenções) mora em [`docs/agents/`](docs/agents/README.md
    - Componentes de UI (sac, exibir_tabela, tab renderer): [`docs/agents/ui-components.md`](docs/agents/ui-components.md)
 
 Coordenação (quando a tarefa for não trivial):
+   - Colaboração Codex/Claude/Devin: [`docs/agents/collaboration.md`](docs/agents/collaboration.md)
    - Orquestração: [`docs/agents/orchestrator.md`](docs/agents/orchestrator.md)
    - Catálogo de subagentes: [`docs/agents/subagents/README.md`](docs/agents/subagents/README.md)
    - Protocolo RPI obrigatório: [`docs/agents/rpi-workflow.md`](docs/agents/rpi-workflow.md)
@@ -24,6 +25,14 @@ Coordenação (quando a tarefa for não trivial):
 ---
 
 ## Orquestração e delegação a subagentes
+
+Claude é o canal principal de execução e orquestração. Devin pode receber
+subtarefas de dashboard em paralelo quando estiver trabalhando; Codex revisa
+as decisões duradouras e cross-domínio. Se Devin estiver ausente, **não
+aguarde nem bloqueie a tarefa**: decomponha o escopo e acione os subagentes
+do catálogo (`ui-dash`, `testing`, `biz-rules`, `data-layer`, `dba`) conforme
+cada domínio. O contrato completo de disponibilidade, handoff e revisão está
+em [`docs/agents/collaboration.md`](docs/agents/collaboration.md).
 
 Tarefas **não triviais** podem ser decompostas e delegadas a subagentes
 especializados. Protocolo canônico (tool-neutral) em
