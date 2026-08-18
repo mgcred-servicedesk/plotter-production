@@ -20,6 +20,7 @@ side-effects em funcoes cacheadas.
 
 import logging
 import uuid
+import calendar
 from datetime import datetime
 from typing import Callable, Dict, List, NamedTuple, Optional, Tuple
 
@@ -1513,17 +1514,23 @@ def carregar_supervisores(mes: int, ano: int) -> pd.DataFrame:
     em que a pessoa vendia como consultora, e uma saida da supervisao
     devolvia aos rankings os meses em que ela supervisionava.
 
-    Ancora (decidida em 2026-08-18): o papel vigente no 1o DIA da
-    competencia vale para o mes inteiro, entao promocao no meio do mes
-    so passa a excluir na competencia seguinte. Mesma regra da
-    ``obter_caderno_fechamento`` (migration 079) — producao e headcount
+    Ancora (revisada em 2026-08-18): o papel vigente no ULTIMO DIA da
+    competencia vale para o mes inteiro — quem fechou o mes responde por
+    ele. A regra anterior (1o dia) atribuia agosto/2026 a duas
+    supervisoras DESLIGADAS em 04/08, enquanto quem assumiu e fechou o
+    mes so entraria em setembro. Mesma regra da
+    ``obter_caderno_fechamento`` (migration 085) — producao e headcount
     nao podem discordar sobre quem era supervisor.
 
     REGIAO vem da regiao ATUAL da loja: o ledger nao guarda regiao de
     proposito (seria uma segunda fonte de verdade; a regiao
     point-in-time mora em ``loja_regiao_vigencia``).
     """
-    ancora = f"{ano:04d}-{mes:02d}-01"
+    # Ultimo dia da competencia. Janela meio-aberta [inicio, fim): quem
+    # encerra exatamente nesse dia nao o cobre, e o mes fica com o sucessor.
+    ancora = "{:04d}-{:02d}-{:02d}".format(
+        ano, mes, calendar.monthrange(ano, mes)[1]
+    )
     resp = (
         _sb()
         .table("supervisor_vigencia")

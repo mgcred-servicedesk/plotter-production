@@ -67,7 +67,10 @@ manualmente para os casos conhecidos.
 
 ## Decisões tomadas (usuário, nesta sessão)
 
-- **Âncora temporal = competência, 1º dia.** O papel vigente no dia 1º
+- **Âncora temporal = competência, ÚLTIMO dia** (revisado ainda em
+  2026-08-18 — ver "Revisão da âncora" abaixo). A escolha original está
+  registrada logo em seguida, com o motivo da troca.
+- ~~**Âncora temporal = competência, 1º dia.**~~ O papel vigente no dia 1º
   vale para o mês inteiro. Promovido em 20/jul → julho fecha como
   consultor (produção conta, entra no denominador), agosto é o 1º mês como
   supervisor. Uma regra só para produção e headcount — descartada a data
@@ -82,6 +85,32 @@ manualmente para os casos conhecidos.
 - **Escopo = só vigência de supervisor.** Vigência do roster de
   consultores (admissão/desligamento) e modelo genérico de cargo ficam
   como track separado.
+
+## Revisão da âncora (mesma sessão)
+
+A âncora do 1º dia produzia um resultado indefensável em **08/2026**:
+LETICIA ALVARENGA GOMES FREITAS e PAMELA CRISTINA MOREIRA DE PAIVA, ambas
+**desligadas em 04/08**, apareciam como supervisoras do mês inteiro,
+enquanto quem assumiu e de fato fechou agosto (MARIANA em BELFORD ROXO SÃO
+JOSÉ, DJANE em RAMOS, EVILLYN em COPACABANA, RAIANE em COPACABANA NOVA) só
+entraria em setembro. Usuário confirmou a troca para o **fim da
+competência**: quem fechou o mês responde por ele.
+
+Ponto que tornou a troca barata: **não exige mentir nas datas**. As
+vigências seguem gravadas com a data real do evento (RAIANE 18/08, cascata
+04/08); muda só a pergunta que o leitor faz ao ledger. Por isso a âncora é
+reversível — trocar de volta é reescrever uma CTE, não o histórico.
+
+Migration **085** (v1.6) + `carregar_supervisores(mes, ano)`. Efeito
+medido: **07/2026 é a única competência fechada que muda** (ERICA vira
+supervisora, EMANUELE deixa de ser → `sup` 43→44, `ativos` 118→117);
+06/2026 e anteriores intocados; 08/2026 nasce com a regra nova. Exige
+**republicar 07/2026** (`fn_materializar_caderno(7, 2026)`), já que o
+Caderno é congelado.
+
+Convenção de borda: janela meio-aberta `[início, fim)` — quem encerra
+exatamente no último dia do mês não cobre esse dia, e o mês fica com o
+sucessor.
 
 ## Plano aprovado
 
@@ -345,7 +374,18 @@ nenhum resultado — inferi-la do cadastro conflitante seria fabricar dado.
       publicado **congelado** (republicar é ato deliberado — recomendado, é
       o que "fechamento" significa) ou **sincronizado** (gancho pós-import
       no angry-man). Só a vigência do roster faz os dois coincidirem.
-- [x] **RAIANE ALMEIDA SOUZA → migration 083 escrita.** Recém-contratada,
+- [x] **RAIANE ALMEIDA SOUZA → 083 escrita e APLICADA em 2026-08-18 19:29.**
+      Primeira tentativa falhou silenciosamente: foi executada **antes da
+      082**, quando `fn_aplicar_mudanca_supervisor` ainda era a versão da
+      077 e levantava `acao invalida: CORRIGIR_INICIO`. Detectado pelo
+      `updated_at` da linha, idêntico ao `created_at` do backfill.
+      Verificado depois: COPACABANA NOVA com um supervisor por vez (DJANE
+      até 04/08, vão de 14 dias, RAIANE de 18/08), invariante 47 = 47,
+      **40 pisos presumidos** restantes.
+      **Comentário desatualizado na 083** (aplicada, não editar): o
+      cabeçalho afirma que "agosto fecha sem ela como supervisora e
+      setembro é o primeiro mês". Isso valia pela âncora do 1º dia; com a
+      085, agosto **é** o primeiro mês dela — que é o resultado pedido. Recém-contratada,
       assumiu HELP COPACABANA NOVA em **18/08/2026**; o ledger a registrava
       desde `2020-01-01`. Primeiro uso real de `CORRIGIR_INICIO` (082) —
       `INICIO` seria no-op, já que ela tem linha aberta vinda do backfill.
@@ -357,6 +397,39 @@ nenhum resultado — inferi-la do cadastro conflitante seria fabricar dado.
       só para supervisores, o efeito de `consultores` não ter vigência
       (todo recém-contratado infla o headcount de meses passados), ao custo
       de gravar ficção no ledger.
+- [x] **Caderno = CONGELADO** (decidido em 2026-08-18). Mês fechado é fato
+      congelado na publicação; republicar é ato deliberado. bereshit
+      ajustado: lê `obter_caderno_publicado`, seletor lista só
+      `caderno_fechamento_snapshot`, NULL vira "competência não publicada"
+      (distinto de contrato inválido). `tsc` limpo, 38 testes verdes.
+      `database/CONTRATO.md` do bereshit atualizado — inclusive corrigindo
+      que a **075 manteve `v1.4`** no COMMENT (adicionou
+      `headcountDiagnostics` sem bumpar); v1.5 é a 079.
+- [x] **Cadeia de movimentações → migration 084 escrita.** Todas as três
+      com data efetiva **04/08/2026**, e usuário confirmou que MARIANA e
+      DJANE foram **transferidas** (já eram supervisoras), não promovidas.
+      Isso revelou que o backfill da 076 errou não só a data delas: errou a
+      **loja** do período histórico, porque colocou cada uma na loja ATUAL
+      desde 2020-01-01. Por isso `REMANEJAMENTO` não serve — fecharia uma
+      janela afirmando que a MARIANA supervisionou BELFORD ROXO SÃO JOSÉ
+      de 2020 a 2026, quando ela estava em RAMOS. A 084 **insere** a janela
+      de origem (loja certa) e só então move o início da janela aberta com
+      `CORRIGIR_INICIO`. Sem efeito no Caderno: as duas seguem supervisoras
+      em todo mês passado (mudou a loja, não o papel) e headcount exclui
+      supervisor independentemente da loja. Histórico original: LETICIA ALVARENGA GOMES
+      FREITAS (supervisora de HELP BELFORD ROXO SÃO JOSÉ) foi desligada →
+      MARIANA CARLA LAMIN DA SILVA saiu de HELP RAMOS para cobri-la →
+      DJANE MARIA PEREIRA DOS SANTOS saiu de HELP COPACABANA NOVA para
+      cobrir RAMOS → RAIANE assumiu COPACABANA NOVA (083). Estado atual:
+      LETICIA **sem linha no ledger** (mais um caso EMANUELE; 8 contratos
+      / R$ 838,83), MARIANA e DJANE com piso `2020-01-01` na loja NOVA —
+      a MARIANA produziu em HELP RAMOS até 07/2026 e o ledger a coloca em
+      BELFORD ROXO SÃO JOSÉ desde 2020.
+      Esta cascata é exatamente o que a sucessão da 082 resolveria sozinha
+      se a planilha já tivesse a coluna DESDE.
+- [ ] Publicar/republicar competência pelo bereshit: `fn_materializar_caderno`
+      já é chamável com a service role que ele usa no servidor — falta a
+      ação de UI. Hoje publica-se pelo SQL Editor.
 - [ ] Verificar se HELP COPACABANA NOVA teve supervisor **antes** da
       RAIANE: o ledger só tem a linha dela, mas a loja produz desde pelo
       menos 05/2026. Um antecessor perdido seria outro caso EMANUELE
