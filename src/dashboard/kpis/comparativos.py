@@ -26,6 +26,7 @@ def calcular_evolucao_por_entidade(
     entidade: str = "LOJA",
     df_supervisores: Optional[pd.DataFrame] = None,
     entidades_excluir: Optional[Set[str]] = None,
+    df_supervisores_ant: Optional[pd.DataFrame] = None,
 ) -> pd.DataFrame:
     """Compara VALOR/DU por entidade (loja ou consultor) entre dois períodos.
 
@@ -37,8 +38,14 @@ def calcular_evolucao_por_entidade(
 
     No nível CONSULTOR exclui supervisores e lojas de backoffice (Vai e
     Vem) dos dois períodos, mesma regra de
-    ``kpis/rankings.py::_preparar``. O mesmo ``df_supervisores`` recorta
-    os dois períodos (o chamador escolhe qual cadastro usar). No nível
+    ``kpis/rankings.py::_preparar``. Cada período usa a lista de
+    supervisores VIGENTE nele: ``df_supervisores`` recorta o atual e
+    ``df_supervisores_ant`` o de comparação. Omitir o segundo faz o
+    primeiro valer para os dois — comportamento anterior, correto só
+    enquanto ninguém muda de papel entre os períodos comparados; quem
+    foi promovido no intervalo sumiria do período em que ainda era
+    consultor. Os frames vêm de ``carregar_supervisores(mes, ano)``,
+    que já resolve o papel por competência. No nível
     LOJA não há exclusão extra: a exclusão de Vai e Vem é do eixo
     consultor — "a loja em si segue no ranking/zerados de lojas"
     (business-rules.md), paridade com ``calcular_ranking_lojas``. Não
@@ -70,7 +77,19 @@ def calcular_evolucao_por_entidade(
 
     label = "Loja" if entidade == "LOJA" else "Consultor"
 
-    def _serie(df: Optional[pd.DataFrame], du_dec: int) -> pd.Series:
+    # Fallback explicito: sem a lista do periodo de comparacao, a atual
+    # vale para os dois (comportamento anterior a 2026-08-18).
+    df_sup_ant = (
+        df_supervisores_ant
+        if df_supervisores_ant is not None
+        else df_supervisores
+    )
+
+    def _serie(
+        df: Optional[pd.DataFrame],
+        du_dec: int,
+        df_sup: Optional[pd.DataFrame],
+    ) -> pd.Series:
         if (
             df is None
             or df.empty
@@ -81,7 +100,7 @@ def calcular_evolucao_por_entidade(
         df_v = df[df["VALOR"] > 0]
         if entidade == "CONSULTOR":
             df_v = excluir_lojas_backoffice(
-                excluir_supervisores(df_v, df_supervisores)
+                excluir_supervisores(df_v, df_sup)
             )
         if df_v.empty:
             return pd.Series(dtype=float)
@@ -93,8 +112,8 @@ def calcular_evolucao_por_entidade(
         du_safe = max(du_dec, 1)
         return df_v.groupby(entidade)["VALOR"].sum() / du_safe
 
-    serie_atual = _serie(df_atual, du_dec_atual)
-    serie_ant = _serie(df_ant, du_dec_ant)
+    serie_atual = _serie(df_atual, du_dec_atual, df_supervisores)
+    serie_ant = _serie(df_ant, du_dec_ant, df_sup_ant)
 
     todas_entidades = sorted(set(serie_atual.index) | set(serie_ant.index))
     if entidades_excluir:

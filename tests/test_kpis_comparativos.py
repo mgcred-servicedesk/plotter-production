@@ -11,6 +11,9 @@ Regras de negócio cobertas aqui:
 - eixo consultor exclui supervisores e lojas de backoffice (Vai e Vem)
   nos DOIS períodos (``docs/agents/business-rules.md`` — "Exclusão de
   supervisores" e "Lojas de backoffice");
+- cada período usa a lista de supervisores VIGENTE nele
+  (``df_supervisores_ant``): quem foi promovido no intervalo continua
+  contando no período em que ainda era consultor;
 - eixo loja NÃO aplica essa exclusão (a loja segue no ranking de lojas;
   produção de supervisor soma no total da loja — "o eixo decide");
 - sem base de comparação, ``% Evolução`` é nulo, nunca ``0``.
@@ -238,6 +241,63 @@ class TestEvolucaoPorConsultor:
         consultores = set(res["Consultor"])
         assert "Chefe" in consultores
         assert "Amos" not in consultores
+
+
+    def test_promovido_conta_no_periodo_em_que_era_consultor(
+        self, df_evo_atual, df_evo_ant,
+    ):
+        """Promoção no intervalo não apaga o passado de consultor.
+
+        João virou supervisor entre os dois períodos. Com a lista
+        vigente de cada período, a produção dele no período anterior
+        continua contando — ele sai como ``descontinuada``, não some.
+        """
+        res = calcular_evolucao_por_entidade(
+            df_evo_atual, 10, df_evo_ant, 10, entidade="CONSULTOR",
+            df_supervisores=pd.DataFrame({"SUPERVISOR": ["Chefe", "João"]}),
+            df_supervisores_ant=pd.DataFrame({"SUPERVISOR": ["Chefe"]}),
+        )
+        by = _por_nome(res, "Consultor")
+        assert "João" in by
+        assert by["João"]["Status"] == "descontinuada"
+        assert by["João"]["Mês Anterior"] == pytest.approx(100.0)
+        assert by["João"]["Mês Atual"] == pytest.approx(0.0)
+
+    def test_sem_lista_do_periodo_anterior_usa_a_atual(
+        self, df_evo_atual, df_evo_ant,
+    ):
+        """Fallback: omitir ``df_supervisores_ant`` mantém o antigo.
+
+        A lista atual vale para os dois períodos — o promovido some dos
+        dois lados, apagando a produção que ele fez como consultor.
+        Documenta o comportamento anterior a 2026-08-18, preservado para
+        chamador que não tenha o cadastro do período de comparação.
+        """
+        res = calcular_evolucao_por_entidade(
+            df_evo_atual, 10, df_evo_ant, 10, entidade="CONSULTOR",
+            df_supervisores=pd.DataFrame({"SUPERVISOR": ["Chefe", "João"]}),
+        )
+        assert "João" not in set(res["Consultor"])
+
+    def test_saida_da_supervisao_nao_devolve_o_passado(
+        self, df_evo_atual, df_evo_ant,
+    ):
+        """Direção oposta: quem deixou a supervisão entra só no atual.
+
+        O Chefe deixou de ser supervisor entre os dois períodos. Os
+        meses em que ele supervisionava seguem excluídos (lista do
+        período anterior), e a produção nova conta — ``nova``, não uma
+        falsa alta contra base inflada.
+        """
+        res = calcular_evolucao_por_entidade(
+            df_evo_atual, 10, df_evo_ant, 10, entidade="CONSULTOR",
+            df_supervisores=pd.DataFrame({"SUPERVISOR": []}, dtype=object),
+            df_supervisores_ant=pd.DataFrame({"SUPERVISOR": ["Chefe"]}),
+        )
+        by = _por_nome(res, "Consultor")
+        assert by["Chefe"]["Status"] == "nova"
+        assert by["Chefe"]["Mês Anterior"] == pytest.approx(0.0)
+        assert by["Chefe"]["Mês Atual"] == pytest.approx(50.0)
 
 
 @pytest.mark.unit

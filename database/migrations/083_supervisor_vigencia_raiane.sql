@@ -1,0 +1,85 @@
+-- =====================================================
+-- Migracao 083: corrige o piso presumido de RAIANE ALMEIDA SOUZA
+--
+-- Depende da 076 (tabela) e da 082 (acao CORRIGIR_INICIO).
+--
+-- Contexto: a 076 deu a TODO supervisor da foto uma linha aberta com
+-- piso 2020-01-01 — a decisao "congelar", que reproduz exatamente o
+-- numero publicado de entao mas registra como fato uma data que ninguem
+-- confirmou. A RAIANE e o segundo caso (depois de ALCANTARA CARREFOUR,
+-- na 081) em que esse piso se prova falso: usuario informou em
+-- 2026-08-18 que ela e recem-contratada e assumiu a supervisao de HELP
+-- COPACABANA NOVA em 18/08/2026.
+--
+-- Por que CORRIGIR_INICIO e nao INICIO: ela JA tem linha aberta (veio do
+-- backfill), e 'INICIO' e no-op por idempotencia nesse caso. Foi
+-- exatamente por isso que a acao existe — a 078 teve de recorrer a
+-- UPDATEs manuais antes dela.
+--
+-- Efeito no numero publicado: NENHUM, hoje. Ela nao esta em
+-- `consultores` (nao entra em headcount) e nao tem contrato (nada a
+-- excluir da producao). A correcao evita o erro FUTURO: sem ela, no
+-- instante em que o RH incluir a RAIANE no roster ela passaria a contar
+-- como supervisora em TODA competencia passada, inclusive meses
+-- anteriores a propria contratacao.
+--
+-- Ancora do dia 1o: com inicio em 18/08/2026, AGOSTO fecha sem ela como
+-- supervisora e SETEMBRO e o primeiro mes em que ela e excluida.
+--
+-- Usuario confirmou em 2026-08-18: ela NUNCA foi consultora, entra
+-- direto como supervisora. Nao ha fase de consultora a preservar, e por
+-- isso a data de contratacao e a propria data de inicio da vigencia.
+-- Descartado retroagir o piso: registraria que ela supervisionava antes
+-- de existir na empresa — isso nao e "registrar como supervisora", e
+-- gravar ficcao no ledger para compensar outra lacuna.
+--
+-- A lacuna em questao, e o unico efeito colateral que sobra: `consultores`
+-- nao tem vigencia. Quando o RH incluir a RAIANE no roster, ela sera
+-- contada no headcount de competencias ANTERIORES a contratacao — como
+-- consultora ativa, ja que a vigencia de supervisora dela so comeca em
+-- 08/2026. Isso NAO e especifico dela: vale para todo recem-contratado,
+-- supervisor ou nao. Retroagir o piso mascararia o sintoma apenas para
+-- supervisores, ao custo de um ledger mentiroso. A correcao de verdade e
+-- a vigencia do roster, fora desta serie.
+--
+-- Executar no Supabase SQL Editor.
+-- =====================================================
+
+SELECT public.fn_aplicar_mudanca_supervisor(
+    'RAIANE ALMEIDA SOUZA', 'HELP COPACABANA NOVA',
+    DATE '2026-08-18', 'CORRIGIR_INICIO');
+
+
+-- ===========================================
+-- Validacao (apos executar)
+-- ===========================================
+-- 1) Vigencia dela com a data real:
+--
+--    SELECT v.nome, v.vigencia_inicio, v.vigencia_fim
+--    FROM supervisor_vigencia v
+--    WHERE v.nome_normalizado = 'RAIANE ALMEIDA SOUZA';
+--    -- Esperado: 2026-08-18 -> aberta (1 linha).
+--
+-- 2) Idempotencia — reexecutar devolve no-op, nao erro:
+--
+--    SELECT fn_aplicar_mudanca_supervisor(
+--        'RAIANE ALMEIDA SOUZA', 'HELP COPACABANA NOVA',
+--        DATE '2026-08-18', 'CORRIGIR_INICIO');
+--    -- Esperado: 'no-op: vigencia de ... ja comeca em 2026-08-18'
+--
+-- 3) Invariante da 077 intacta (a acao nao cria nem remove supervisor):
+--
+--    SELECT
+--      (SELECT count(*) FROM supervisor_vigencia WHERE vigencia_fim IS NULL)
+--        AS abertas,
+--      (SELECT count(*) FROM supervisores) AS foto;
+--    -- Esperado: iguais (47).
+--
+-- 4) Quantos pisos presumidos ainda restam para auditar:
+--
+--    SELECT count(*) FROM supervisor_vigencia
+--    WHERE vigencia_fim IS NULL AND vigencia_inicio = DATE '2020-01-01';
+--    -- Esperado: 43 (eram 44; a RAIANE sai da lista).
+--    -- Cada um e uma data que ninguem confirmou. Dois dos primeiros
+--    -- tres olhados de perto (ALCANTARA, RAIANE) estavam errados.
+-- =====================================================

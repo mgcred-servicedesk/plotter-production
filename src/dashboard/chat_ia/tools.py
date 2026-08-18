@@ -103,15 +103,13 @@ def tool_comparar_entidades(contexto: ChatContext, entrada: dict) -> dict:
         limite = _LIMITE_PADRAO
 
     try:
-        # df_sup_cmp (cadastro de supervisores do periodo de comparacao)
-        # nao e usado: calcular_evolucao_por_entidade aceita um unico
-        # df_supervisores aplicado aos dois periodos — usamos o cadastro
-        # ATUAL (contexto.df_sup) para os dois, deliberadamente ("quem e
-        # supervisor hoje"). Rastrear quem era supervisor no periodo
-        # anterior exigiria um segundo parametro na funcao de comparacao;
-        # fora de escopo do MVP (impacto baixo: só afeta consultor que
-        # deixou de ser supervisor entre os dois períodos).
-        df_cmp, _df_sup_cmp, du_total_cmp = _carregar_periodo_comparacao(
+        # df_sup_cmp = supervisores VIGENTES no periodo de comparacao
+        # (consolidar_dados -> carregar_supervisores(mes, ano), que
+        # resolve o papel pelo ledger supervisor_vigencia). Vai para o
+        # parametro df_supervisores_ant: antes o cadastro ATUAL valia
+        # para os dois periodos, entao quem mudou de papel no intervalo
+        # aparecia no periodo errado.
+        df_cmp, df_sup_cmp, du_total_cmp = _carregar_periodo_comparacao(
             contexto, periodo_comparacao
         )
     except Exception:
@@ -126,6 +124,7 @@ def tool_comparar_entidades(contexto: ChatContext, entrada: dict) -> dict:
         du_dec_ant=du_total_cmp,
         entidade=coluna_entidade,
         df_supervisores=contexto.df_sup,
+        df_supervisores_ant=df_sup_cmp,
     )
     if resultado.empty:
         return {

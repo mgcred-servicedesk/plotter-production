@@ -1503,11 +1503,34 @@ def carregar_consultores_ativos() -> pd.DataFrame:
 
 
 @st.cache_data(ttl=1800)
-def carregar_supervisores() -> pd.DataFrame:
-    """Carrega supervisores com suas lojas e regioes. TTL 30min
-    (reflete uploads do angry-man sem esperar horas)."""
+def carregar_supervisores(mes: int, ano: int) -> pd.DataFrame:
+    """Supervisores vigentes NA COMPETENCIA (mes/ano). TTL 30min
+    (reflete uploads do angry-man sem esperar horas).
+
+    Le o ledger ``supervisor_vigencia`` (migration 076), nao a tabela
+    ``supervisores`` — esta e a foto do PRESENTE e, usada como filtro,
+    reescrevia a historia: uma promocao apagava retroativamente os meses
+    em que a pessoa vendia como consultora, e uma saida da supervisao
+    devolvia aos rankings os meses em que ela supervisionava.
+
+    Ancora (decidida em 2026-08-18): o papel vigente no 1o DIA da
+    competencia vale para o mes inteiro, entao promocao no meio do mes
+    so passa a excluir na competencia seguinte. Mesma regra da
+    ``obter_caderno_fechamento`` (migration 079) — producao e headcount
+    nao podem discordar sobre quem era supervisor.
+
+    REGIAO vem da regiao ATUAL da loja: o ledger nao guarda regiao de
+    proposito (seria uma segunda fonte de verdade; a regiao
+    point-in-time mora em ``loja_regiao_vigencia``).
+    """
+    ancora = f"{ano:04d}-{mes:02d}-01"
     resp = (
-        _sb().table("supervisores").select("nome, lojas(nome), regioes(nome)").execute()
+        _sb()
+        .table("supervisor_vigencia")
+        .select("nome, lojas(nome, regioes(nome))")
+        .lte("vigencia_inicio", ancora)
+        .or_(f"vigencia_fim.is.null,vigencia_fim.gt.{ancora}")
+        .execute()
     )
 
     if not resp.data:
@@ -1516,7 +1539,7 @@ def carregar_supervisores() -> pd.DataFrame:
     rows = []
     for s in resp.data:
         loja = s.get("lojas") or {}
-        regiao = s.get("regioes") or {}
+        regiao = loja.get("regioes") or {}
         rows.append(
             {
                 "SUPERVISOR": s.get("nome", ""),
@@ -1593,7 +1616,7 @@ def _executar_consolidacao(
     df = carregar_contratos_pagos(mes, ano)
     df_pontos = carregar_pontuacao_efetiva(mes, ano)
     df_metas = carregar_metas(mes, ano)
-    df_supervisores = carregar_supervisores()
+    df_supervisores = carregar_supervisores(mes, ano)
 
     if df.empty:
         return df, df_metas, df_supervisores, None
@@ -2582,7 +2605,7 @@ def _por_consultor_acelerador(
         else pd.DataFrame(columns=["consultor", "efetivadas"])
     )
 
-    df_sup = carregar_supervisores()
+    df_sup = carregar_supervisores(mes, ano)
     sup_keys = (
         set(_norm_texto(df_sup["SUPERVISOR"]))
         if "SUPERVISOR" in df_sup.columns
