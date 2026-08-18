@@ -350,12 +350,6 @@ def aplicar_tema() -> None:
                         :root, body {{ background:transparent!important; color:${{tc}}!important }}
                         .ant-divider {{ border-color:${{tc}}20!important }}
                         .ant-divider-inner-text {{ background:transparent!important; color:${{tc}}!important }}
-                        .ant-tabs-tab-btn {{ color:${{tc}}90!important }}
-                        .ant-tabs-tab-active .ant-tabs-tab-btn {{ color:${{pc}}!important }}
-                        .ant-tabs-ink-bar {{ background:${{pc}}!important }}
-                        .ant-tabs-nav::before {{ border-color:${{tc}}15!important }}
-                        .ant-tabs-card .ant-tabs-tab {{ background:transparent!important; border-color:${{tc}}15!important }}
-                        .ant-tabs-card .ant-tabs-tab-active {{ background:${{sb}}!important; border-color:${{pc}}!important }}
                         .ant-segmented {{ background:${{tc}}10!important }}
                         .ant-segmented-item-label {{ color:${{tc}}80!important }}
                         .ant-segmented-item-selected .ant-segmented-item-label {{ color:${{pc}}!important }}

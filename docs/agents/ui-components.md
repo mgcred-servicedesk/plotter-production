@@ -8,6 +8,32 @@ Biblioteca externa (não faz parte do Streamlit padrão). Import:
 import streamlit_antd_components as sac
 ```
 
+### ⚠️ Onde se estiliza um componente `sac` — e onde **não**
+
+O `sac` é custom component (`components.declare_component`), então cada
+instância vive **dentro de um iframe**. Duas consequências que não são
+óbvias e que já custaram código morto no projeto:
+
+1. **Seletor `.ant-*` em `assets/dashboard_style.css` não faz nada.** CSS
+   do documento pai não atravessa o iframe. Não falha, não avisa: só não
+   aplica.
+2. **`var(--mg-*)` também não atravessa.** Custom properties são
+   herdadas pela árvore do documento, e o iframe é outro documento — as
+   vars estão no `:root` do pai. Mesmo que o seletor casasse, o valor
+   seria irresolvível.
+
+**O único caminho que funciona** é a injeção via JS em
+`ui/theme.py`, que alcança `iframe.contentDocument` e escreve um
+`<style id="mgcred-theme">` dentro de cada iframe. É por isso que aquele
+bloco **hardcoda hex literal** (`tc = isDark ? '#F5F4F2' : '#1F2937'`)
+em vez de usar as vars do design system — não é descuido, é a
+consequência (2) acima.
+
+Em 2026-08-18 o stylesheet do pai foi zerado de regras `.ant-*`: eram ~85
+linhas que nunca aplicaram (tabs, divider, segmented). Se você precisa
+mudar a aparência de um `sac.divider` ou `sac.segmented`, mexa em
+`ui/theme.py`, não no stylesheet.
+
 ### Divider — separar seções lógicas
 
 Usar entre **toda** seção lógica. Nunca empilhar grupos de KPI sem divider.
@@ -19,31 +45,26 @@ sac.divider(label="Analise de Produtos", icon="bar-chart-line", align="left", co
 - `color`: `"blue"` (primário), `"gray"` (secundário/tabela), `"green"`, `"orange"`.
 - `icon`: Bootstrap Icons (`bar-chart-line`, `box`, `geo-alt`, `trophy`, `heart-pulse`, `shop`, `people`, `table`, …).
 
-### Tabs — sub-navegação dentro de uma aba
+### Tabs — ⛔ `sac.tabs` não é usado em lugar nenhum
 
-```python
-tab = sac.tabs(
-    items=[
-        sac.TabsItem(label="Lojas",       icon="shop"),
-        sac.TabsItem(label="Consultores", icon="people"),
-    ],
-    align="start",
-    variant="outline",
-    use_container_width=True,
-)
-```
+🚫 **Não use `sac.tabs`. Nenhuma navegação do projeto usa — nem
+primária, nem sub-navegação.** O `sac` roda dentro de um iframe e o CSS
+empacotado na lib tem `.ant-tabs-nav-more{display:none}` — o botão de
+overflow do antd está escondido, então as abas que não cabem na largura
+ficam **inacessíveis** (não apenas cortadas). CSS do documento pai não
+atravessa o iframe, logo **não há correção possível do lado do app**.
 
-⚠️ **Não usar `sac.tabs` na navegação primária.** O `sac` roda dentro de
-um iframe e o CSS empacotado na lib tem
-`.ant-tabs-nav-more{display:none}` — o botão de overflow do antd está
-escondido, então as abas que não cabem na largura ficam **inacessíveis**
-(não apenas cortadas). CSS do documento pai não atravessa o iframe, logo
-não há correção possível do lado do app. Use `sac.tabs` apenas onde o
-número de itens é pequeno e estável.
+O critério antigo ("ok onde o número de itens é pequeno e estável") foi
+abandonado em 2026-08-18: ele não segura. Analíticos tinha 6 itens
+"estáveis" até "Cobrança Consignável" entrar; com 7 rótulos longos,
+"Distribuição de Produtos" — o último da lista — sumiu em telas menores.
+Item novo é justamente o que ninguém prevê, e o modo de falha é silencioso
+(não quebra, não loga: a aba só deixa de existir para quem tem tela
+pequena). Toda navegação usa `st.pills`.
 
-### Navegação primária — `st.pills`
+### Navegação — `st.pills` (primária e sub)
 
-A nav principal do `app.py` usa `st.pills`, não `sac.tabs`:
+A nav principal do `app.py` usa `st.pills`:
 
 ```python
 # Fonte de verdade única das abas: permissao + rotulo + icone + render.
@@ -102,6 +123,47 @@ if _render_aba is not None:              # registro nao renderiza nada
   as pills: `justify-content: center` + `margin-inline: auto` **nesse
   filho**. Não use `width="stretch"` para isso — o wrapper de cada botão
   vira `width: 100%` e cada pill cai numa linha.
+
+#### Sub-navegação — mesmo `st.pills`, um degrau menor
+
+Sub-navs seguem o mesmo componente, com três diferenças. Call sites:
+`tabs/analiticos.py` (sub-nav de Analíticos + as sub-tabs internas de
+Reconquista) e `tabs/rankings.py`.
+
+```python
+# Mapa rótulo → Material Symbol, constante de módulo.
+_ICONES_ANALITICOS = {"Propostas Pagas": "check_circle", ...}
+
+opcoes = ["Propostas Pagas", "Em Analise", ...]
+if not _is_consultor:                       # gate de perfil = a lista
+    opcoes.append("Distribuicao de Produtos")
+
+menu = st.pills(
+    "Sub-navegacao de Analiticos",
+    options=opcoes,
+    default=opcoes[0],
+    required=True,
+    format_func=lambda r: f":material/{_ICONES_ANALITICOS[r]}: {r}",
+    label_visibility="collapsed",
+    key="nav_analiticos",               # `nav_*` → CSS compartilhado
+)
+```
+
+1. **Chave `nav_*`.** O CSS é um bloco só em `dashboard_style.css`
+   listando `.st-key-nav_analiticos`, `.st-key-nav_rankings` e
+   `.st-key-nav_reconquista`. Sub-nav nova = nova chave **e** a chave
+   acrescentada nesse bloco (o seletor é explícito, não um prefixo:
+   `.st-key-nav_*` não existe em CSS).
+2. **Alinhada à esquerda**, ao contrário da primária (centralizada) —
+   por isso o bloco de sub-nav **não** tem `justify-content: center` nem
+   `margin-inline: auto`. É o que preserva a hierarquia visual.
+3. **Tipografia um degrau menor** (0.8rem vs 0.85rem; 0.74rem abaixo de
+   768px).
+
+O gate de perfil vive na **lista de `options`**, como na primária: o
+`st.pills` descarta valor de `session_state` fora de `options` e cai no
+`default`, então um consultor nunca fica preso numa sub-aba que deixou de
+existir para ele.
 
 ### Segmented — sub-seleção dentro de uma aba
 

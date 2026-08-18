@@ -51,6 +51,19 @@ _HighlightFn = Callable[[pd.DataFrame], pd.Series]
 # possa preservar a posicao real das linhas cortadas.
 _SEM_LIMITE = 10**9
 
+# Icones da sub-navegacao. Material Symbols (`:material/<nome>:`), nao
+# Bootstrap: o st.pills renderiza markdown no rotulo. Nomes validos em
+# `streamlit.material_icon_names.ALL_MATERIAL_ICONS`. `map` em Regioes
+# acompanha a aba principal homonima; `rocket_launch` em Por
+# Aceleradores acompanha a sub-aba Aceleradores de Analiticos.
+_ICONES_RANKINGS = {
+    "Lojas": "storefront",
+    "Consultores": "people",
+    "Regioes": "map",
+    "Por Produto": "inventory_2",
+    "Por Aceleradores": "rocket_launch",
+}
+
 
 def _divider(label: str, icon: str, color: str) -> None:
     sac.divider(label=label, icon=icon, align="left", color=color)
@@ -563,19 +576,29 @@ def render_tab_rankings(
             df_lojas_univ = None
             df_cons_univ = None
 
-    tab_items = []
+    # st.pills (nao sac.tabs) pelo mesmo motivo da nav principal em
+    # app.py: o sac roda em iframe e o CSS da lib tem
+    # `.ant-tabs-nav-more{display:none}`, entao o que nao cabe na largura
+    # fica INACESSIVEL. Sao ate 5 itens aqui — rotulos mais curtos que os
+    # de Analiticos, logo quebra numa resolucao mais baixa, mas o mesmo
+    # bug. O button group do st.pills quebra em linhas em vez de sumir.
+    opcoes = []
     if not _is_consultor:
-        tab_items.append(sac.TabsItem(label="Lojas", icon="shop"))
-    tab_items.append(sac.TabsItem(label="Consultores", icon="people"))
+        opcoes.append("Lojas")
+    opcoes.append("Consultores")
     if _ver_regioes:
-        tab_items.append(sac.TabsItem(label="Regioes", icon="geo-alt"))
-    tab_items.append(sac.TabsItem(label="Por Produto", icon="box-seam"))
-    tab_items.append(sac.TabsItem(label="Por Aceleradores", icon="lightning-charge"))
+        opcoes.append("Regioes")
+    opcoes.append("Por Produto")
+    opcoes.append("Por Aceleradores")
 
-    menu = sac.tabs(
-        items=tab_items,
-        align="start",
-        variant="outline",
+    menu = st.pills(
+        "Sub-navegacao de Rankings",
+        options=opcoes,
+        default=opcoes[0],
+        required=True,
+        format_func=lambda r: f":material/{_ICONES_RANKINGS[r]}: {r}",
+        label_visibility="collapsed",
+        key="nav_rankings",
     )
 
     if menu == "Lojas":

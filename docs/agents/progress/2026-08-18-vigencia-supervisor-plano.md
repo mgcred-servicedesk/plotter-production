@@ -362,6 +362,16 @@ nenhum resultado — inferi-la do cadastro conflitante seria fabricar dado.
       consertar uma vigência aberta com data errada, já que `INICIO` é
       no-op por idempotência (foi por isso que a 078 precisou de UPDATEs
       manuais).
+      **Comentário desatualizado na 082** (aplicada, não editar): o
+      cabeçalho justifica a coluna `DESDE` citando a âncora do 1º dia, que
+      a 085 substituiu. O raciocínio continua valendo com a âncora nova —
+      `current_date` acerta enquanto o import acontece no mês da mudança, e
+      erra quando atrasa para o mês seguinte —, só o nome da âncora mudou.
+      O comentário equivalente no angry-man foi corrigido no código.
+- [ ] **Template da planilha**: `angry-man/public/templates/Supervisores.xlsx`
+      também precisa da coluna `DESDE`. Sem isso quem baixar o modelo segue
+      produzindo planilha sem a coluna, e o import cai em `current_date` em
+      silêncio.
 - [ ] **Correção da 080 (não editar a migration, já aplicada):** o
       comentário dela manda re-materializar após correção retroativa no
       ledger. Está **incompleto** — o gatilho real é qualquer alteração em

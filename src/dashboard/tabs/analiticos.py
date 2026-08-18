@@ -43,6 +43,28 @@ _exportar_csv = botao_exportar_csv
 _COLS_PRODUTO = [COL_PRODUTO_DETALHADO, "TIPO_PRODUTO", "SUBTIPO"]
 
 
+# Icones das sub-navegacoes. Sao Material Symbols (`:material/<nome>:`),
+# nao Bootstrap: o st.pills renderiza markdown no rotulo. Nomes validos
+# em `streamlit.material_icon_names.ALL_MATERIAL_ICONS`.
+# `rocket_launch` em Aceleradores (e nao `bolt`, a traducao literal do
+# antigo `lightning-charge`) porque `bolt` ja e o icone da aba principal
+# Pagamentos Online.
+_ICONES_ANALITICOS = {
+    "Propostas Pagas": "check_circle",
+    "Em Analise": "schedule",
+    "Cancelados": "cancel",
+    "Aceleradores": "rocket_launch",
+    "Reconquista": "autorenew",
+    "Cobranca Consignavel": "payments",
+    "Distribuicao de Produtos": "pie_chart",
+}
+
+_ICONES_RECONQUISTA = {
+    "Por Loja": "storefront",
+    "Detalhamento": "table_chart",
+}
+
+
 def _opcoes_coluna(df: pd.DataFrame, coluna: str) -> list:
     """Valores distintos de `coluna` para selectbox (sem nulo/vazio).
 
@@ -1002,14 +1024,18 @@ def _render_reconquista(reconquista: dict | None):
         )
         return
 
-    menu = sac.tabs(
-        items=[
-            sac.TabsItem(label="Por Loja", icon="shop"),
-            sac.TabsItem(label="Detalhamento", icon="table"),
-        ],
-        align="start",
-        variant="outline",
-        key="acel_reconquista_tabs",
+    # st.pills pelo mesmo motivo do sub-nav de Analiticos (ver
+    # render_tab_analiticos): sac.tabs esconde o que nao cabe. Aqui sao
+    # so dois itens curtos — migrado por uniformidade, ja que este e o
+    # terceiro nivel de navegacao e herda o mesmo estilo.
+    menu = st.pills(
+        "Sub-navegacao de Reconquista",
+        options=list(_ICONES_RECONQUISTA),
+        default="Por Loja",
+        required=True,
+        format_func=lambda r: f":material/{_ICONES_RECONQUISTA[r]}: {r}",
+        label_visibility="collapsed",
+        key="nav_reconquista",
     )
 
     if menu == "Por Loja":
@@ -1216,23 +1242,34 @@ def render_tab_analiticos(
 
     _is_consultor = perfil == "consultor"
 
-    tab_items = [
-        sac.TabsItem(label="Propostas Pagas", icon="check-circle"),
-        sac.TabsItem(label="Em Analise", icon="hourglass-split"),
-        sac.TabsItem(label="Cancelados", icon="x-circle"),
-        sac.TabsItem(label="Aceleradores", icon="lightning-charge"),
-        sac.TabsItem(label="Reconquista", icon="arrow-clockwise"),
-        sac.TabsItem(label="Cobranca Consignavel", icon="cash-coin"),
+    # Sub-navegacao em st.pills (nao sac.tabs) pelo mesmo motivo da nav
+    # principal em app.py: o sac roda em iframe e o CSS empacotado na lib
+    # tem `.ant-tabs-nav-more{display:none}`, entao as abas que nao cabem
+    # na largura ficam INACESSIVEIS, nao apenas cortadas — e CSS do
+    # documento pai nao atravessa o iframe. Com 7 itens de rotulo longo
+    # (a partir de "Cobranca Consignavel") isso passou a acontecer em
+    # telas menores, escondendo "Distribuicao de Produtos", o ultimo da
+    # lista. O button group do st.pills tem flex-wrap: quebra em linhas.
+    # `required=True` impede desselecionar e cair sem nenhuma sub-aba.
+    opcoes = [
+        "Propostas Pagas",
+        "Em Analise",
+        "Cancelados",
+        "Aceleradores",
+        "Reconquista",
+        "Cobranca Consignavel",
     ]
     if not _is_consultor:
-        tab_items.append(
-            sac.TabsItem(label="Distribuicao de Produtos", icon="pie-chart")
-        )
+        opcoes.append("Distribuicao de Produtos")
 
-    menu = sac.tabs(
-        items=tab_items,
-        align="start",
-        variant="outline",
+    menu = st.pills(
+        "Sub-navegacao de Analiticos",
+        options=opcoes,
+        default=opcoes[0],
+        required=True,
+        format_func=lambda r: f":material/{_ICONES_ANALITICOS[r]}: {r}",
+        label_visibility="collapsed",
+        key="nav_analiticos",
     )
 
     if menu == "Propostas Pagas":

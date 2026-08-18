@@ -614,87 +614,105 @@ table tbody tr:hover td {
     }
 }
 
-/* ── Ant Design: tabs (sac.tabs) ─────────────────── */
-.ant-tabs,
-.ant-tabs-nav,
-.ant-tabs-content,
-.ant-tabs-content-holder,
-.ant-tabs-tabpane {
-    background-color: transparent !important;
+/* ── Sub-navegacoes (st.pills) ───────────────────── */
+/*
+ * Mesma troca da nav principal, um nivel abaixo: Analiticos, Rankings e
+ * as sub-tabs de Reconquista sairam de sac.tabs porque o CSS da lib
+ * esconde o botao de overflow do antd (.ant-tabs-nav-more) e o que nao
+ * cabe fica inacessivel — o gatilho foi "Distribuicao de Produtos"
+ * sumindo em Analiticos depois que "Cobranca Consignavel" entrou.
+ *
+ * Diferencas para a nav principal, que mantem a hierarquia visual:
+ *   - alinhamento a esquerda (o sac.tabs daqui usava align="start"),
+ *     entao NAO ha justify-content:center nem margin-inline:auto;
+ *   - tipografia e padding um degrau menores.
+ * Um bloco so para as tres chaves: o estilo de sub-nav e um so.
+ */
+.st-key-nav_analiticos [data-testid="stButtonGroup"],
+.st-key-nav_rankings [data-testid="stButtonGroup"],
+.st-key-nav_reconquista [data-testid="stButtonGroup"] {
+    margin-bottom: var(--mg-space-md);
+}
+
+/*
+ * O flex container e o `> div` filho (Root do baseweb), nao o
+ * [data-testid="stButtonGroup"] — mesma pegadinha documentada na nav
+ * principal. flex-wrap ja vem do proprio Streamlit; aqui so ajustamos
+ * gap e liberamos a largura para as pills poderem quebrar.
+ */
+.st-key-nav_analiticos [data-testid="stButtonGroup"] > div,
+.st-key-nav_rankings [data-testid="stButtonGroup"] > div,
+.st-key-nav_reconquista [data-testid="stButtonGroup"] > div {
+    max-width: 100%;
+    gap: var(--mg-space-xs);
+}
+
+.st-key-nav_analiticos [data-testid="stBaseButton-pills"],
+.st-key-nav_analiticos [data-testid="stBaseButton-pillsActive"],
+.st-key-nav_rankings [data-testid="stBaseButton-pills"],
+.st-key-nav_rankings [data-testid="stBaseButton-pillsActive"],
+.st-key-nav_reconquista [data-testid="stBaseButton-pills"],
+.st-key-nav_reconquista [data-testid="stBaseButton-pillsActive"] {
+    border-radius: var(--mg-radius-sm);
+    font-weight: 600;
+    font-size: 0.8rem;
+    padding: 0.35rem 0.7rem;
+    border: 1px solid var(--mg-border);
+    background: var(--mg-surface);
+    transition:
+        background-color 0.18s ease,
+        color 0.18s ease,
+        border-color 0.18s ease;
+}
+
+.st-key-nav_analiticos [data-testid="stBaseButton-pills"],
+.st-key-nav_analiticos [data-testid="stBaseButton-pills"] p,
+.st-key-nav_rankings [data-testid="stBaseButton-pills"],
+.st-key-nav_rankings [data-testid="stBaseButton-pills"] p,
+.st-key-nav_reconquista [data-testid="stBaseButton-pills"],
+.st-key-nav_reconquista [data-testid="stBaseButton-pills"] p {
+    color: var(--mg-text-muted) !important;
+}
+
+.st-key-nav_analiticos [data-testid="stBaseButton-pills"]:hover,
+.st-key-nav_rankings [data-testid="stBaseButton-pills"]:hover,
+.st-key-nav_reconquista [data-testid="stBaseButton-pills"]:hover {
+    border-color: var(--mg-border-strong);
+}
+
+.st-key-nav_analiticos [data-testid="stBaseButton-pills"]:hover p,
+.st-key-nav_rankings [data-testid="stBaseButton-pills"]:hover p,
+.st-key-nav_reconquista [data-testid="stBaseButton-pills"]:hover p {
     color: var(--mg-text) !important;
 }
 
-.ant-tabs-tab {
-    color: var(--mg-text-secondary) !important;
-    background-color: transparent !important;
+.st-key-nav_analiticos [data-testid="stBaseButton-pillsActive"],
+.st-key-nav_rankings [data-testid="stBaseButton-pillsActive"],
+.st-key-nav_reconquista [data-testid="stBaseButton-pillsActive"] {
+    background: var(--mg-primary-soft);
+    border-color: var(--mg-primary);
 }
 
-.ant-tabs-tab:hover {
-    color: var(--mg-text) !important;
-}
-
-.ant-tabs-tab-active,
-.ant-tabs-tab-active .ant-tabs-tab-btn {
+.st-key-nav_analiticos [data-testid="stBaseButton-pillsActive"],
+.st-key-nav_analiticos [data-testid="stBaseButton-pillsActive"] p,
+.st-key-nav_rankings [data-testid="stBaseButton-pillsActive"],
+.st-key-nav_rankings [data-testid="stBaseButton-pillsActive"] p,
+.st-key-nav_reconquista [data-testid="stBaseButton-pillsActive"],
+.st-key-nav_reconquista [data-testid="stBaseButton-pillsActive"] p {
     color: var(--mg-primary) !important;
 }
 
-.ant-tabs-tab-btn {
-    color: inherit !important;
-}
-
-.ant-tabs-nav::before {
-    border-color: var(--mg-border) !important;
-}
-
-.ant-tabs-ink-bar {
-    background: var(--mg-primary) !important;
-}
-
-/* Outline variant */
-.ant-tabs-card > .ant-tabs-nav .ant-tabs-tab {
-    background-color: transparent !important;
-    border-color: var(--mg-border) !important;
-}
-
-.ant-tabs-card > .ant-tabs-nav .ant-tabs-tab-active {
-    background-color: var(--mg-secondary-bg) !important;
-    border-color: var(--mg-primary) !important;
-}
-
-/* ── Ant Design: dividers (sac.divider) ──────────── */
-.ant-divider,
-.ant-divider-horizontal {
-    color: var(--mg-text-secondary) !important;
-    border-color: var(--mg-border) !important;
-}
-
-.ant-divider-inner-text {
-    color: var(--mg-text-secondary) !important;
-    background-color: transparent !important;
-}
-
-/* ── Ant Design: segmented (sac.segmented) ───────── */
-.ant-segmented {
-    background-color: var(--mg-bg) !important;
-    color: var(--mg-text) !important;
-}
-
-.ant-segmented-item {
-    color: var(--mg-text-secondary) !important;
-}
-
-.ant-segmented-item:hover {
-    color: var(--mg-text) !important;
-}
-
-.ant-segmented-item-selected {
-    background-color: var(--mg-secondary-bg) !important;
-    color: var(--mg-primary) !important;
-    box-shadow: 0 1px 4px var(--mg-shadow) !important;
-}
-
-.ant-segmented-thumb {
-    background-color: var(--mg-secondary-bg) !important;
+/* Telas estreitas: mais itens por linha antes de quebrar */
+@media (max-width: 768px) {
+    .st-key-nav_analiticos [data-testid="stBaseButton-pills"],
+    .st-key-nav_analiticos [data-testid="stBaseButton-pillsActive"],
+    .st-key-nav_rankings [data-testid="stBaseButton-pills"],
+    .st-key-nav_rankings [data-testid="stBaseButton-pillsActive"],
+    .st-key-nav_reconquista [data-testid="stBaseButton-pills"],
+    .st-key-nav_reconquista [data-testid="stBaseButton-pillsActive"] {
+        font-size: 0.74rem;
+        padding: 0.3rem 0.55rem;
+    }
 }
 
 /* ── Alerts ──────────────────────────────── */
