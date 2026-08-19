@@ -29,6 +29,7 @@ from src.dashboard.kpis.produtos import (
     calcular_distribuicao_produtos,
     calcular_distribuicao_produtos_por_loja,
 )
+from src.dashboard.loaders import VIGENCIA_VIGENTE
 
 
 # Compat: alias local mantido — implementação canônica em
@@ -894,26 +895,89 @@ def _render_reconquista_por_loja(por_loja: pd.DataFrame) -> None:
     _exportar_csv(df_view, "reconquista_por_loja", "exp_rec_loja")
 
 
-def _render_reconquista_detalhamento(clientes: pd.DataFrame) -> None:
-    """Listagem analitica — 1 linha por cliente (co_adesao) + link."""
-    if clientes.empty:
-        st.warning("Sem clientes no escopo/mês atual.")
+def _render_reconquista_detalhamento(
+    clientes: pd.DataFrame,
+    apuracao_label: str,
+    ref_label: str,
+) -> None:
+    """Listagem analitica — 1 linha por cliente (co_adesao) + link.
+
+    Recebe TODAS as apuracoes ja marcadas pelo loader (`vigencia` e
+    `apuracao_ref`, derivadas de ref_ano/ref_mes + a defasagem de 1
+    mes) e abre no recorte vigente, como antes. Trocar de escopo e
+    filtro em pandas sobre o frame que ja veio — nao ha fetch novo.
+
+    As colunas de apuracao/vigencia aparecem nos DOIS escopos e vao no
+    CSV: a referencia nunca sai da linha, entao lista completa e recorte
+    do mes nunca se confundem.
+    """
+    if clientes is None or clientes.empty:
+        st.warning("Sem clientes no escopo atual.")
         return
 
-    # Filtros locais
-    c1, c2, c3, c4 = st.columns(4)
+    # Cobertura da base (mais antiga → mais recente): o rotulo do
+    # escopo precisa dizer o que "todas" significa nesta carga, ja que
+    # a tabela e truncada e realimentada a cada import.
+    rotulos_apuracao = (
+        clientes[["apuracao_key", "apuracao_ref"]]
+        .drop_duplicates()
+        .sort_values("apuracao_key", ascending=False)["apuracao_ref"]
+        .tolist()
+    )
+    cobertura = (
+        f"{rotulos_apuracao[-1]} a {rotulos_apuracao[0]}"
+        if len(rotulos_apuracao) > 1
+        else (rotulos_apuracao[0] if rotulos_apuracao else "—")
+    )
+
+    # Escopo em st.pills: dois estados exclusivos que se alternam o
+    # tempo todo. Chave FORA do padrao `nav_*` de proposito — isto e
+    # filtro de tabela, nao sub-navegacao, e nao deve herdar o CSS de
+    # sub-nav (assets/dashboard_style.css).
+    escopo = st.pills(
+        "Escopo do detalhamento",
+        options=["Vigente", "Todas"],
+        default="Vigente",
+        required=True,
+        format_func=lambda e: (
+            f":material/event_available: Vigente · {apuracao_label}"
+            if e == "Vigente"
+            else f":material/history: Todas as apurações · {cobertura}"
+        ),
+        label_visibility="collapsed",
+        key="rec_det_escopo",
+    )
+
+    todas = escopo == "Todas"
+    base = (
+        clientes if todas
+        else clientes[clientes["vigencia"] == VIGENCIA_VIGENTE]
+    )
+    if base.empty:
+        st.warning(
+            f"Sem leads na apuração vigente ({apuracao_label} · fim de "
+            f"relacionamento em {ref_label}). Troque o escopo para "
+            f"consultar as demais apurações."
+        )
+        return
+
+    # Filtros locais, sempre com as opcoes do escopo ativo — no escopo
+    # vigente listar loja/consultor do historico inteiro ofereceria
+    # combinacoes que filtram para nada.
+    colunas = st.columns(5 if todas else 4)
+    c1, c2, c3, c4 = colunas[:4]
 
     with c1:
         status_opts = ["Todos"] + (
-            sorted(clientes["status"].dropna().unique().tolist())
-            if "status" in clientes.columns else []
+            sorted(base["status"].dropna().unique().tolist())
+            if "status" in base.columns else []
         )
         filt_status = st.selectbox("Status", status_opts, key="rec_det_status")
 
     with c2:
         lojas_opts = (
-            sorted(clientes["loja"].dropna().unique().tolist())
-            if "loja" in clientes.columns else []
+            sorted(base["loja"].dropna().unique().tolist())
+            if "loja" in base.columns else []
         )
         filt_lojas = st.multiselect(
             "Loja", lojas_opts, key="rec_det_lojas",
@@ -922,21 +986,31 @@ def _render_reconquista_detalhamento(clientes: pd.DataFrame) -> None:
 
     with c3:
         cons_opts = ["Todos"] + (
-            sorted(clientes["consultor"].dropna().unique().tolist())
-            if "consultor" in clientes.columns else []
+            sorted(base["consultor"].dropna().unique().tolist())
+            if "consultor" in base.columns else []
         )
         filt_cons = st.selectbox("Consultor", cons_opts, key="rec_det_cons")
 
     with c4:
         eleg_opts = ["Todos"] + (
-            sorted(clientes["flag_elegibilidade"].dropna().unique().tolist())
-            if "flag_elegibilidade" in clientes.columns else []
+            sorted(base["flag_elegibilidade"].dropna().unique().tolist())
+            if "flag_elegibilidade" in base.columns else []
         )
         filt_eleg = st.selectbox(
             "Elegibilidade", eleg_opts, key="rec_det_eleg"
         )
 
-    df_f = clientes.copy()
+    # So no escopo completo: no vigente ha uma unica apuracao e o
+    # filtro seria inerte.
+    filt_apuracao = []
+    if todas:
+        with colunas[4]:
+            filt_apuracao = st.multiselect(
+                "Apuração", rotulos_apuracao, key="rec_det_apuracao",
+                placeholder="Todas",
+            )
+
+    df_f = base.copy()
     if filt_status != "Todos" and "status" in df_f.columns:
         df_f = df_f[df_f["status"] == filt_status]
     if filt_lojas and "loja" in df_f.columns:
@@ -945,14 +1019,24 @@ def _render_reconquista_detalhamento(clientes: pd.DataFrame) -> None:
         df_f = df_f[df_f["consultor"] == filt_cons]
     if filt_eleg != "Todos" and "flag_elegibilidade" in df_f.columns:
         df_f = df_f[df_f["flag_elegibilidade"] == filt_eleg]
+    if filt_apuracao:
+        df_f = df_f[df_f["apuracao_ref"].isin(filt_apuracao)]
+    if todas:
+        # Apuracao mais recente primeiro; dentro dela a ordem do fetch
+        # (co_adesao), para a lista nao "dancar" entre reruns.
+        df_f = df_f.sort_values(
+            ["apuracao_key", "co_adesao"], ascending=[False, True]
+        )
 
     st.caption(
-        f"{len(df_f):,} de {len(clientes):,} clientes (após filtros)."
-        .replace(",", ".")
+        f"{formatar_numero(len(df_f))} de {formatar_numero(len(base))} "
+        f"leads (após filtros) · **Vigente** = apuração "
+        f"{apuracao_label}, fim de relacionamento em {ref_label}."
     )
 
     cols = [
-        "co_adesao", "status", "flag_elegibilidade", "loja", "regiao",
+        "co_adesao", "apuracao_ref", "vigencia", "status",
+        "flag_elegibilidade", "loja", "regiao",
         "consultor", "subproduto",
         "dt_fim_relacionamento", "dt_macica", "dt_dna",
         "banco_origem", "banco_destino", "saldo_contabil", "dias_atraso",
@@ -961,6 +1045,8 @@ def _render_reconquista_detalhamento(clientes: pd.DataFrame) -> None:
     df_view = df_f[[c for c in cols if c in df_f.columns]].rename(
         columns={
             "co_adesao": "Cod ADE",
+            "apuracao_ref": "Apuração",
+            "vigencia": "Vigência",
             "status": "Status",
             "flag_elegibilidade": "Elegível",
             "loja": "Loja",
@@ -984,15 +1070,31 @@ def _render_reconquista_detalhamento(clientes: pd.DataFrame) -> None:
         df_view,
         colunas_moeda=["Saldo"],
         colunas_numero=["Dias Atraso"],
+        # Destaque so faz sentido quando ha mistura de apuracoes: no
+        # escopo vigente toda linha e vigente e o realce viraria ruido.
+        highlight_mask=(
+            (df_f["vigencia"] == VIGENCIA_VIGENTE) if todas else None
+        ),
+        paginacao=100,
+        key="rec_det_tabela",
     )
-    _exportar_csv(df_view, "reconquista_clientes", "exp_rec_clientes")
+    _exportar_csv(
+        df_view,
+        (
+            "reconquista_clientes_todas_apuracoes" if todas
+            else f"reconquista_clientes_{apuracao_label.replace('/', '-')}"
+        ),
+        "exp_rec_clientes",
+    )
 
 
 def _render_reconquista(reconquista: dict | None):
     """Sub-aba Reconquista (v2): apuração mensal por dt_fim_relacionamento.
 
-    Defasagem de 1 mes ja resolvida no loader. Foco em loja/regiao;
-    Detalhamento lista por cliente com o link de aceite.
+    Defasagem de 1 mes ja resolvida no loader. O bloco de KPIs e o Por
+    Loja seguem na apuracao VIGENTE (a apuracao da campanha e mensal);
+    so o Detalhamento navega o historico inteiro, com a apuracao de
+    cada lead marcada na linha.
     """
     if not reconquista:
         st.info("Sem dados de reconquista para este período.")
@@ -1001,10 +1103,14 @@ def _render_reconquista(reconquista: dict | None):
     totais = reconquista.get("totais") or {}
     ref_mes = reconquista.get("ref_mes")
     ref_ano = reconquista.get("ref_ano")
+    apur_mes = reconquista.get("apuracao_mes")
+    apur_ano = reconquista.get("apuracao_ano")
     por_loja = reconquista.get("por_loja", pd.DataFrame())
     clientes = reconquista.get("clientes", pd.DataFrame())
+    clientes_todos = reconquista.get("clientes_todos", pd.DataFrame())
 
     ref_label = f"{ref_mes:02d}/{ref_ano}" if ref_mes else "—"
+    apur_label = f"{apur_mes:02d}/{apur_ano}" if apur_mes else "—"
     _faixa = (totais.get("faixa") or {}).get("rotulo", "—")
     _nao_eleg = int(totais.get("nao_elegivel", 0))
     _nao_eleg_txt = f" ({_nao_eleg} não elegíveis)" if _nao_eleg else ""
@@ -1022,7 +1128,11 @@ def _render_reconquista(reconquista: dict | None):
         st.info(
             f"Sem contratos com fim de relacionamento em {ref_label}."
         )
-        return
+        # Apuracao vigente vazia nao encerra a sub-aba: o historico
+        # segue consultavel no Detalhamento (escopo "Todas"). So encerra
+        # quando nao ha lead nenhum no escopo do perfil.
+        if clientes_todos is None or clientes_todos.empty:
+            return
 
     # st.pills pelo mesmo motivo do sub-nav de Analiticos (ver
     # render_tab_analiticos): sac.tabs esconde o que nao cabe. Aqui sao
@@ -1041,7 +1151,9 @@ def _render_reconquista(reconquista: dict | None):
     if menu == "Por Loja":
         _render_reconquista_por_loja(por_loja)
     elif menu == "Detalhamento":
-        _render_reconquista_detalhamento(clientes)
+        _render_reconquista_detalhamento(
+            clientes_todos, apur_label, ref_label
+        )
 
 
 def _render_cobranca_consignavel(reconquista: dict | None) -> None:

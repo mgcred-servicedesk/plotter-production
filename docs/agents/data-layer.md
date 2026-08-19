@@ -136,8 +136,6 @@ all_data = _paginar_keyset(
         _sb()
         .from_("v_reconquista")
         .select("*")
-        .eq("ref_ano", ref_ano)
-        .eq("ref_mes", ref_mes)
         .order("co_adesao")
         .limit(_PAGE_SIZE)
     ),
@@ -157,6 +155,22 @@ Regras:
   dreno do Disk IO Budget, ver migration 054 e progress doc
   2026-07-08). A exigência de ordenação estável do commit `705885b`
   continua valendo — agora garantida pela chave única.
+
+### Exceção deliberada: Reconquista pagina a base inteira
+
+`_reconquista_todos()` **não** filtra por mês no servidor — pagina
+`v_reconquista` inteira (uma vez, TTL 10min) e o loader fatia em pandas
+(`_fatiar_ref`). A tabela é truncada e realimentada a cada import e cabe
+em poucos milhares de linhas (3,2k em 8 apurações, 08/2026); com o
+filtro server-side eram **três** consultas por período selecionado
+(mês, anterior, próximo) e trocar de mês refazia todas. Trocar de mês
+agora não bate no Supabase, e é essa mesma base que serve a lista
+completa do analítico.
+
+Não é licença para largar filtro no cliente: vale porque a base é
+pequena, limitada por construção (truncate a cada carga) e **inteira**
+consumida pela tela. Base que cresce sem teto continua filtrando no
+servidor.
 
 ## Estratégia de cache — `_atual` vs `_historico`
 

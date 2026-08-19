@@ -179,6 +179,24 @@ sel = sac.segmented(
 tipo = "loja" if sel == "Lojas" else "consultor"
 ```
 
+#### Quando o rótulo é dinâmico: `st.pills`, não `sac.segmented`
+
+`sac.segmented` continua o padrão para sub-seleção de rótulo **curto e
+fixo** (Pagas/Em Análise/Cancelados, Lojas/Consultores). Quando o rótulo
+carrega dado — o escopo do Detalhamento de Reconquista mostra o período
+("Vigente · 08/2026", "Todas as apurações · 02/2026 a 09/2026") — use
+`st.pills`, pelo mesmo motivo que tirou o `sac.tabs` das sub-navs: o
+`sac` roda em iframe, o que não cabe fica **inacessível** e o CSS do
+documento pai não atravessa. Rótulo que cresce com o dado não tem
+largura previsível. Bônus: widget nativo é dirigível por
+`session_state` em `AppTest` (ver `TestRenderReconquistaDetalhamento`);
+widget em iframe, não.
+
+**A chave NÃO é `nav_*`** (`key="rec_det_escopo"`): isso é filtro de
+tabela, não navegação, e não deve herdar o CSS de sub-nav — fica com o
+estilo nativo do `st.pills`, um degrau abaixo da sub-nav. `nav_*` só
+para navegação de verdade.
+
 ## Tabelas — `exibir_tabela`
 
 Em renderers de tab **nunca** usar `st.dataframe` diretamente. Sempre:

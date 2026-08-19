@@ -12,7 +12,14 @@ import pytest
 from src.dashboard import loaders
 from src.config.settings import PACK_LABEL_AGREGADO
 from src.dashboard.loaders import (
+    VIGENCIA_FUTURA,
+    VIGENCIA_HISTORICO,
+    VIGENCIA_PROXIMA,
+    VIGENCIA_SEM_REF,
+    VIGENCIA_VIGENTE,
     _colapsar_cadastro_recente,
+    _fatiar_ref,
+    _marcar_vigencia_reconquista,
     _mes_apuracao_seguinte,
     _preencher_categoria_fallback,
     _reanexar_regiao,
@@ -270,3 +277,91 @@ class TestCarregarUniversoLojas:
         out = carregar_universo_lojas(7, 2026)
         assert out.empty
         assert list(out.columns) == self.COLS
+
+
+def _base_reconquista() -> pd.DataFrame:
+    """Base minima de Reconquista: uma linha por mes de referencia."""
+    return pd.DataFrame(
+        [
+            {"co_adesao": 1, "ref_ano": 2025, "ref_mes": 12},
+            {"co_adesao": 2, "ref_ano": 2026, "ref_mes": 6},
+            {"co_adesao": 3, "ref_ano": 2026, "ref_mes": 7},
+            {"co_adesao": 4, "ref_ano": 2026, "ref_mes": 8},
+        ]
+    )
+
+
+@pytest.mark.unit
+class TestFatiarRef:
+    def test_recorta_o_mes_de_referencia(self):
+        df = _fatiar_ref(_base_reconquista(), 2026, 7)
+        assert df["co_adesao"].tolist() == [3]
+
+    def test_mes_sem_linhas_devolve_vazio(self):
+        assert _fatiar_ref(_base_reconquista(), 2026, 2).empty
+
+    def test_base_vazia_devolve_vazio(self):
+        assert _fatiar_ref(pd.DataFrame(), 2026, 7).empty
+
+    def test_nao_muta_a_base(self):
+        base = _base_reconquista()
+        _fatiar_ref(base, 2026, 7)
+        assert len(base) == 4
+
+
+@pytest.mark.unit
+class TestMarcarVigenciaReconquista:
+    # Apuracao = ref + 1 (defasagem de 1 mes da campanha); os rotulos
+    # sao posicionais frente ao (mes, ano) selecionado.
+    def test_apuracao_e_o_mes_seguinte_ao_ref(self):
+        df = _marcar_vigencia_reconquista(_base_reconquista(), 8, 2026)
+        rotulos = dict(zip(df["co_adesao"], df["apuracao_ref"]))
+        assert rotulos == {
+            1: "01/2026",   # ref 12/2025 — vira o ano
+            2: "07/2026",
+            3: "08/2026",
+            4: "09/2026",
+        }
+
+    def test_rotulos_por_posicao_frente_ao_mes_selecionado(self):
+        df = _marcar_vigencia_reconquista(_base_reconquista(), 8, 2026)
+        vigencia = dict(zip(df["co_adesao"], df["vigencia"]))
+        assert vigencia == {
+            1: VIGENCIA_HISTORICO,   # apuracao 01/2026
+            2: VIGENCIA_HISTORICO,   # apuracao 07/2026
+            3: VIGENCIA_VIGENTE,     # apuracao 08/2026 = selecionada
+            4: VIGENCIA_PROXIMA,     # apuracao 09/2026 = esteira
+        }
+
+    def test_apuracao_alem_da_proxima_e_futura(self):
+        # Selecionando 06/2026: nenhuma linha da base cai na vigente
+        # (seria ref 05/2026) — o que exercita justamente Proxima/Futura.
+        df = _marcar_vigencia_reconquista(_base_reconquista(), 6, 2026)
+        vigencia = dict(zip(df["co_adesao"], df["vigencia"]))
+        assert vigencia[1] == VIGENCIA_HISTORICO  # apuracao 01/2026
+        assert vigencia[2] == VIGENCIA_PROXIMA    # apuracao 07/2026
+        assert vigencia[3] == VIGENCIA_FUTURA     # apuracao 08/2026
+        assert vigencia[4] == VIGENCIA_FUTURA     # apuracao 09/2026
+        assert VIGENCIA_VIGENTE not in vigencia.values()
+
+    def test_chave_ordena_cronologicamente(self):
+        df = _marcar_vigencia_reconquista(_base_reconquista(), 8, 2026)
+        chaves = df.sort_values("apuracao_key")["co_adesao"].tolist()
+        assert chaves == [1, 2, 3, 4]
+
+    def test_sem_data_de_referencia_nao_entra_em_nenhuma_apuracao(self):
+        base = pd.DataFrame(
+            [{"co_adesao": 9, "ref_ano": None, "ref_mes": None}]
+        )
+        df = _marcar_vigencia_reconquista(base, 8, 2026)
+        assert df.loc[0, "vigencia"] == VIGENCIA_SEM_REF
+        assert df.loc[0, "apuracao_ref"] == "—"
+
+    def test_base_vazia_nao_quebra(self):
+        assert _marcar_vigencia_reconquista(pd.DataFrame(), 8, 2026).empty
+
+    def test_nao_muta_o_frame_de_entrada(self):
+        base = _base_reconquista()
+        _marcar_vigencia_reconquista(base, 8, 2026)
+        assert "vigencia" not in base.columns
+

@@ -1960,6 +1960,16 @@ def _fetch_pagamentos_online() -> pd.DataFrame:
 # docs/agents/business-rules.md.
 # ══════════════════════════════════════════════════════
 
+# Rotulos de vigencia de cada lead frente ao mes selecionado
+# (`_marcar_vigencia_reconquista`). Publicos: a UI compara contra eles
+# para destacar/filtrar sem reescrever a regra.
+VIGENCIA_VIGENTE = "Vigente"
+VIGENCIA_PROXIMA = "Próxima"
+VIGENCIA_HISTORICO = "Histórico"
+VIGENCIA_FUTURA = "Futura"
+VIGENCIA_SEM_REF = "Sem referência"
+
+
 def _faixa_premio_conversao(pct: float) -> Dict:
     """Mapeia % de conversao -> faixa de premio/deflator sobre premio CNC.
 
@@ -2031,25 +2041,103 @@ def _mes_apuracao_seguinte(mes: int, ano: int) -> Tuple[int, int]:
     return prox_mes, prox_ano
 
 
-def _fetch_reconquista(ref_ano: int, ref_mes: int) -> List[dict]:
-    """Pagina v_reconquista filtrada pelo periodo de referencia.
+def _chave_apuracao(ano: int, mes: int) -> int:
+    """Mes como inteiro monotonico (ano*12 + mes) — compara e ordena."""
+    return int(ano) * 12 + int(mes)
 
-    Cursor keyset por ``co_adesao`` (UNIQUE, migration 028). Corrige a
-    paginacao anterior, que usava OFFSET sem ORDER BY — ordem instavel
-    podia repetir/perder linhas entre paginas.
+
+def _marcar_vigencia_reconquista(
+    clientes: pd.DataFrame, mes: int, ano: int
+) -> pd.DataFrame:
+    """Anota cada lead com a apuracao a que pertence e a vigencia dela.
+
+    A separacao ja existe no dado — a view deriva `ref_ano`/`ref_mes` de
+    dt_fim_relacionamento e a campanha tem defasagem de 1 mes
+    (business-rules.md), entao ``apuracao = ref + 1``. Aqui isso so vira
+    rotulo, por linha:
+
+      * ``apuracao_key`` — ano*12+mes da apuracao (ordenacao);
+      * ``apuracao_ref`` — rotulo ``MM/AAAA`` da apuracao;
+      * ``vigencia``     — posicao frente ao (mes, ano) selecionado:
+        VIGENTE (a que os KPIs apuram), PROXIMA (esteira ja acumulando,
+        a mesma da previa), HISTORICO, FUTURA.
+
+    Colunas derivadas, nao existem na view. Nenhum KPI le daqui.
     """
-    return _paginar_keyset(
-        lambda: (
-            _sb()
-            .from_("v_reconquista")
-            .select("*")
-            .eq("ref_ano", ref_ano)
-            .eq("ref_mes", ref_mes)
-            .order("co_adesao")
-            .limit(_PAGE_SIZE)
-        ),
-        "co_adesao",
+    if clientes is None or clientes.empty:
+        return pd.DataFrame() if clientes is None else clientes.copy()
+
+    df = clientes.copy()
+    if "ref_ano" not in df.columns or "ref_mes" not in df.columns:
+        df["apuracao_key"] = -1
+        df["apuracao_ref"] = "—"
+        df["vigencia"] = VIGENCIA_SEM_REF
+        return df
+
+    apuracao = (
+        pd.to_numeric(df["ref_ano"], errors="coerce") * 12
+        + pd.to_numeric(df["ref_mes"], errors="coerce")
+        + 1  # defasagem de 1 mes: dt_fim em M -> apuracao em M+1
     )
+    valido = apuracao.notna()
+
+    df["apuracao_key"] = apuracao.fillna(-1).astype(int)
+    mes_ap = ((df["apuracao_key"] - 1) % 12) + 1
+    ano_ap = (df["apuracao_key"] - mes_ap) // 12
+    df["apuracao_ref"] = (
+        mes_ap.astype(str).str.zfill(2) + "/" + ano_ap.astype(str)
+    ).where(valido, "—")
+
+    selecionada = _chave_apuracao(ano, mes)
+    vigencia = pd.Series(VIGENCIA_FUTURA, index=df.index)
+    vigencia[df["apuracao_key"] < selecionada] = VIGENCIA_HISTORICO
+    vigencia[df["apuracao_key"] == selecionada + 1] = VIGENCIA_PROXIMA
+    vigencia[df["apuracao_key"] == selecionada] = VIGENCIA_VIGENTE
+    vigencia[~valido] = VIGENCIA_SEM_REF
+    df["vigencia"] = vigencia
+    return df
+
+
+@st.cache_data(ttl=600)
+def _reconquista_todos() -> pd.DataFrame:
+    """Base de Reconquista INTEIRA (todas as apuracoes). TTL 10min.
+
+    Substitui os fetches filtrados por mes. A tabela e truncada e
+    realimentada a cada import e cabe em poucos milhares de linhas
+    (3,2k em 8 apuracoes, 08/2026), entao pagina-la uma vez e fatiar em
+    pandas custa menos que tres consultas por periodo selecionado — e,
+    dentro do TTL, trocar de mes deixa de bater no Supabase (plano Nano,
+    ver migration 054). Se um dia a base crescer uma ordem de grandeza,
+    o filtro volta para o servidor.
+
+    Cursor keyset por ``co_adesao`` (UNIQUE, migration 028): cada
+    request e um top-N que cabe em work_mem, sem OFFSET.
+    """
+    return pd.DataFrame(
+        _paginar_keyset(
+            lambda: (
+                _sb()
+                .from_("v_reconquista")
+                .select("*")
+                .order("co_adesao")
+                .limit(_PAGE_SIZE)
+            ),
+            "co_adesao",
+        )
+    )
+
+
+def _fatiar_ref(
+    todos: pd.DataFrame, ref_ano: int, ref_mes: int
+) -> pd.DataFrame:
+    """Recorte de um mes de referencia (dt_fim_relacionamento) da base."""
+    if todos is None or todos.empty:
+        return pd.DataFrame()
+    if "ref_ano" not in todos.columns or "ref_mes" not in todos.columns:
+        return pd.DataFrame()
+    return todos[
+        (todos["ref_ano"] == ref_ano) & (todos["ref_mes"] == ref_mes)
+    ].copy()
 
 
 @st.cache_data(ttl=600)
@@ -2057,36 +2145,44 @@ def _reconquista_cache(mes: int, ano: int) -> dict:
     """Detalhe cacheado do mes de referencia (defasado). TTL 10min.
 
     Inclui tambem o detalhe do mes de referencia ANTERIOR
-    (`clientes_ant`), usado para a variacao periodo-a-periodo.
+    (`clientes_ant`), usado para a variacao periodo-a-periodo. Os tres
+    recortes saem da MESMA base (`_reconquista_todos`) — antes eram tres
+    consultas ao Supabase.
     """
     ref_mes, ref_ano = _mes_apuracao_anterior(mes, ano)
     prev_mes, prev_ano = _mes_apuracao_anterior(ref_mes, ref_ano)
+    todos = _reconquista_todos()
     return {
         "ref_mes": ref_mes,
         "ref_ano": ref_ano,
-        "clientes": pd.DataFrame(_fetch_reconquista(ref_ano, ref_mes)),
-        "clientes_ant": pd.DataFrame(_fetch_reconquista(prev_ano, prev_mes)),
+        "clientes": _fatiar_ref(todos, ref_ano, ref_mes),
+        "clientes_ant": _fatiar_ref(todos, prev_ano, prev_mes),
         # Esteira da PROXIMA apuracao: o proprio mes selecionado e o
         # ref dela (a apuracao seguinte exibe dt_fim deste mes). Usado
         # para a previa antecipada das promessas que ja se acumulam.
-        "clientes_prox": pd.DataFrame(_fetch_reconquista(ano, mes)),
+        "clientes_prox": _fatiar_ref(todos, ano, mes),
     }
 
 
-def _filtrar_rls_reconquista(dados: dict) -> dict:
-    """Aplica RLS sobre os detalhes (`clientes`/`clientes_ant`).
+def _filtro_rls_reconquista() -> Callable | None:
+    """Funcao de recorte por perfil dos detalhes de Reconquista.
 
     A view expoe `regiao`, `loja` e `consultor` em texto.
     Admin/gestor veem tudo; demais perfis sao restritos ao seu
-    escopo (regiao/loja/consultor).
+    escopo (regiao/loja/consultor). Devolve ``None`` quando nao ha
+    recorte a aplicar — o chamador entrega o frame como veio.
+
+    Extraida de `_filtrar_rls_reconquista` para que a lista completa
+    (`clientes_todos`) passe pelo MESMO recorte dos cortes mensais:
+    RLS antes de render, sem uma segunda implementacao para divergir.
     """
     perfil = _obter_perfil_efetivo()
     if not perfil or perfil["perfil"] in ("admin", "gestor"):
-        return dados
+        return None
 
     escopo = perfil.get("escopo") or []
     if not escopo:
-        return dados
+        return None
 
     coluna = {
         "gerente_comercial": "regiao",
@@ -2094,12 +2190,21 @@ def _filtrar_rls_reconquista(dados: dict) -> dict:
         "consultor": "consultor",
     }.get(perfil["perfil"])
     if not coluna:
-        return dados
+        return None
 
     def _filtra(df):
         if df is None or df.empty or coluna not in df.columns:
             return df
         return df[df[coluna].isin(escopo)].copy()
+
+    return _filtra
+
+
+def _filtrar_rls_reconquista(dados: dict) -> dict:
+    """Aplica RLS sobre `clientes`/`clientes_ant`/`clientes_prox`."""
+    _filtra = _filtro_rls_reconquista()
+    if _filtra is None:
+        return dados
 
     return {
         **dados,
@@ -2702,9 +2807,12 @@ def carregar_reconquista(mes: int, ano: int) -> Dict:
             "totais":   dict,        # elegiveis/efetivadas/conversao/faixa
                                      # + cobranca_consignavel do mes,
                                      # faixa_agregada e acelerador_perfil
+            "apuracao_mes": int, "apuracao_ano": int,  # (mes, ano) pedido
             "por_loja": DataFrame,   # quebra por loja (elegiveis)
             "por_consultor": DataFrame,  # acelerador combinado por consultor
             "clientes": DataFrame,   # detalhe (TODOS os clientes + flag)
+            "clientes_todos": DataFrame,  # TODAS as apuracoes, marcadas
+                                     # com apuracao_ref/vigencia
             "cobranca_consignavel_contratos": DataFrame,  # propostas RLS'd
                                      # que compoem totais["cobranca_consignavel"]
                                      # (vazio fora da vigencia)
@@ -2713,6 +2821,11 @@ def carregar_reconquista(mes: int, ano: int) -> Dict:
 
     Conversao/apuracao contam so ELEGIVEL; `clientes` mantem todos.
     TTL 10min no fetch; KPIs derivados apos a RLS.
+
+    `clientes` continua sendo o corte da apuracao vigente — e dele que
+    saem os KPIs. `clientes_todos` e a MESMA base sem o filtro de mes,
+    para o analitico poder navegar o historico inteiro; nenhum KPI le
+    dessa chave (a apuracao da campanha e mensal por definicao).
 
     O acelerador combinado e apurado sobre o proprio (mes, ano) — sem a
     defasagem, que so vale para a esteira de reconquista. Dois gates
@@ -2790,13 +2903,26 @@ def carregar_reconquista(mes: int, ano: int) -> Dict:
     # acima, entao vem depois delas.
     totais["faixa_agregada"] = _faixa_agregada_acelerador(totais, mes, ano)
 
+    # Lista completa para o analitico: mesma base e MESMO recorte de RLS
+    # dos cortes mensais, so que sem o filtro de mes e ja marcada com a
+    # apuracao/vigencia de cada lead. Sai da base cacheada — nao ha
+    # fetch adicional.
+    _filtra_rls = _filtro_rls_reconquista()
+    _todos = _reconquista_todos()
+    if _filtra_rls is not None:
+        _todos = _filtra_rls(_todos)
+    clientes_todos = _marcar_vigencia_reconquista(_todos, mes, ano)
+
     return {
         "ref_mes": dados.get("ref_mes"),
         "ref_ano": dados.get("ref_ano"),
+        "apuracao_mes": mes,
+        "apuracao_ano": ano,
         "totais": totais,
         "por_loja": _por_loja_reconquista(clientes),
         "por_consultor": por_consultor,
         "clientes": clientes,
+        "clientes_todos": clientes_todos,
         "cobranca_consignavel_contratos": contratos_consignavel,
         "prox": prox,
     }

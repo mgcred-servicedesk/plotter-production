@@ -512,6 +512,28 @@ ELEGIVEL entram na apuração/conversão** (numerador e denominador); os
 apenas fora da conta. **NULL / sem flag ⇒ ELEGIVEL** (interim, até o
 arquivo com a flag ser importado). Helper: `_mask_elegivel` (loaders).
 
+### Analítico: apuração vigente × lista completa
+
+A **apuração é mensal** — KPIs, conversão, faixa de prêmio, quebra por
+loja e acelerador leem só a apuração vigente (`clientes`, o corte de
+`dt_fim_relacionamento` em `M-1`). Somar apurações produziria uma
+conversão que não corresponde a prêmio nenhum.
+
+O **analítico de leads (Detalhamento)** não tem essa restrição: recebe
+`clientes_todos` — a mesma base sem o filtro de mês, com o mesmo recorte
+de RLS — e alterna entre os dois escopos por pill, abrindo no vigente.
+Cada linha carrega a marcação, derivada de `ref_ano`/`ref_mes` +
+defasagem (`_marcar_vigencia_reconquista`, loaders):
+
+| Coluna | Conteúdo |
+|---|---|
+| `apuracao_ref` → "Apuração" | `MM/AAAA` da apuração do lead (= ref + 1) |
+| `vigencia` → "Vigência" | `Vigente` (a que os KPIs apuram) · `Próxima` (esteira do mês seguinte, a mesma da prévia) · `Histórico` · `Futura` · `Sem referência` (sem `dt_fim`) |
+
+As duas colunas aparecem **nos dois escopos** e vão no CSV: lista
+completa e recorte do mês nunca se confundem. Nenhum KPI lê
+`clientes_todos`.
+
 ### KPI — conversão e faixa de prêmio (substitui a meta fixa)
 
 Sem meta de 30%. O objetivo é o **% de conversão** sobre a base elegível
