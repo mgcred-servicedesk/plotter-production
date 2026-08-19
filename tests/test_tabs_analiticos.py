@@ -148,3 +148,73 @@ class TestRenderReconquistaDetalhamento:
             assert "08/2026" in caption   # apuracao vigente
             assert "07/2026" in caption   # fim de relacionamento
 
+
+
+# ── Seletor de banco da Distribuicao de Produtos (AppTest) ───────────
+#
+# ``_selecionar_banco`` so existe dentro de um script run real: a lista
+# de opcoes depende do ``df`` e o guard de cascata escreve em
+# ``session_state`` ANTES de instanciar o widget. Fora de um run,
+# widget devolve sempre o padrao e o guard nunca roda.
+
+def _script_selecionar_banco(df):
+    import streamlit as st
+
+    from src.dashboard.tabs.analiticos import _selecionar_banco
+
+    # Expoe o retorno para a asserção — o widget em si nao carrega a
+    # tupla resultante (so o rotulo selecionado).
+    st.session_state["_saida"] = _selecionar_banco(df)
+
+
+def _df_bancos() -> pd.DataFrame:
+    return pd.DataFrame({
+        "BANCO": ["BMG", "BANCO BMG", "C6 BANK", "MASTER", None],
+    })
+
+
+def _rodar_seletor(df=None, selecionado=None) -> AppTest:
+    at = AppTest.from_function(
+        _script_selecionar_banco, kwargs=dict(df=_df_bancos() if df is None else df),
+    )
+    if selecionado is not None:
+        at.session_state["dist_prod_banco"] = selecionado
+    at.run()
+    assert not at.exception
+    return at
+
+
+@pytest.mark.unit
+class TestSelecionarBanco:
+    def test_opcoes_sao_todos_preset_e_bancos_canonicos(self):
+        at = _rodar_seletor()
+        # "BMG" e "BANCO BMG" colapsam numa opcao so; nulo fica de fora.
+        assert at.selectbox[0].options == [
+            "Todos", "BMG/Help", "BMG", "C6", "MASTER",
+        ]
+
+    def test_todos_e_o_padrao_e_nao_recorta(self):
+        at = _rodar_seletor()
+        assert at.selectbox[0].value == "Todos"
+        assert at.session_state["_saida"] is None
+
+    def test_preset_devolve_o_par_bmg_help(self):
+        at = _rodar_seletor(selecionado="BMG/Help")
+        assert at.session_state["_saida"] == ("BMG", "HELP")
+
+    def test_banco_unico_devolve_tupla_de_um(self):
+        at = _rodar_seletor(selecionado="C6")
+        assert at.session_state["_saida"] == ("C6",)
+
+    def test_banco_que_sumiu_da_base_reseta_para_todos(self):
+        # Guard de cascata: trocar o mes na sidebar pode tirar da base o
+        # banco selecionado. Sem o reset, o widget subiria com um valor
+        # fora das opcoes.
+        at = _rodar_seletor(selecionado="VCTEX")
+        assert at.selectbox[0].value == "Todos"
+        assert at.session_state["_saida"] is None
+
+    def test_sem_coluna_banco_sobra_todos_e_o_preset(self):
+        at = _rodar_seletor(df=pd.DataFrame({"X": [1]}))
+        assert at.selectbox[0].options == ["Todos", "BMG/Help"]
+        assert at.session_state["_saida"] is None

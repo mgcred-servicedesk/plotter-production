@@ -24,10 +24,12 @@ from src.dashboard.kpis.gerais import (
     separar_cancelados_liquidos,
 )
 from src.dashboard.kpis.produtos import (
+    BANCOS_BMG_HELP,
     COL_PRODUTO_DETALHADO,
     adicionar_produto_detalhado,
     calcular_distribuicao_produtos,
     calcular_distribuicao_produtos_por_loja,
+    opcoes_banco,
 )
 from src.dashboard.loaders import VIGENCIA_VIGENTE
 
@@ -1226,10 +1228,69 @@ def _render_cobranca_consignavel(reconquista: dict | None) -> None:
     )
 
 
-def _render_distribuicao_por_loja(df, somente_bmg_help: bool = False) -> None:
+# Seletor de banco da Distribuicao de Produtos.
+#
+# Chave NOVA de proposito: a antiga ``dist_prod_bmg_help`` guardava
+# ``bool`` (era um ``st.toggle``). Reusar o mesmo nome num selectbox
+# quebraria toda sessao ja aberta, que carrega o bool em session_state.
+_KEY_BANCO_DIST = "dist_prod_banco"
+
+# Preset composto — nao e um banco, e o par que a regra de
+# comissionamento de CLT/Consignado trata junto (ver
+# ``docs/agents/business-rules.md`` § 'Flag "Somente BMG/Help"'). Fica
+# na lista ao lado dos bancos atomicos porque era o unico recorte
+# disponivel ate aqui: tirar seria regressao para quem ja usa.
+_OPCAO_BMG_HELP = "BMG/Help"
+
+
+def _selecionar_banco(df) -> tuple[str, ...] | None:
+    """Selectbox de banco da Distribuicao de Produtos.
+
+    Devolve a tupla de bancos canonicos a recortar, ou ``None`` para
+    "Todos" (sem recorte nenhum — nem precisa da coluna ``BANCO``).
+
+    As opcoes saem do proprio ``df`` ja recortado por perfil/sidebar,
+    entao cada perfil so enxerga os bancos do seu escopo. Sao valores
+    **canonicos** (``opcoes_banco``): "BMG" e "BANCO BMG" viram uma
+    opcao so, em vez de duas linhas partindo o mesmo banco ao meio.
+
+    O escopo do recorte e local a esta sub-aba (chave propria) — nao
+    afeta nenhuma outra aba do dashboard.
+    """
+    opcoes = ["Todos", _OPCAO_BMG_HELP] + opcoes_banco(df)
+    # Cascata: trocar mes/loja na sidebar pode tirar da base o banco que
+    # estava selecionado. Reseta antes de instanciar o widget (depois
+    # disso o session_state e imutavel no mesmo rerun) — mesmo padrao do
+    # Subproduto em ``_filtrar_detalhamento``.
+    if st.session_state.get(_KEY_BANCO_DIST) not in opcoes:
+        st.session_state[_KEY_BANCO_DIST] = "Todos"
+
+    col_banco, _ = st.columns([1, 3])
+    with col_banco:
+        sel = st.selectbox(
+            "Banco",
+            opcoes,
+            key=_KEY_BANCO_DIST,
+            help=(
+                "Recorta toda a tabela — valor e quantidade — ao banco "
+                "escolhido. 'BMG/Help' mantem o par usado pela regra de "
+                "CLT/Consignado."
+            ),
+        )
+
+    if sel == "Todos":
+        return None
+    if sel == _OPCAO_BMG_HELP:
+        return BANCOS_BMG_HELP
+    return (sel,)
+
+
+def _render_distribuicao_por_loja(
+    df, bancos: tuple[str, ...] | None = None,
+) -> None:
     """Distribuicao agregada por LOJA (inclui producao de supervisor)."""
     df_dist, cols_moeda, cols_num = calcular_distribuicao_produtos_por_loja(
-        df, somente_bmg_help=somente_bmg_help,
+        df, bancos=bancos,
     )
     if df_dist.empty:
         st.warning("Dados nao disponiveis")
@@ -1255,7 +1316,7 @@ def _render_distribuicao_por_loja(df, somente_bmg_help: bool = False) -> None:
 
 def _render_distribuicao_por_consultor(
     df, df_sup, key_tabela: str, com_busca: bool,
-    somente_bmg_help: bool = False,
+    bancos: tuple[str, ...] | None = None,
 ) -> None:
     """Distribuicao por CONSULTOR (supervisores excluidos).
 
@@ -1265,7 +1326,7 @@ def _render_distribuicao_por_consultor(
     que aparece na tela: o CSV continua exportando o dataset completo.
     """
     df_dist, cols_moeda, cols_num = calcular_distribuicao_produtos(
-        df, df_sup, somente_bmg_help=somente_bmg_help,
+        df, df_sup, bancos=bancos,
     )
     if df_dist.empty:
         st.warning("Dados nao disponiveis")
@@ -1305,19 +1366,12 @@ def _render_distribuicao_produtos(df, df_sup, perfil: str) -> None:
     demais perfis (admin/gestor/gerente_comercial) abrem na visao por
     loja e alternam para a de consultor pelo toggle.
     """
-    somente_bmg_help = st.toggle(
-        "Somente BMG/Help",
-        key="dist_prod_bmg_help",
-        help=(
-            "Restringe toda a tabela — valor e quantidade — aos bancos "
-            "BMG e Help."
-        ),
-    )
+    bancos = _selecionar_banco(df)
 
     if perfil == "supervisor":
         _render_distribuicao_por_consultor(
             df, df_sup, "tab_dist_prod_sup_cons", com_busca=False,
-            somente_bmg_help=somente_bmg_help,
+            bancos=bancos,
         )
         return
 
@@ -1332,10 +1386,10 @@ def _render_distribuicao_produtos(df, df_sup, perfil: str) -> None:
     if ver_consultor:
         _render_distribuicao_por_consultor(
             df, df_sup, "tab_dist_prod_cons", com_busca=True,
-            somente_bmg_help=somente_bmg_help,
+            bancos=bancos,
         )
     else:
-        _render_distribuicao_por_loja(df, somente_bmg_help=somente_bmg_help)
+        _render_distribuicao_por_loja(df, bancos=bancos)
 
 
 def render_tab_analiticos(

@@ -7,6 +7,7 @@ x META continuam agrupando por ``grupo_dashboard`` (a meta
 ``FGTS_ANT_BENEF_13`` e conjunta — nao existe alvo por categoria).
 """
 
+from collections.abc import Sequence
 from typing import Optional
 
 import pandas as pd
@@ -26,8 +27,8 @@ from src.shared.dias_uteis import calcular_dias_uteis
 # sem meta (listagens, rankings, distribuicao, detalhe dos cards).
 COL_PRODUTO_DETALHADO = "PRODUTO_DETALHADO"
 
-# Bancos aceitos pela flag "Somente BMG/Help". Valores JA normalizados
-# (strip + upper) — a comparacao normaliza a coluna antes do ``isin``.
+# Bancos aceitos pelo preset "BMG/Help". Valores JA normalizados
+# (strip + upper) — a comparacao canoniza a coluna antes do ``isin``.
 #
 # Duplicado de ``src/dashboard/tabs/produtos.py`` (``_BANCOS_BMG_HELP``,
 # origem da lista) **de proposito**: importar de la criaria import
@@ -35,6 +36,27 @@ COL_PRODUTO_DETALHADO = "PRODUTO_DETALHADO"
 # camadas. Se a lista mudar, mudar nos dois lugares. Ver
 # ``docs/agents/business-rules.md`` § 'Flag "Somente BMG/Help"'.
 _BANCOS_BMG_HELP = ("BMG", "BANCO BMG", "HELP", "BANCO HELP")
+
+# Aliases canonicos de ``BANCO``. Chaves JA normalizadas (strip+upper).
+# A base nao e uniforme: o mesmo banco chega com e sem o prefixo
+# "BANCO ", com e sem acento, com e sem o sufixo " BANK". Sem canonizar,
+# um seletor por banco listaria "BMG" e "BANCO BMG" como duas opcoes
+# que partem o mesmo banco ao meio.
+#
+# So entram equivalencias JA declaradas no codebase: BMG/HELP vem de
+# :data:`_BANCOS_BMG_HELP`; C6 e Itau vem de ``_PORTAB_BANCO_TO_CONSIG``
+# (``src/dashboard/loaders.py``). ``ITAU-360`` fica **de fora de
+# proposito** — e um canal proprio na base, nao um alias de ``ITAU``, e
+# fundir os dois seria decisao de negocio, nao de normalizacao.
+_BANCO_ALIAS = {
+    "BANCO BMG": "BMG",
+    "BANCO HELP": "HELP",
+    "C6 BANK": "C6",
+    "BANCO C6": "C6",
+    "BANCO ITAU": "ITAU",
+    "BANCO ITAÚ": "ITAU",
+    "ITAÚ": "ITAU",
+}
 
 
 def adicionar_produto_detalhado(df: pd.DataFrame) -> pd.DataFrame:
@@ -142,17 +164,56 @@ def calcular_kpis_por_produto(
     return pd.DataFrame(dados)
 
 
-def _mask_banco_bmg_help(df: pd.DataFrame) -> pd.Series:
-    """Mascara de ``BANCO`` normalizado dentro de :data:`_BANCOS_BMG_HELP`.
+def canonizar_banco(valor) -> str:
+    """Forma canonica de um valor cru de ``BANCO`` (strip+upper+alias).
 
-    ``BANCO`` ausente do frame vira mascara toda-False — com a flag
-    ligada isso **zera a tabela inteira**, coerente com "criterio sem
+    Valor desconhecido volta apenas normalizado — canonizar nunca
+    descarta banco, so funde variantes declaradas em
+    :data:`_BANCO_ALIAS`.
+    """
+    norm = str(valor).strip().upper()
+    return _BANCO_ALIAS.get(norm, norm)
+
+
+# Preset "BMG/Help" na forma canonica ("BMG", "HELP"). **Derivado** de
+# :data:`_BANCOS_BMG_HELP` em vez de escrito a mao para que a lista-fonte
+# continue literalmente identica a de ``src/dashboard/tabs/produtos.py``
+# — a nota de sincronizacao entre os dois arquivos so vale se ninguem
+# reescrever a tupla numa forma diferente.
+BANCOS_BMG_HELP = tuple(sorted({canonizar_banco(b) for b in _BANCOS_BMG_HELP}))
+
+
+def opcoes_banco(df: pd.DataFrame) -> list[str]:
+    """Bancos canonicos distintos presentes em ``df``, ordenados.
+
+    Alimenta o seletor de banco da Distribuicao de Produtos. Nulo e
+    vazio ficam de fora (mesma regra de ``_opcoes_coluna`` em
+    ``src/dashboard/tabs/analiticos.py``). Sem coluna ``BANCO``, devolve
+    lista vazia — o seletor fica so com "Todos" e o preset.
+    """
+    if "BANCO" not in df.columns:
+        return []
+    serie = df["BANCO"].dropna()
+    if serie.empty:
+        return []
+    return sorted({v for v in serie.map(canonizar_banco).unique() if v})
+
+
+def _mask_banco(df: pd.DataFrame, bancos) -> pd.Series:
+    """Mascara de ``BANCO`` canonizado dentro de ``bancos``.
+
+    ``bancos`` e canonizado tambem, entao aceita tanto a forma canonica
+    ("BMG") quanto a crua ("BANCO BMG") sem mudar o resultado.
+
+    ``BANCO`` ausente do frame vira mascara toda-False — com um recorte
+    ativo isso **zera a tabela inteira**, coerente com "criterio sem
     coluna zera a contagem" (nunca devolve dado nao filtrado como se
     filtrado fosse).
     """
     if "BANCO" not in df.columns:
         return pd.Series(False, index=df.index)
-    return df["BANCO"].astype(str).str.strip().str.upper().isin(_BANCOS_BMG_HELP)
+    alvo = {canonizar_banco(b) for b in bancos}
+    return df["BANCO"].map(canonizar_banco).isin(alvo)
 
 
 def _mascaras_aceleradores(
@@ -214,7 +275,7 @@ def _mascaras_aceleradores(
 def calcular_distribuicao_produtos(
     df: pd.DataFrame,
     df_supervisores: Optional[pd.DataFrame] = None,
-    somente_bmg_help: bool = False,
+    bancos: Optional[Sequence[str]] = None,
 ) -> tuple[pd.DataFrame, list[str], list[str]]:
     """Distribuicao de valor e quantidade por consultor.
 
@@ -230,13 +291,18 @@ def calcular_distribuicao_produtos(
     quantidade). Criterio em ``docs/agents/business-rules.md``
     § "CLT e Consignado (Novo/Refin) pagos".
 
-    ``somente_bmg_help`` restringe a **tabela inteira** (todas as
-    colunas: valor, quantidade e TOTAL) a ``BANCO ∈``
-    :data:`_BANCOS_BMG_HELP` — o recorte entra no topo, antes de
-    qualquer mascara, entao todo o pipeline ja o herda. Escopo
-    **diferente** do toggle homonimo de "Emissao e Seguros — Analise
-    Regional" (``src/dashboard/tabs/produtos.py``), que so existe dentro
-    das abas CLT/Consignado e so afeta a aba onde esta ligado.
+    ``bancos`` restringe a **tabela inteira** (todas as colunas: valor,
+    quantidade e TOTAL) a ``BANCO ∈ bancos`` (canonizado por
+    :func:`canonizar_banco`) — o recorte entra no topo, antes de
+    qualquer mascara, entao todo o pipeline ja o herda. ``None`` ou
+    vazio = sem recorte, todos os bancos.
+
+    Um banco so (``("C6",)``) ou um preset de varios
+    (:data:`BANCOS_BMG_HELP`) usam o mesmo caminho — a UI escolhe. Nao
+    confundir com o toggle "Somente BMG/Help" de "Emissao e Seguros —
+    Analise Regional" (``src/dashboard/tabs/produtos.py``), que segue
+    booleano de proposito: la BMG/Help e regra de comissionamento de
+    CLT/Consignado, aqui e so um recorte de bancos.
 
     Visao consultor-level → aplica ``excluir_supervisores``
     (``docs/agents/business-rules.md`` § "Exclusao de supervisores").
@@ -246,11 +312,11 @@ def calcular_distribuicao_produtos(
     if "CONSULTOR" not in df.columns:
         return pd.DataFrame(), [], []
 
-    if somente_bmg_help:
+    if bancos:
         # Recorte no topo: pivot de valor, 6 mascaras, TOTAL e os merges
         # de LOJA/REGIAO abaixo passam a ler o frame ja filtrado, sem
         # branch por coluna. Sem ``BANCO``, zera a tabela inteira.
-        df = df[_mask_banco_bmg_help(df)].copy()
+        df = df[_mask_banco(df, bancos)].copy()
 
     mask_bmg, mask_seg, mask_em, mask_sc, mask_clt, mask_consig = _mascaras_aceleradores(df)
 
@@ -346,16 +412,16 @@ def calcular_distribuicao_produtos(
 
 def calcular_distribuicao_produtos_por_loja(
     df: pd.DataFrame,
-    somente_bmg_help: bool = False,
+    bancos: Optional[Sequence[str]] = None,
 ) -> tuple[pd.DataFrame, list[str], list[str]]:
     """Distribuicao de valor e quantidade por LOJA.
 
     Mesmas mascaras e mesmos pivots de
     :func:`calcular_distribuicao_produtos` — incluindo as colunas de
-    quantidade CLT e Consignado (Novo/Refin) e o parametro
-    ``somente_bmg_help``, que aqui tambem recorta a **tabela inteira**
-    (valor + quantidade + TOTAL) a ``BANCO ∈`` :data:`_BANCOS_BMG_HELP`,
-    e nao apenas as duas colunas novas. Com duas diferencas centrais:
+    quantidade CLT e Consignado (Novo/Refin) e o parametro ``bancos``,
+    que aqui tambem recorta a **tabela inteira** (valor + quantidade +
+    TOTAL), e nao apenas as duas colunas novas. Com duas diferencas
+    centrais:
 
     1. **Eixo de agregacao**: ``LOJA`` no lugar de ``CONSULTOR``.
     2. **Nao exclui supervisor**: a producao do proprio supervisor entra
@@ -373,11 +439,11 @@ def calcular_distribuicao_produtos_por_loja(
     if "LOJA" not in df.columns:
         return pd.DataFrame(), [], []
 
-    if somente_bmg_help:
+    if bancos:
         # Recorte no topo: pivot de valor, 6 mascaras, TOTAL e o merge
         # de REGIAO abaixo passam a ler o frame ja filtrado, sem branch
         # por coluna. Sem ``BANCO``, zera a tabela inteira.
-        df = df[_mask_banco_bmg_help(df)].copy()
+        df = df[_mask_banco(df, bancos)].copy()
 
     mask_bmg, mask_seg, mask_em, mask_sc, mask_clt, mask_consig = _mascaras_aceleradores(df)
 

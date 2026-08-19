@@ -212,21 +212,57 @@ de BMG Med, Vida Familiar, Emissão e Super Conta:
   do `TOTAL` silenciosamente. `CONSIGNADO` (valor) × `Consignado
   (Novo/Refin)` (qtd) não colidem, por isso só CLT leva sufixo.
 
-#### Escopo do toggle aqui é a tabela inteira
+#### Seletor de banco: aqui é selectbox, não toggle
 
-O parâmetro `somente_bmg_help` das duas funções de distribuição usa a
-**mesma lista de bancos** da flag acima, mas com alcance **diferente**:
+Desde 2026-08-19 a "Distribuição de Produtos" **não** tem toggle
+booleano: tem um `st.selectbox("Banco", …)` (`_selecionar_banco`,
+[`src/dashboard/tabs/analiticos.py`](../../src/dashboard/tabs/analiticos.py)).
+
+| Opção | Recorte aplicado |
+|---|---|
+| `Todos` (padrão) | Nenhum — nem exige a coluna `BANCO` |
+| `BMG/Help` | Preset composto: `BANCO ∈ {BMG, HELP}` (canônico) — preserva o alcance do toggle anterior |
+| `BMG`, `C6`, `MASTER`, … | Um banco só, derivado dos valores presentes no próprio frame |
+
+**Por que aqui divergiu do toggle das abas CLT/Consignado:** naquelas
+abas BMG/Help é *regra de comissionamento* — o banco distingue a régua, e
+o recorte binário é a pergunta certa. Na Distribuição, que cobre **todos**
+os grupos (CNC, FGTS, Saque, PACK, aceleradores), banco não é critério de
+negócio: é uma dimensão de análise como qualquer outra. A divergência é
+**deliberada** — `produtos.py` continua com `st.toggle`, e deve continuar.
+
+**Valores canônicos.** As opções passam por `canonizar_banco`
+([`src/dashboard/kpis/produtos.py`](../../src/dashboard/kpis/produtos.py)):
+`_BANCO_ALIAS` funde as variantes de grafia da base (`BANCO BMG → BMG`,
+`C6 BANK`/`BANCO C6 → C6`, `BANCO ITAÚ → ITAU`), senão o mesmo banco
+apareceria como duas opções partindo a produção ao meio. `ITAU-360` fica
+**fora** do mapa de propósito: é canal próprio na base, e fundi-lo com
+`ITAU` seria decisão de negócio, não de normalização.
+
+**Alcance do recorte** — o parâmetro é `bancos` (tupla canônica, ou
+`None` para "Todos"):
 
 | | "Emissão e Seguros — Análise Regional" | "Distribuição de Produtos" |
 |---|---|---|
+| Widget | `st.toggle` booleano | `st.selectbox` (Todos / preset / banco) |
 | Alcance | Só a aba onde está ligado (CLT **ou** Consignado) | **A tabela inteira**: todas as colunas de valor, todas as de quantidade e o `TOTAL` |
 | Como é aplicado | Composição de máscaras por subtab (`AND` em `_mask_subtab`) | Recorte de linhas no topo da função, antes de qualquer máscara |
 | Produtos afetados | Só CLT / Consignado | **Todos** — CNC, FGTS, Saque, aceleradores etc. |
 
 O recorte no topo é o que faz pivot de valor, as 6 máscaras, o `TOTAL` e
 os merges de `LOJA`/`REGIAO` herdarem o filtro sem branch extra. `BANCO`
-ausente do frame com a flag ligada **zera a tabela inteira** — mesma regra
-de "critério declarado sem coluna zera a contagem".
+ausente do frame com um banco selecionado **zera a tabela inteira** —
+mesma regra de "critério declarado sem coluna zera a contagem"; com
+`Todos` não zera nada, porque não há critério declarado.
+
+**Duas armadilhas registradas** (ambas com teste):
+
+- A chave de sessão é `dist_prod_banco`, **nova**. A antiga
+  `dist_prod_bmg_help` guardava `bool`; reusar o nome num selectbox
+  quebraria toda sessão já aberta.
+- Guard de cascata antes de instanciar o widget: trocar mês/loja na
+  sidebar pode tirar da base o banco selecionado, e o valor órfão volta
+  para `Todos` — mesmo padrão do Subproduto em `_filtrar_detalhamento`.
 
 A lista `_BANCOS_BMG_HELP` está **duplicada** em `kpis/produtos.py` e
 `tabs/produtos.py` de propósito (importar da UI para a camada de KPI

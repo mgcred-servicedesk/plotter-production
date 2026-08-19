@@ -10,9 +10,12 @@ import pandas as pd
 import pytest
 
 from src.dashboard.kpis.produtos import (
+    BANCOS_BMG_HELP,
     calcular_distribuicao_produtos,
     calcular_distribuicao_produtos_por_loja,
     calcular_kpis_por_produto,
+    canonizar_banco,
+    opcoes_banco,
 )
 from src.shared.dias_uteis import calcular_dias_uteis
 
@@ -105,6 +108,59 @@ class TestCalcularKpisPorProduto:
         assert res.iloc[0]["Valor"] == pytest.approx(600.0)
         assert res.iloc[0]["Meta"] == pytest.approx(1200.0)
         assert res.iloc[0]["% Atingimento"] == pytest.approx(50.0)
+
+
+@pytest.mark.unit
+class TestCanonizarBanco:
+    """Canonizacao de ``BANCO`` — base a rigor de variantes de grafia.
+
+    Alimenta o seletor de banco da Distribuicao de Produtos: sem ela,
+    "BMG" e "BANCO BMG" virariam duas opcoes partindo o mesmo banco.
+    """
+
+    def test_normaliza_strip_e_caixa(self):
+        assert canonizar_banco("  bmg ") == "BMG"
+
+    def test_funde_prefixo_banco(self):
+        assert canonizar_banco("BANCO BMG") == "BMG"
+        assert canonizar_banco("BANCO HELP") == "HELP"
+
+    def test_funde_variantes_de_c6_e_itau(self):
+        assert canonizar_banco("C6 BANK") == "C6"
+        assert canonizar_banco("BANCO C6") == "C6"
+        assert canonizar_banco("ITAÚ") == "ITAU"
+        assert canonizar_banco("BANCO ITAÚ") == "ITAU"
+
+    def test_itau_360_nao_funde_com_itau(self):
+        # Canal proprio na base, nao alias — fundir seria decisao de
+        # negocio, nao de normalizacao.
+        assert canonizar_banco("ITAU-360") == "ITAU-360"
+
+    def test_desconhecido_volta_so_normalizado(self):
+        # Canonizar nunca descarta banco.
+        assert canonizar_banco(" vctex ") == "VCTEX"
+
+    def test_preset_bmg_help_e_canonico(self):
+        assert BANCOS_BMG_HELP == ("BMG", "HELP")
+
+
+@pytest.mark.unit
+class TestOpcoesBanco:
+    def test_dedup_canonico_e_ordenado(self):
+        df = pd.DataFrame({
+            "BANCO": ["BANCO BMG", "BMG", "C6 BANK", "C6", "MASTER"],
+        })
+        assert opcoes_banco(df) == ["BMG", "C6", "MASTER"]
+
+    def test_ignora_nulo_e_vazio(self):
+        df = pd.DataFrame({"BANCO": ["BMG", None, "", "   ", "HELP"]})
+        assert opcoes_banco(df) == ["BMG", "HELP"]
+
+    def test_coluna_ausente_retorna_vazio(self):
+        assert opcoes_banco(pd.DataFrame({"X": [1]})) == []
+
+    def test_df_vazio_retorna_vazio(self):
+        assert opcoes_banco(pd.DataFrame(columns=["BANCO"])) == []
 
 
 @pytest.mark.unit
@@ -205,38 +261,72 @@ class TestCalcularDistribuicaoProdutos:
         maria = distrib[distrib["CONSULTOR"] == "Maria"].iloc[0]
         assert maria["Consignado (Novo/Refin)"] == 0
 
-    def test_toggle_somente_bmg_help_restringe_tabela_inteira(self):
-        # João: BANCO BMG. Maria: BANCO C6 (fora da lista). Cada um tem
-        # uma linha de valor (CNC) e uma de Consignado.
-        df = pd.DataFrame({
-            "CONSULTOR": ["João", "João", "Maria", "Maria"],
-            "grupo_dashboard": ["CNC", "CONSIGNADO", "CNC", "CONSIGNADO"],
-            "categoria_codigo": [None, "CONSIG_BMG", None, "CONSIG_C6"],
-            "SUBTIPO": [None, "NOVO", None, "NOVO"],
-            "BANCO": ["BMG", "BMG", "C6", "C6"],
-            "VALOR": [1000.0, 500.0, 800.0, 400.0],
-            "TIPO_PRODUTO": ["CNC", "CONSIGNADO", "CNC", "CONSIGNADO"],
+    def _df_tres_bancos(self):
+        # João: BMG. Maria: C6. Ana: HELP. Cada um com uma linha de
+        # valor (CNC) e uma de Consignado.
+        return pd.DataFrame({
+            "CONSULTOR": ["João", "João", "Maria", "Maria", "Ana", "Ana"],
+            "grupo_dashboard": [
+                "CNC", "CONSIGNADO", "CNC", "CONSIGNADO", "CNC", "CONSIGNADO",
+            ],
+            "categoria_codigo": [
+                None, "CONSIG_BMG", None, "CONSIG_C6", None, "CONSIG_BMG",
+            ],
+            "SUBTIPO": [None, "NOVO", None, "NOVO", None, "NOVO"],
+            "BANCO": ["BMG", "BMG", "C6 BANK", "C6 BANK", "HELP", "HELP"],
+            "VALOR": [1000.0, 500.0, 800.0, 400.0, 600.0, 300.0],
+            "TIPO_PRODUTO": [
+                "CNC", "CONSIGNADO", "CNC", "CONSIGNADO", "CNC", "CONSIGNADO",
+            ],
         })
-        # Default (False) preserva o comportamento anterior: os dois
-        # consultores aparecem.
-        distrib_off, _, _ = calcular_distribuicao_produtos(df)
-        assert set(distrib_off["CONSULTOR"]) == {"João", "Maria"}
-        assert distrib_off["TOTAL"].sum() == pytest.approx(2700.0)
 
-        # Flag ligada: só o banco BMG sobrevive — recorta valor E
-        # quantidade (e o TOTAL) juntos, Maria some inteira.
-        distrib_on, _, numero_on = calcular_distribuicao_produtos(
-            df, somente_bmg_help=True
+    def test_bancos_none_nao_recorta(self):
+        # Default (None) preserva o comportamento de "Todos": ninguém
+        # some, nem precisa da coluna BANCO existir.
+        distrib, _, _ = calcular_distribuicao_produtos(self._df_tres_bancos())
+        assert set(distrib["CONSULTOR"]) == {"João", "Maria", "Ana"}
+        assert distrib["TOTAL"].sum() == pytest.approx(3600.0)
+
+    def test_banco_unico_restringe_tabela_inteira(self):
+        # Um banco só: recorta valor E quantidade (e o TOTAL) juntos —
+        # quem não é do banco some inteiro da tabela.
+        distrib, _, numero = calcular_distribuicao_produtos(
+            self._df_tres_bancos(), bancos=("BMG",)
         )
-        assert set(distrib_on["CONSULTOR"]) == {"João"}
-        joao = distrib_on.iloc[0]
+        assert set(distrib["CONSULTOR"]) == {"João"}
+        joao = distrib.iloc[0]
         assert joao["TOTAL"] == pytest.approx(1500.0)
         assert joao["Consignado (Novo/Refin)"] == 1
-        assert "Consignado (Novo/Refin)" in numero_on
+        assert "Consignado (Novo/Refin)" in numero
 
-    def test_banco_ausente_com_flag_zera_tabela_inteira(self):
-        # Sem coluna BANCO no frame, a flag ligada recorta tudo (mesma
-        # regra de "criterio sem coluna zera a contagem").
+    def test_preset_bmg_help_soma_os_dois_bancos(self):
+        # O preset composto continua existindo e mantém o alcance de
+        # antes: BMG + Help juntos, C6 fora.
+        distrib, _, _ = calcular_distribuicao_produtos(
+            self._df_tres_bancos(), bancos=BANCOS_BMG_HELP
+        )
+        assert set(distrib["CONSULTOR"]) == {"João", "Ana"}
+        assert distrib["TOTAL"].sum() == pytest.approx(2400.0)
+
+    def test_banco_canonizado_casa_variantes_da_base(self):
+        # "C6 BANK" na base e "C6" no seletor são o mesmo banco; idem
+        # "BANCO BMG" x "BMG". A canonização acontece nos dois lados.
+        df = self._df_tres_bancos()
+        distrib, _, _ = calcular_distribuicao_produtos(df, bancos=("C6",))
+        assert set(distrib["CONSULTOR"]) == {"Maria"}
+
+        df_prefixado = df.copy()
+        df_prefixado["BANCO"] = df_prefixado["BANCO"].replace(
+            {"BMG": "  banco bmg "}
+        )
+        distrib_pref, _, _ = calcular_distribuicao_produtos(
+            df_prefixado, bancos=("BMG",)
+        )
+        assert set(distrib_pref["CONSULTOR"]) == {"João"}
+
+    def test_banco_ausente_com_recorte_zera_tabela_inteira(self):
+        # Sem coluna BANCO no frame, qualquer recorte de banco zera tudo
+        # (mesma regra de "criterio sem coluna zera a contagem").
         df = pd.DataFrame({
             "CONSULTOR": ["João", "Maria"],
             "grupo_dashboard": ["CNC", "CNC"],
@@ -244,7 +334,7 @@ class TestCalcularDistribuicaoProdutos:
             "TIPO_PRODUTO": ["CNC", "CNC"],
         })
         distrib, moeda, numero = calcular_distribuicao_produtos(
-            df, somente_bmg_help=True
+            df, bancos=BANCOS_BMG_HELP
         )
         assert distrib.empty
         # Comportamento observado: sobra so a coluna TOTAL (0 linhas),
@@ -401,22 +491,24 @@ class TestCalcularDistribuicaoProdutosPorLoja:
         loja_b = distrib[distrib["LOJA"] == "B"].iloc[0]
         assert loja_b["Consignado (Novo/Refin)"] == 1
 
-    def test_toggle_somente_bmg_help_restringe_tabela_inteira_por_loja(self):
-        # Loja A: BANCO BMG. Loja B: BANCO ITAU (fora da lista).
+    def test_recorte_de_banco_restringe_tabela_inteira_por_loja(self):
+        # Loja A: BMG. Loja B: ITAÚ (acentuado — canoniza para ITAU).
         df = pd.DataFrame({
             "LOJA": ["A", "A", "B", "B"],
             "grupo_dashboard": ["CNC", "CONSIGNADO", "CNC", "CONSIGNADO"],
             "categoria_codigo": [None, "CONSIG_BMG", None, "CONSIG_ITAU"],
             "SUBTIPO": [None, "NOVO", None, "REFIN"],
-            "BANCO": ["BMG", "BMG", "ITAU", "ITAU"],
+            "BANCO": ["BMG", "BMG", "BANCO ITAÚ", "BANCO ITAÚ"],
             "VALOR": [1000.0, 500.0, 800.0, 400.0],
             "TIPO_PRODUTO": ["CNC", "CONSIGNADO", "CNC", "CONSIGNADO"],
         })
+        # None = "Todos": sem recorte.
         distrib_off, _, _ = calcular_distribuicao_produtos_por_loja(df)
         assert set(distrib_off["LOJA"]) == {"A", "B"}
 
+        # Preset BMG/Help mantém o alcance de antes.
         distrib_on, _, numero_on = calcular_distribuicao_produtos_por_loja(
-            df, somente_bmg_help=True
+            df, bancos=BANCOS_BMG_HELP
         )
         assert set(distrib_on["LOJA"]) == {"A"}
         loja_a = distrib_on.iloc[0]
@@ -424,7 +516,14 @@ class TestCalcularDistribuicaoProdutosPorLoja:
         assert loja_a["Consignado (Novo/Refin)"] == 1
         assert "Consignado (Novo/Refin)" in numero_on
 
-    def test_banco_ausente_com_flag_zera_tabela_inteira_por_loja(self):
+        # Banco único, canonizado: "BANCO ITAÚ" na base casa com "ITAU".
+        distrib_itau, _, _ = calcular_distribuicao_produtos_por_loja(
+            df, bancos=("ITAU",)
+        )
+        assert set(distrib_itau["LOJA"]) == {"B"}
+        assert distrib_itau.iloc[0]["TOTAL"] == pytest.approx(1200.0)
+
+    def test_banco_ausente_com_recorte_zera_tabela_inteira_por_loja(self):
         df = pd.DataFrame({
             "LOJA": ["A", "B"],
             "grupo_dashboard": ["CNC", "CNC"],
@@ -432,7 +531,7 @@ class TestCalcularDistribuicaoProdutosPorLoja:
             "TIPO_PRODUTO": ["CNC", "CNC"],
         })
         distrib, moeda, numero = calcular_distribuicao_produtos_por_loja(
-            df, somente_bmg_help=True
+            df, bancos=("BMG",)
         )
         assert distrib.empty
         assert list(distrib.columns) == ["LOJA", "TOTAL"]
