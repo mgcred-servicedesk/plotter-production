@@ -40,6 +40,7 @@ from src.dashboard.kpis.gerais import (
     obter_medias_organizacao_periodo,
     obter_medias_periodo,
     obter_metas_prod_diarias_periodo,
+    peso_headcount_escopo,
     serie_diaria_pago,
 )
 from src.dashboard.pages.config import render_pagina_config
@@ -51,6 +52,9 @@ from src.dashboard.pages.detalhes_cards import render_drilldown_card
 from src.dashboard.loaders import (
     carregar_consultores_ativos,
     carregar_contratos_pagos_intervalo,
+    carregar_headcount_ponderado,
+    carregar_vinculos_consultores,
+    consolidar_dados,
     carregar_universo_lojas,
     carregar_metas_produto_consultor,
     carregar_pagamentos_online,
@@ -495,6 +499,23 @@ def main():
             df_metas_f = filtrar_metas_ui(df_metas_f, df_f)
             df_metas_prod_f = filtrar_metas_ui(df_metas_prod_f, df_f)
 
+        # ── Denominador PONDERADO do headcount (migration 091) ─
+        # Mesma fonte do `weightedHeadcount` do Caderno, para que os dois
+        # parem de responder numeros diferentes a "quantos consultores
+        # dividem esta producao".
+        #
+        # O escopo sai do FILTRO, nunca da producao: `aplicar_rls` +
+        # `aplicar_filtros_ui` recortam por perfil e por loja, e uma loja
+        # dentro do escopo continua no denominador mesmo sem contrato no
+        # periodo — que e o vies inteiro que este denominador corrige.
+        # `aplicar_filtros_ui` so filtra CONSULTOR quando a coluna existe,
+        # e este frame e por loja; o caso de consultor selecionado e
+        # tratado dentro de `peso_headcount_escopo`, que devolve None.
+        _df_headcount = aplicar_filtros_ui(
+            aplicar_rls(carregar_headcount_ponderado(mes, ano))
+        )
+        peso_headcount = peso_headcount_escopo(_df_headcount, _ui_cons)
+
         render_status_bar(
             len(df_f),
             ultima_data,
@@ -571,6 +592,7 @@ def main():
                 mapa_pontos=mapa_pontos,
                 du_decorridos=du_decorridos,
                 perfil=role,
+                peso_headcount=peso_headcount,
             )
             return
 
@@ -651,6 +673,7 @@ def main():
                 df=df_f,
                 du_decorridos=du_decorridos,
                 df_sup=df_sup_f,
+                peso_headcount=peso_headcount,
             )
             medias_organizacao = obter_medias_organizacao_periodo(
                 session_state=st.session_state,
@@ -812,12 +835,46 @@ def main():
                     return bruto, aviso
                 return aplicar_filtros_ui(aplicar_rls(bruto)), aviso
 
+            # Denominador INDIVIDUAL da sub-visao de performance: dias
+            # uteis de vinculo por pessoa (ledger consultor_vigencia).
+            # Passa pelo MESMO recorte de df_f — o escopo sai do
+            # filtro, nunca da producao —, para que numerador e
+            # denominador nunca respondam por populacoes diferentes.
+            _vinculos_gestao = aplicar_filtros_ui(
+                aplicar_rls(carregar_vinculos_consultores(mes, ano))
+            )
+
+            def _carregar_competencia_gestao(m: int, a: int):
+                """Producao, vinculos e supervisores de UMA competencia.
+
+                Alimenta a serie historica da sub-visao de performance.
+                Usa a consolidacao (nao os contratos crus) para que o
+                numerador de meses anteriores siga as MESMAS regras de
+                VALOR do mes na tela. Mesmo recorte de seguranca de
+                df_f: aplicar_rls (perfil) e depois os filtros
+                granulares da sidebar.
+                """
+                bruto, _, sup_comp = consolidar_dados(m, a)
+                if bruto.empty:
+                    return bruto, pd.DataFrame(), sup_comp
+                return (
+                    aplicar_filtros_ui(aplicar_rls(bruto)),
+                    aplicar_filtros_ui(
+                        aplicar_rls(carregar_vinculos_consultores(m, a))
+                    ),
+                    sup_comp,
+                )
+
             render_tab_gestao(
                 df_f,
                 df_sup_f,
                 _univ_cons_gestao,
                 _metas_gestao,
                 _carregar_intervalo_gestao,
+                df_vinculos=_vinculos_gestao,
+                mes=mes,
+                ano=ano,
+                carregar_competencia=_carregar_competencia_gestao,
             )
 
         # Registro unico das abas: permissao + rotulo + icone + render na

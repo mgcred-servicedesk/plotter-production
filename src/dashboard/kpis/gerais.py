@@ -63,6 +63,43 @@ def excluir_supervisores(
 LOJAS_BACKOFFICE: frozenset = frozenset({"VAI E VEM"})
 
 
+def peso_headcount_escopo(
+    df_headcount: Optional[pd.DataFrame],
+    consultor_selecionado: str = "",
+) -> Optional[float]:
+    """Soma o peso do headcount ponderado no escopo ja recortado.
+
+    ``df_headcount`` vem de ``carregar_headcount_ponderado`` DEPOIS de
+    ``aplicar_rls`` e dos filtros da sidebar. O escopo sai do FILTRO, nao
+    da producao: loja dentro do escopo entra no denominador mesmo sem
+    nenhum contrato no periodo. E o mesmo principio de
+    ``aplicar_rls_metas`` — usar a presenca de contrato como proxy de
+    escopo reintroduziria exatamente o vies que este denominador existe
+    para corrigir (quem nao vendeu sumir da conta).
+
+    Devolve ``None`` quando nao ha denominador ponderado confiavel, e o
+    chamador cai no comportamento antigo:
+
+    - frame vazio ou ausente (loader indisponivel, competencia sem
+      ledger);
+    - **um consultor selecionado na sidebar** — a 091 agrega por LOJA e
+      nao existe peso por pessoa, entao restringir a uma pessoa deixaria
+      o denominador da loja inteira contra a producao de um so. O card
+      volta a dividir por quem produziu, que com um filtro de consultor
+      e a propria pessoa.
+    """
+    if consultor_selecionado:
+        return None
+    if df_headcount is None or df_headcount.empty:
+        return None
+    if "PESO" not in df_headcount.columns:
+        return None
+    peso = float(
+        pd.to_numeric(df_headcount["PESO"], errors="coerce").fillna(0.0).sum()
+    )
+    return peso if peso > 0 else None
+
+
 def excluir_lojas_backoffice(df: pd.DataFrame) -> pd.DataFrame:
     """Remove linhas de lojas de backoffice (match por LOJA normalizada)."""
     if df.empty or "LOJA" not in df.columns:
@@ -589,11 +626,19 @@ def calcular_medias_du_por_nivel(
     df: pd.DataFrame,
     du_decorridos: int,
     df_supervisores: Optional[pd.DataFrame] = None,
+    peso_headcount: Optional[float] = None,
 ) -> Dict:
     """Calcula medias DU por loja e por consultor.
 
     Exclui supervisores e lojas de backoffice (``LOJAS_BACKOFFICE``) —
     ambos distorceriam as médias por nível.
+
+    ``peso_headcount`` e o denominador PONDERADO da competencia
+    (``fn_headcount_ponderado``, migration 091), somado no escopo pelo
+    chamador via ``peso_headcount_escopo``. E a mesma fonte que o Caderno
+    divide em ``weightedHeadcount``. ``None`` cai no denominador antigo
+    (quem produziu), e ``denominador_consultores`` no retorno diz qual
+    dos dois valeu.
     """
     df_sem_sup = excluir_lojas_backoffice(
         excluir_supervisores(df, df_supervisores)
@@ -612,24 +657,61 @@ def calcular_medias_du_por_nivel(
     else:
         media_du_loja = 0
 
-    # Media DU por consultor
+    # Media DU por consultor — DENOMINADOR PONDERADO.
+    #
+    # Ate 2026-08-25 o denominador era quem PRODUZIU no periodo, e essa
+    # era a razao de dashboard e Caderno nunca fecharem. Nao pela
+    # diferenca de tamanho (em 07/2026 eram ~110 produtores contra peso
+    # 112,48), e sim pela DIRECAO: excluir quem nao vendeu faz a media
+    # SUBIR justamente no mes em que mais gente nao vendeu, enquanto a do
+    # Caderno DESCE. Os dois numeros andavam em sentidos opostos, entao
+    # nenhuma reconciliacao era possivel.
+    #
+    # Agora divide pelo gente-mes da competencia — mesma fonte, mesmos
+    # filtros e mesma aritmetica do `weightedHeadcount` do Caderno.
+    #
+    # `num_consultores` continua sendo a contagem de produtores, agora
+    # como diagnostico: e o mesmo movimento que a 092 fez do outro lado,
+    # onde a contagem de cadastro virou `countedInRegistry`. Ver a
+    # diferenca entre os dois e o que expoe a patologia.
     num_consultores = 0
+    total_consultores = 0.0
     if "CONSULTOR" in df_sem_sup.columns and not df_sem_sup.empty:
         vendas_por_consultor = df_sem_sup.groupby("CONSULTOR")["VALOR"].sum()
         num_consultores = len(vendas_por_consultor)
-        media_du_consultor = (
-            vendas_por_consultor.mean() / du_decorridos
-            if du_decorridos > 0 and num_consultores > 0
-            else 0
-        )
+        total_consultores = float(vendas_por_consultor.sum())
+
+    if peso_headcount is not None and peso_headcount > 0:
+        denominador = float(peso_headcount)
+        origem = "peso"
     else:
-        media_du_consultor = 0
+        # Fallback identico ao comportamento anterior: soma/len e a
+        # media aritmetica que `.mean()` calculava.
+        denominador = float(num_consultores)
+        origem = "produtores"
+
+    media_du_consultor = (
+        total_consultores / denominador / du_decorridos
+        if du_decorridos > 0 and denominador > 0
+        else 0
+    )
 
     return {
         "media_du_loja": media_du_loja,
         "media_du_consultor": media_du_consultor,
         "num_lojas": num_lojas,
         "num_consultores": num_consultores,
+        # Producao da populacao CONSULTOR (sem supervisor, sem
+        # backoffice) — o numerador que casa com o denominador acima.
+        # E o analogo exato do `paidByConsultants` que a 096 criou no
+        # Caderno, e existe pelo mesmo motivo: `total_vendas` inclui
+        # supervisor e VAI E VEM (regra de 2026-08-10), o peso exclui os
+        # dois, e dividir um pelo outro e media sobre duas populacoes.
+        "producao_consultores": total_consultores,
+        "peso_consultores": (
+            float(peso_headcount) if peso_headcount is not None else 0.0
+        ),
+        "denominador_consultores": origem,
     }
 
 
@@ -1149,6 +1231,7 @@ def obter_medias_periodo(
     df: pd.DataFrame,
     du_decorridos: int,
     df_sup: pd.DataFrame,
+    peso_headcount: Optional[float] = None,
 ) -> Dict:
     """Medias por DU e por nivel (regiao/loja/consultor) — com cache.
 
@@ -1169,6 +1252,7 @@ def obter_medias_periodo(
             df,
             du_decorridos,
             df_sup,
+            peso_headcount=peso_headcount,
         )
         session_state["_medias_chave"] = chave
 

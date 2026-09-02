@@ -134,12 +134,20 @@ def calcular_medias_pontos_por_nivel(
     df: pd.DataFrame,
     du_decorridos: int,
     df_supervisores: Optional[pd.DataFrame] = None,
+    peso_headcount: Optional[float] = None,
 ) -> Dict:
     """Medias DU em pontos por loja e por consultor.
 
     Mesma logica de ``calcular_medias_du_por_nivel`` (em valor),
     mas operando sobre a coluna ``pontos``. Exclui supervisores e
     lojas de backoffice (``LOJAS_BACKOFFICE``).
+
+    ``peso_headcount`` segue a mesma regra da versao em valor: e o
+    gente-mes da competencia (091) somado no escopo, e ``None`` cai no
+    denominador antigo (quem produziu). Manter as duas paginas com o
+    mesmo denominador importa — valor e pontos sao a mesma producao
+    vista por duas reguas, e nao podem discordar sobre quantas pessoas a
+    produziram.
     """
     df_sem_sup = excluir_lojas_backoffice(
         excluir_supervisores(df, df_supervisores)
@@ -160,8 +168,10 @@ def calcular_medias_pontos_por_nivel(
             else 0.0
         )
 
+    # Denominador PONDERADO — ver a justificativa longa em
+    # `calcular_medias_du_por_nivel` (gerais.py).
     num_consultores = 0
-    media_du_consultor = 0.0
+    total_consultores = 0.0
     if (
         "CONSULTOR" in df_sem_sup.columns
         and "pontos" in df_sem_sup.columns
@@ -169,17 +179,34 @@ def calcular_medias_pontos_por_nivel(
     ):
         pontos_por_consultor = df_sem_sup.groupby("CONSULTOR")["pontos"].sum()
         num_consultores = len(pontos_por_consultor)
-        media_du_consultor = (
-            float(pontos_por_consultor.mean()) / du_decorridos
-            if du_decorridos > 0 and num_consultores > 0
-            else 0.0
-        )
+        total_consultores = float(pontos_por_consultor.sum())
+
+    if peso_headcount is not None and peso_headcount > 0:
+        denominador = float(peso_headcount)
+        origem = "peso"
+    else:
+        denominador = float(num_consultores)
+        origem = "produtores"
+
+    media_du_consultor = (
+        total_consultores / denominador / du_decorridos
+        if du_decorridos > 0 and denominador > 0
+        else 0.0
+    )
 
     return {
         "media_du_loja_pontos": media_du_loja,
         "media_du_consultor_pontos": media_du_consultor,
         "num_lojas": num_lojas,
         "num_consultores": num_consultores,
+        # Pontos da populacao CONSULTOR — mesmo papel que
+        # `producao_consultores` cumpre em valor. Ver a justificativa
+        # em `calcular_medias_du_por_nivel` (gerais.py).
+        "pontos_consultores": total_consultores,
+        "peso_consultores": (
+            float(peso_headcount) if peso_headcount is not None else 0.0
+        ),
+        "denominador_consultores": origem,
     }
 
 

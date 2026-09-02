@@ -47,6 +47,7 @@ from src.dashboard.kpis.gerais import (
     obter_medias_organizacao_periodo,
     obter_medias_periodo,
     obter_metas_prod_diarias_periodo,
+    peso_headcount_escopo,
     separar_cancelados_liquidos,
 )
 from src.shared.dias_uteis import calcular_dias_uteis
@@ -1013,14 +1014,183 @@ class TestObterMediasPeriodo:
         assert resultado_b != resultado_a
         assert resultado_a == esperado_a
 
-    def test_cache_e_dict_com_as_4_chaves_de_medias_du_por_nivel(self, df_escopo_a):
+    def test_cache_e_dict_com_as_chaves_de_medias_du_por_nivel(self, df_escopo_a):
         ss = {}
         obter_medias_periodo(**_kwargs_medias(ss, df_escopo_a, _PERFIL_A))
         cache = ss["_medias_cache"]
         assert isinstance(cache, dict)
+        # `peso_consultores` e `denominador_consultores` entraram com o
+        # denominador ponderado (091): o card precisa saber por qual dos
+        # dois numeros a media foi dividida para rotular o rodape.
         assert set(cache.keys()) == {
-            "media_du_loja", "media_du_consultor", "num_lojas", "num_consultores",
+            "media_du_loja", "media_du_consultor", "num_lojas",
+            "num_consultores", "producao_consultores", "peso_consultores",
+            "denominador_consultores",
         }
+
+
+@pytest.mark.unit
+class TestDenominadorPonderado:
+    """Denominador da media por consultor — peso (091) vs produtores.
+
+    O ponto da mudanca nao e o tamanho da diferenca, e a DIRECAO:
+    dividir por quem produziu faz a media subir quando mais gente deixa
+    de produzir, enquanto o Caderno, que divide pelo gente-mes, desce.
+    """
+
+    def _df(self):
+        return pd.DataFrame({
+            "CONSULTOR": ["A", "B"],
+            "LOJA": ["L1", "L1"],
+            "VALOR": [1000.0, 3000.0],
+        })
+
+    def test_sem_peso_mantem_o_comportamento_antigo(self):
+        r = calcular_medias_du_por_nivel(self._df(), 10, _df_sup_vazio())
+        # (1000 + 3000) / 2 produtores / 10 DU
+        assert r["media_du_consultor"] == pytest.approx(200.0)
+        assert r["denominador_consultores"] == "produtores"
+        assert r["num_consultores"] == 2
+
+    def test_peso_vira_o_denominador(self):
+        r = calcular_medias_du_por_nivel(
+            self._df(), 10, _df_sup_vazio(), peso_headcount=4.0
+        )
+        # (1000 + 3000) / 4,0 gente-mes / 10 DU
+        assert r["media_du_consultor"] == pytest.approx(100.0)
+        assert r["denominador_consultores"] == "peso"
+        assert r["peso_consultores"] == pytest.approx(4.0)
+        # produtores segue exposto, como diagnostico
+        assert r["num_consultores"] == 2
+
+    def test_peso_fracionario_e_aceito(self):
+        r = calcular_medias_du_por_nivel(
+            self._df(), 1, _df_sup_vazio(), peso_headcount=2.5
+        )
+        assert r["media_du_consultor"] == pytest.approx(1600.0)
+
+    def test_peso_zero_ou_negativo_cai_no_fallback(self):
+        for peso in (0.0, -3.0):
+            r = calcular_medias_du_por_nivel(
+                self._df(), 10, _df_sup_vazio(), peso_headcount=peso
+            )
+            assert r["denominador_consultores"] == "produtores"
+            assert r["media_du_consultor"] == pytest.approx(200.0)
+
+    def test_quem_nao_produziu_nao_some_do_denominador(self):
+        """O vies que a mudanca corrige, em um caso.
+
+        Mesma producao, metade das pessoas vendendo. Pelo denominador
+        antigo a media DOBRA; pelo ponderado ela nao se mexe, porque o
+        denominador vem do quadro, nao da producao.
+        """
+        df_todos = self._df()
+        df_metade = df_todos[df_todos["CONSULTOR"] == "A"].copy()
+        df_metade.loc[:, "VALOR"] = 4000.0
+
+        antigo_todos = calcular_medias_du_por_nivel(
+            df_todos, 10, _df_sup_vazio())["media_du_consultor"]
+        antigo_metade = calcular_medias_du_por_nivel(
+            df_metade, 10, _df_sup_vazio())["media_du_consultor"]
+        assert antigo_metade == pytest.approx(antigo_todos * 2)
+
+        novo_todos = calcular_medias_du_por_nivel(
+            df_todos, 10, _df_sup_vazio(), peso_headcount=2.0
+        )["media_du_consultor"]
+        novo_metade = calcular_medias_du_por_nivel(
+            df_metade, 10, _df_sup_vazio(), peso_headcount=2.0
+        )["media_du_consultor"]
+        assert novo_metade == pytest.approx(novo_todos)
+
+
+@pytest.mark.unit
+class TestPesoHeadcountEscopo:
+    """``peso_headcount_escopo`` — soma o peso do escopo ja recortado."""
+
+    def _hc(self):
+        return pd.DataFrame({
+            "LOJA": ["L1", "L2"],
+            "PESO": [10.5, 4.5],
+            "REGIAO": ["R1", "R1"],
+        })
+
+    def test_soma_o_peso_do_escopo(self):
+        assert peso_headcount_escopo(self._hc()) == pytest.approx(15.0)
+
+    def test_consultor_selecionado_devolve_none(self):
+        # A 091 agrega por LOJA; nao existe peso por pessoa. Restringir a
+        # uma pessoa deixaria o denominador da loja inteira contra a
+        # producao de um so.
+        assert peso_headcount_escopo(self._hc(), "FULANO") is None
+
+    def test_frame_vazio_ausente_ou_sem_coluna_devolve_none(self):
+        assert peso_headcount_escopo(None) is None
+        assert peso_headcount_escopo(pd.DataFrame()) is None
+        assert peso_headcount_escopo(pd.DataFrame({"LOJA": ["L1"]})) is None
+
+    def test_peso_zerado_devolve_none(self):
+        df = self._hc()
+        df["PESO"] = [0.0, 0.0]
+        assert peso_headcount_escopo(df) is None
+
+
+@pytest.mark.unit
+class TestPopulacaoUnicaNumerador:
+    """``producao_consultores`` — o numerador que casa com o peso.
+
+    O peso da 091 exclui supervisor e backoffice por construcao;
+    ``total_vendas`` inclui os dois desde 2026-08-10. Dividir um pelo
+    outro e media sobre duas populacoes — o mesmo defeito que a 096
+    corrigiu no Caderno criando ``paidByConsultants``.
+    """
+
+    def _df(self):
+        return pd.DataFrame({
+            "CONSULTOR": ["A", "B", "CHEFE", "DIGITADOR"],
+            "LOJA": ["L1", "L1", "L1", "VAI E VEM"],
+            "VALOR": [1000.0, 3000.0, 500.0, 200.0],
+        })
+
+    def _sup(self):
+        return pd.DataFrame({"SUPERVISOR": ["CHEFE"]})
+
+    def test_numerador_exclui_supervisor_e_backoffice(self):
+        r = calcular_medias_du_por_nivel(
+            self._df(), 10, self._sup(), peso_headcount=4.0
+        )
+        # 4000 dos consultores reais; os 700 de CHEFE + VAI E VEM ficam
+        # no total_vendas da rede, nunca nesta media.
+        assert r["producao_consultores"] == pytest.approx(4000.0)
+        assert r["num_consultores"] == 2
+
+    def test_numerador_bate_com_a_media_du_exibida(self):
+        """A coerencia interna do card, em um assert.
+
+        O numero grande (producao/peso) dividido pelos DU tem de dar
+        exatamente a linha "Media DU/consultor" logo abaixo dele. Era
+        isso que quebrava: o topo usava total_vendas, o rodape usava a
+        populacao limpa, e os dois nao convergiam no fechamento.
+        """
+        r = calcular_medias_du_por_nivel(
+            self._df(), 10, self._sup(), peso_headcount=4.0
+        )
+        media_card = r["producao_consultores"] / r["peso_consultores"]
+        assert media_card / 10 == pytest.approx(r["media_du_consultor"])
+
+    def test_numerador_vale_tambem_no_fallback_por_produtores(self):
+        # Sem peso o denominador volta a ser quem produziu, mas a
+        # populacao do numerador nao muda: supervisor nunca entra em
+        # media por consultor (business-rules.md).
+        r = calcular_medias_du_por_nivel(self._df(), 10, self._sup())
+        assert r["denominador_consultores"] == "produtores"
+        assert r["producao_consultores"] == pytest.approx(4000.0)
+        assert r["media_du_consultor"] == pytest.approx(200.0)
+
+    def test_frame_vazio_zera_sem_estourar(self):
+        vazio = pd.DataFrame(columns=["CONSULTOR", "LOJA", "VALOR"])
+        r = calcular_medias_du_por_nivel(vazio, 10, self._sup())
+        assert r["producao_consultores"] == 0.0
+        assert r["media_du_consultor"] == 0
 
 
 @pytest.mark.unit

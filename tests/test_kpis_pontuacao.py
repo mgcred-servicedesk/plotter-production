@@ -109,6 +109,31 @@ class TestCalcularMediasPontosPorNivel:
         assert r["num_consultores"] == 1
         assert r["media_du_consultor_pontos"] == pytest.approx(60.0)
 
+    def test_pontos_consultores_e_o_numerador_da_populacao_limpa(self):
+        """Numerador em pontos, sem supervisor e sem backoffice.
+
+        Espelha ``producao_consultores`` em valor: o card de pontuacao
+        dividia ``total_pontos`` (que soma os dois) pelo peso, que
+        exclui os dois. Valor e pontos sao a mesma producao vista por
+        duas reguas e nao podem discordar sobre a populacao.
+        """
+        df = pd.DataFrame({
+            "LOJA": ["A", "A", "VAI E VEM"],
+            "CONSULTOR": ["João", "Chefe", "Amos"],
+            "pontos": [600.0, 150.0, 400.0],
+        })
+        sup = pd.DataFrame({"SUPERVISOR": ["Chefe"]})
+        r = calcular_medias_pontos_por_nivel(
+            df, 10, df_supervisores=sup, peso_headcount=2.0
+        )
+        assert r["pontos_consultores"] == pytest.approx(600.0)
+        assert r["denominador_consultores"] == "peso"
+        # Coerencia interna do card: (pontos/peso)/DU == media DU.
+        media_card = r["pontos_consultores"] / r["peso_consultores"]
+        assert media_card / 10 == pytest.approx(
+            r["media_du_consultor_pontos"]
+        )
+
 
 @pytest.mark.unit
 class TestCalcularMixPontos:

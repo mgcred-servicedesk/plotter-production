@@ -126,7 +126,7 @@ class TestFetchContratosPagosValorConsolidado:
         registro = {}
 
         def _capturar(montar_query, coluna_chave):
-            montar_query()
+            montar_query(loaders._PAGE_SIZE)
             return []
 
         monkeypatch.setattr(loaders, "_sb", lambda: _FakeQuery(registro))
@@ -215,7 +215,7 @@ class TestFetchCobrancaConsignavelServerSide:
         registro = {}
 
         def _capturar(montar_query, coluna_chave):
-            montar_query()
+            montar_query(loaders._PAGE_SIZE)
             return []
 
         monkeypatch.setattr(loaders, "_sb", lambda: _FakeQuery(registro))

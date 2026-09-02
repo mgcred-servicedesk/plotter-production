@@ -16,6 +16,7 @@ import streamlit as st
 
 from src.dashboard.components.tables import exibir_tabela
 from src.dashboard.formatters import (
+    formatar_decimal,
     formatar_moeda,
     formatar_moeda_compacta,
     formatar_percentual,
@@ -212,11 +213,43 @@ def render_kpis_contexto(
     # Médias por consultor (em valor)
     total_vendas = kpis.get("total_vendas", 0)
     du_total = kpis.get("du_total", 0)
+    # Denominador PONDERADO quando disponivel (migration 091) — a mesma
+    # base que o Caderno divide em `weightedHeadcount`. `num_consultores`
+    # (quem produziu) continua exibido, agora como diagnostico: a
+    # diferenca entre os dois e justamente o que a media escondia.
     num_consultores = medias.get("num_consultores", 0) or kpis.get(
         "num_consultores", 0
     )
+    peso_consultores = float(medias.get("peso_consultores", 0) or 0)
+    usa_peso = (
+        medias.get("denominador_consultores") == "peso"
+        and peso_consultores > 0
+    )
+    denom_consultor = (
+        peso_consultores if usa_peso else float(num_consultores)
+    )
+    if usa_peso:
+        rotulo_denominador = (
+            f"Dividido por {formatar_decimal(denom_consultor)} gente-m&#234;s "
+            f"({num_consultores:,} produziram)"
+        )
+    else:
+        rotulo_denominador = f"Acumulado entre {num_consultores:,} consultores"
+    # Numerador = producao da populacao CONSULTOR (sem supervisor, sem
+    # VAI E VEM), a mesma que o denominador mede. `total_vendas` inclui
+    # os dois — e a regra de 2026-08-10, correta para meta/gap/projecao
+    # da rede logo acima, errada aqui: media por consultor sobre duas
+    # populacoes diferentes e o defeito que a 096 corrigiu no Caderno
+    # criando `paidByConsultants`. Fallback para `total_vendas` so se a
+    # chave faltar (dict de media montado por outro caminho).
+    prod_consultores = medias.get("producao_consultores")
+    num_consultor = (
+        float(prod_consultores)
+        if prod_consultores is not None
+        else float(total_vendas or 0)
+    )
     media_consultor = (
-        total_vendas / num_consultores if num_consultores > 0 else 0
+        num_consultor / denom_consultor if denom_consultor > 0 else 0
     )
     media_du_consultor = medias.get("media_du_consultor", 0)
     projecao_consultor = media_du_consultor * du_total
@@ -279,7 +312,7 @@ def render_kpis_contexto(
             <div class="mg-kpi-ctx-valor">{_formatar_valor_moeda(media_consultor)}</div>
             <div class="mg-kpi-ctx-sub">
                 <span style="font-size:12px;">{formatar_moeda(media_consultor)}</span><br>
-                Acumulado entre {num_consultores:,} consultores<br>
+                {rotulo_denominador}<br>
                 Média DU/consultor:
                 <strong>{_formatar_valor_moeda(media_du_consultor)}</strong><br>
                 Projeção fim do mês:

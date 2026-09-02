@@ -28,6 +28,7 @@ from src.dashboard.kpis.gestao import (
 )
 from src.dashboard.tabs.gestao_consultores import (
     _ATALHOS_PERIODO,
+    _competencias_fechadas,
     _BASES,
     _COMBINACOES,
     _METRICAS,
@@ -282,3 +283,43 @@ class TestDataPorExtenso:
         for mes in range(1, 13):
             texto = _data_por_extenso(date(2026, mes, 10))
             assert "de  de" not in texto and texto.count(" de ") == 2
+
+
+# ══════════════════════════════════════════════════════
+# Sub-visao Performance: janela de competencias fechadas
+# ══════════════════════════════════════════════════════
+
+
+@pytest.mark.unit
+class TestCompetenciasFechadas:
+    def test_mes_corrente_nunca_entra_na_serie(self):
+        """Mes pela metade ao lado de meses inteiros desenha queda falsa."""
+        hoje = date(2026, 8, 31)
+        out = _competencias_fechadas(8, 2026, 3, hoje=hoje)
+
+        assert (8, 2026) not in out
+        assert out == [(5, 2026), (6, 2026), (7, 2026)]
+
+    def test_mes_fechado_entra_como_ultimo_da_janela(self):
+        out = _competencias_fechadas(7, 2026, 3, hoje=date(2026, 8, 31))
+
+        assert out[-1] == (7, 2026)
+        assert out == [(5, 2026), (6, 2026), (7, 2026)]
+
+    def test_ordem_crescente(self):
+        out = _competencias_fechadas(6, 2026, 6, hoje=date(2026, 8, 31))
+
+        assert out == sorted(out, key=lambda c: (c[1], c[0]))
+
+    def test_atravessa_a_virada_de_ano(self):
+        out = _competencias_fechadas(2, 2026, 4, hoje=date(2026, 8, 31))
+
+        assert out == [(11, 2025), (12, 2025), (1, 2026), (2, 2026)]
+
+    def test_mes_futuro_cai_para_o_ultimo_fechado(self):
+        out = _competencias_fechadas(12, 2026, 2, hoje=date(2026, 8, 31))
+
+        assert out == [(6, 2026), (7, 2026)]
+
+    def test_janela_zero_devolve_vazio(self):
+        assert _competencias_fechadas(7, 2026, 0, hoje=date(2026, 8, 31)) == []

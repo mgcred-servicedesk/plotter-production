@@ -1,7 +1,10 @@
 # Headcount — contrato de ETL (angry-man)
 
 > **Projetos afetados:** `Numeros_venda` (dashboard) · `angry-man` (ETL) · `bereshit` (Caderno)
-> **Status:** implementado no angry-man em 2026-08-21 (migrations 090/094).
+> **Status:** implementado no angry-man em 2026-08-21 (migrations 090/094);
+> guardas de cadastro em 2026-08-25 (migration 095, §4.3); importação do
+> cadastro histórico de e-mails preparada na migration 097 (§4.5), ainda
+> dependente de aplicação e deploy.
 > Pendente: o RH acrescentar as cinco colunas novas ao arquivo.
 > **Origem:** decisões do usuário em 2026-08-20 (ver
 > [progress/2026-08-20](agents/progress/2026-08-20-consultor-vigencia-granularidade-dia.md))
@@ -39,6 +42,14 @@ headcount**, não em arquivo separado. Isso casa com a semântica escolhida — 
 HC já é uma **foto do quadro**, e foto é exatamente o que `SNAPSHOT` espera.
 
 Colunas hoje: `FILIAL`, `VENDEDOR`, `STATUS`, `Obs`.
+
+`STATUS` passou a seguir a mesma precedência das datas (migration
+095): **célula vazia preserva o status que já está no banco**, e
+`Ativo (a)` vale só para pessoa nova. Antes, branco virava
+`Ativo (a)` e reativava desligado a cada upload — o status era a
+única coluna do arquivo fora da regra "vazio nunca significa 'não
+tem'".
+
 Colunas a acrescentar:
 
 | Coluna | Obrigatória | Formato | Vazio significa |
@@ -57,6 +68,25 @@ próprio `STATUS` (`Licença Maternidade`).
 > A cópia de `HC_Colaboradores.xlsx` neste repositório é um **export velho** —
 > 47 dos 242 nomes divergem do banco, 45 deles `Ativo (a)` na planilha e
 > `Desligado (a)` no banco. Não usar como referência de estado atual.
+
+### 2.1 Exceção: cadastro histórico de e-mails
+
+`Cadastro_Afastamentos_2026.xlsx` não é uma foto atual de headcount. É uma
+coleção histórica de eventos, em duas abas, e por isso entra por uma porta
+separada: `fn_movimentacoes_rh_import` (097). A terceira aba, `Leia-me`, é
+metadado e nunca vira movimento.
+
+O angry-man localiza o cabeçalho real na linha 4, converte apenas `Licença
+médica` e `Licença maternidade` para o vocabulário fechado e mantém os demais
+tipos como pendência. Datas citadas dentro do campo livre de motivo não são
+interpretadas: o arquivo declara que ocorrências recorrentes foram agrupadas,
+logo transformar a primeira e a última menção em uma janela contínua seria
+inventar ausência.
+
+O fluxo é `dry-run` seguido de aplicação somente se o banco não encontrar
+pendências. Nomes não resolvidos, loja não reconhecida, correção `MANUAL` e
+produção na data do desligamento ou depois dela bloqueiam a transação inteira.
+Motivo e remetente não saem do browser.
 
 ## 3. Afastamento — semântica e RPC
 
@@ -161,6 +191,67 @@ muda número já publicado, retroativamente e em massa. O envelope sempre devolv
 > (`Ativo (a)` nela, `Desligado (a)` no banco) e 1 é HELOINA. Com
 > `p_reabrir_ativos` ligado, aquela carga reabriria 46 janelas de uma vez.
 
+### 4.3 Guardas da migration 095
+
+Três correções na mesma função, mesma assinatura — sem `DROP`, sem
+redeploy obrigatório do angry-man. Todas medidas contra o banco real em
+2026-08-25, antes da primeira carga, e nenhuma altera número publicado
+hoje.
+
+| Guarda | Por quê |
+|---|---|
+| **`desligados_com_janela_aberta`** no `diagnostico` | O espelho de `ativos_com_janela_fechada`, que faltava. Planilha diz que a pessoa saiu, o ledger tem janela aberta, `DATA_DESLIGAMENTO` veio vazia: não há data para aplicar — e a 094 também não dizia nada. Como a 091 lê só os ledgers, janela aberta sem produção **pesa 1,0**: a pessoa segue dividindo a produção depois de ter saído. Acompanha `desligados_sem_data` com o `ultimo_contrato` de cada uma, que é a data que o backfill usaria. |
+| **Status só muda quando a planilha fala** | `coalesce(planilha, banco, 'Ativo (a)')`. Célula vazia preserva; `Ativo (a)` vale só para pessoa nova. |
+| **Linha inalterada não é reescrita** | `WHERE tgt.status IS DISTINCT FROM EXCLUDED.status`. Sem isso o upload carimba `now()` em todas as linhas na mesma instrução e iguala os `updated_at` — que é o desempate de cadastro duplicado tanto no dashboard (`_colapsar_cadastro_recente`) quanto no Caderno (`consultores_mais_recentes`, CTE das migrations 073/075/092). Simulado com todos empatados: o cadastro ativo salta de 167 para 182 pessoas. |
+
+O contador **não fecha janela**. Fechar exigiria uma data, e a única
+disponível seria inferida — o oposto de "declarado vence inferido".
+Fechar por status seria parâmetro novo, logo assinatura nova, logo `DROP`
++ redeploy coordenado. A 095 faz o número **aparecer**; agir sobre ele
+continua sendo ato explícito.
+
+Campos novos no envelope, nada removido nem renomeado:
+`cadastro.inalterados`, `diagnostico.desligados_com_janela_aberta`,
+`diagnostico.desligados_sem_data`. `cadastro.atualizados` muda de
+significado — linhas *alteradas*, não linhas *tocadas*.
+
+### 4.4 Tudo-ou-nada: onde vale e onde não vale
+
+O §3.2 diz que uma linha inválida derruba a carga inteira. O importador
+aplica isso de forma **assimétrica**, de propósito:
+
+- **Bloco de afastamento — aborta.** Em `SNAPSHOT`, ausência significa
+  retorno: a 090 fecha a janela de quem sumiu do arquivo. Uma linha
+  recusada sairia do bloco e ficaria indistinguível de "voltou ao
+  trabalho" — um erro de digitação no tipo encerraria o afastamento da
+  pessoa e a devolveria ao denominador. Então a carga inteira para.
+- **Datas de admissão/desligamento — avisam e seguem.** Data ilegível
+  cai no fallback derivado da produção, que é exatamente o que já vale
+  hoje. Não muda nada, e derrubar o arquivo por uma célula mal digitada
+  seria pior que o defeito.
+
+A régua é o efeito, não a severidade: recusa que **escreve** aborta;
+recusa que apenas **mantém o estado atual** avisa.
+
+### 4.5 RPC de movimentos históricos (migration 097)
+
+```text
+fn_movimentacoes_rh_import(
+  p_afastamentos jsonb,
+  p_desligamentos jsonb,
+  p_validar_apenas boolean DEFAULT true
+)
+```
+
+A função valida identidade, loja, datas, duplicidades, janelas `MANUAL` e
+contratos posteriores antes de qualquer escrita. Na aplicação, atualiza a foto
+de consultores, fecha as vigências de consultor e supervisor, encerra eventual
+afastamento aberto no desligamento e executa o fechamento de afastamentos por
+produção. Reimportar o mesmo evento já fechado não o reabre.
+
+O envelope contém somente contagens e códigos por número de linha; nunca nome,
+tipo ou observação. `EXECUTE` permanece exclusivo de `service_role`.
+
 ## 5. Ordem de chamada
 
 ```
@@ -211,3 +302,48 @@ inteira visível numa linha.
 > **internamente inconsistente**: mostraria headcount inteiro com produtividade
 > calculada sobre o peso, e quem dividisse à mão não bateria. Os dois têm de
 > sair na mesma janela, junto com a rematerialização dos snapshots.
+
+
+## 7. O lado Python — o dashboard passou a dividir pelo mesmo peso
+
+> Implementado em 2026-08-25. Era a pendência que mantinha os dois lados
+> discordando, e a razão de o §6 nunca ter fechado de fato.
+
+Até aqui o Caderno já dividia por `weightedHeadcount`, mas o dashboard
+continuava dividindo por **quem produziu no período**. A distância entre
+os dois números é pequena (em 07/2026: ~113 produtores contra peso
+112,4782), e por isso passou tanto tempo despercebida. O problema não é o
+tamanho, é a **direção**:
+
+> Excluir quem não vendeu faz a média do dashboard **subir** exatamente
+> no mês em que mais gente não vendeu — enquanto a do Caderno **desce**.
+> Andando em sentidos opostos, nenhuma reconciliação era possível.
+
+`carregar_headcount_ponderado(mes, ano)` (`src/dashboard/loaders.py`) lê
+`fn_headcount_ponderado` e devolve peso/cabeças por loja. Reaplica os
+**mesmos dois filtros** que a 092 reaplica sobre a 091 — loja inativa e
+backoffice (`LOJAS_BACKOFFICE = {"VAI E VEM"}`, o mesmo literal do CTE
+`lojas_backoffice`) — porque a 091 responde "quem estava onde", não "o
+que entra na média". Supervisores já saem dentro da própria 091.
+
+O escopo do denominador vem do **filtro**, nunca da produção: uma loja
+dentro do escopo continua no denominador mesmo sem contrato no período.
+É o princípio que `aplicar_rls_metas` já seguia, e usar presença de
+contrato como proxy reintroduziria o viés inteiro.
+
+Verificado ponta a ponta em 07/2026: o peso somado pelo loader dá
+**112,4782**, idêntico ao `weightedHeadcount` que o Caderno publica —
+derivado por dois caminhos independentes (loader Python e SQL da 092).
+
+**Uma granularidade que não existe:** com **um consultor selecionado** na
+sidebar, `peso_headcount_escopo` devolve `None` e o card volta a dividir
+por quem produziu. A 091 agrega por LOJA e não há peso por pessoa;
+restringir a uma pessoa deixaria o denominador da loja inteira contra a
+produção de uma só. O retorno das médias traz
+`denominador_consultores` (`"peso"` ou `"produtores"`) para que o rodapé
+do card diga por qual dos dois a média foi dividida.
+
+**Mês corrente:** o peso é sempre o da competência inteira (a 091 calcula
+sobre os DU cheios do mês); a divisão por `du_decorridos` continua
+separada. Quem saiu no meio já entra com peso parcial e quem está com
+janela aberta pesa 1,0 de qualquer forma.

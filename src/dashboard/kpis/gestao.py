@@ -84,6 +84,16 @@ METRICA_VALOR = "valor"
 METRICA_QTD = "qtd"
 METRICA_TICKET = "ticket"
 METRICA_SHARE = "share"
+# Producao paga dividida pelos dias uteis em que a pessoa tinha
+# VINCULO na competencia (``carregar_vinculos_consultores``). Nao e
+# presenca: ferias, faltas e afastamentos NAO sao descontados — ver
+# `kpis/produtividade.py`. Existe para que quem entrou no dia 20 nao
+# seja lido como mau vendedor ao lado de quem ficou o mes inteiro.
+METRICA_PROD_DIA = "prod_dia"
+
+# Coluna de contexto que acompanha a metrica de produtividade: sem ela
+# o gestor ve "R$ 900/dia" sem saber se sao 23 dias ou 2.
+COL_DIAS = "Dias elegiveis"
 
 # ── Niveis de agregacao ──────────────────────────────
 NIVEL_CONSULTOR = "Consultor"
@@ -171,6 +181,7 @@ def _matriz_por_consultor(
     df: pd.DataFrame,
     df_supervisores: Optional[pd.DataFrame] = None,
     df_universo: Optional[pd.DataFrame] = None,
+    df_vinculos: Optional[pd.DataFrame] = None,
 ) -> pd.DataFrame:
     """Matriz bruta por consultor: valor E quantidade por produto.
 
@@ -178,6 +189,12 @@ def _matriz_por_consultor(
     par ``_val_<rotulo>`` / ``_qtd_<rotulo>`` por produto. As metricas
     derivadas (ticket medio, share) e a agregacao para niveis acima
     saem daqui — um unico caminho de calculo para todas as leituras.
+
+    ``df_vinculos`` acrescenta ``_dias``, o denominador individual da
+    metrica de produtividade. Some pelo mesmo groupby das demais, entao
+    a leitura por loja/regiao usa a razao das somas e nao a media das
+    produtividades — media de medias daria o mesmo peso a quem teve 2
+    dias e a quem teve 23.
     """
     obrigatorias = {"CONSULTOR", "VALOR", "categoria_codigo"}
     tem_producao = not df.empty and obrigatorias.issubset(df.columns)
@@ -234,6 +251,7 @@ def _matriz_por_consultor(
         )
 
     _anexar_aceleradores(base, df_todos)
+    _anexar_dias_elegiveis(base, df_vinculos)
     return base
 
 
@@ -258,6 +276,43 @@ def _anexar_aceleradores(
         base[_col_acel(rotulo)] = (
             base["_key"].map(contagem).fillna(0.0).astype(float)
         )
+
+
+def _anexar_dias_elegiveis(
+    base: pd.DataFrame,
+    df_vinculos: Optional[pd.DataFrame],
+) -> None:
+    """Adiciona ``_dias``: dias uteis de vinculo na competencia.
+
+    Fonte: ``carregar_vinculos_consultores`` (ledger
+    ``consultor_vigencia``), ja recortado pelo mesmo RLS de ``df``.
+    Pessoa transferida no mes tem os segmentos SOMADOS — as janelas do
+    ledger nao se sobrepoem (087), entao a soma continua sendo o mes
+    dela, sem contar dia duas vezes.
+
+    Quem nao tem janela no ledger fica com ``0``, e a metrica de
+    produtividade devolve ausente para essas linhas — nunca zero, que
+    seria uma afirmacao sobre a pessoa quando o furo esta no cadastro.
+    Muta ``base`` no lugar, como o laco de produtos.
+    """
+    if (
+        df_vinculos is None
+        or df_vinculos.empty
+        or "CONSULTOR" not in df_vinculos.columns
+        or "DIAS_ELEGIVEIS" not in df_vinculos.columns
+    ):
+        base["_dias"] = 0.0
+        return
+
+    vin = df_vinculos.copy()
+    vin["_key"] = vin["CONSULTOR"].map(_norm_nome)
+    dias = (
+        pd.to_numeric(vin["DIAS_ELEGIVEIS"], errors="coerce")
+        .fillna(0.0)
+        .groupby(vin["_key"])
+        .sum()
+    )
+    base["_dias"] = base["_key"].map(dias).fillna(0.0).astype(float)
 
 
 def _col_val(rotulo: str) -> str:
@@ -320,9 +375,11 @@ def _agregar_nivel(
     if not chaves:
         return matriz
 
+    # `_dias` entra na soma: no nivel loja/regiao o denominador da
+    # produtividade e a soma dos dias das pessoas, nao a media delas.
     metricas = [
         c for c in matriz.columns
-        if c.startswith(("_val_", "_qtd_", "_acel_"))
+        if c.startswith(("_val_", "_qtd_", "_acel_", "_dias"))
     ]
     agregada = (
         matriz.groupby(chaves, dropna=False)[metricas].sum().reset_index()
@@ -346,7 +403,8 @@ def _aplicar_metrica(
     saida = matriz.drop(
         columns=[
             c for c in matriz.columns
-            if c.startswith(("_val_", "_qtd_", "_acel_")) or c == "_key"
+            if c.startswith(("_val_", "_qtd_", "_acel_", "_dias"))
+            or c == "_key"
         ]
     )
     rotulos = list(PRODUTOS_GESTAO)
@@ -358,6 +416,16 @@ def _aplicar_metrica(
         (matriz[_col_qtd(r)] for r in produtos_total),
         pd.Series(0.0, index=matriz.index),
     )
+    # Denominador da produtividade. `where(> 0)` deixa NaN onde nao ha
+    # dia elegivel: a divisao devolve ausente, nao zero. Zero diria
+    # "produz nada por dia", que e afirmacao sobre a pessoa — o furo
+    # esta no ledger, e a linha de diagnostico da aba e que responde
+    # por ele.
+    dias = (
+        matriz["_dias"] if "_dias" in matriz.columns
+        else pd.Series(0.0, index=matriz.index)
+    )
+    dias_div = dias.where(dias > 0)
 
     for rotulo in rotulos:
         val = matriz[_col_val(rotulo)]
@@ -370,6 +438,8 @@ def _aplicar_metrica(
             saida[rotulo] = (
                 val / val_total.where(val_total > 0) * 100.0
             ).fillna(0.0)
+        elif metrica == METRICA_PROD_DIA:
+            saida[rotulo] = val / dias_div
         else:
             saida[rotulo] = val
 
@@ -381,6 +451,9 @@ def _aplicar_metrica(
         ).fillna(0.0)
     elif metrica == METRICA_SHARE:
         saida[COL_TOTAL] = (val_total > 0).astype(float) * 100.0
+    elif metrica == METRICA_PROD_DIA:
+        saida[COL_TOTAL] = val_total / dias_div
+        saida[COL_DIAS] = dias.astype(int)
     else:
         saida[COL_TOTAL] = val_total
 
@@ -401,6 +474,7 @@ def construir_tabela(
     nivel: str = NIVEL_CONSULTOR,
     metrica: str = METRICA_VALOR,
     produtos_total: Optional[List[str]] = None,
+    df_vinculos: Optional[pd.DataFrame] = None,
 ) -> pd.DataFrame:
     """Tabela da aba de Gestao no nivel, metrica e escopo pedidos.
 
@@ -422,13 +496,21 @@ def construir_tabela(
             desligado no mes) e mantido com os dados do contrato.
         nivel: ``Consultor`` (padrao), ``Loja``, ``Supervisor`` ou
             ``Regiao``.
-        metrica: ``valor`` (padrao), ``qtd``, ``ticket`` ou ``share``.
+        metrica: ``valor`` (padrao), ``qtd``, ``ticket``, ``share`` ou
+            ``prod_dia`` (producao por dia elegivel de vinculo).
         produtos_total: produtos somados na coluna ``Total``. ``None``
             soma o MIX inteiro; na aba, recebe os produtos do criterio.
+        df_vinculos: dias elegiveis por consultor
+            (``carregar_vinculos_consultores``, pelo MESMO recorte de
+            RLS de ``df``). Obrigatorio so para ``metrica=prod_dia``;
+            sem ele a coluna de dias fica zerada e a produtividade sai
+            ausente.
 
     Espera ``df`` ja filtrado por RLS; nao aplica RLS nem queries aqui.
     """
-    matriz = _matriz_por_consultor(df, df_supervisores, df_universo)
+    matriz = _matriz_por_consultor(
+        df, df_supervisores, df_universo, df_vinculos
+    )
     if matriz.empty:
         return pd.DataFrame()
 
@@ -444,7 +526,10 @@ def construir_tabela(
     cols_acel = [
         r for r in ROTULOS_ACELERADORES if r in tabela.columns
     ]
-    tabela = tabela[[*cols_id, *rotulos, COL_TOTAL, *cols_acel]]
+    # Dias fica junto da identificacao, antes dos produtos: e contexto
+    # do denominador, nao mais uma coluna de dinheiro.
+    cols_dias = [COL_DIAS] if COL_DIAS in tabela.columns else []
+    tabela = tabela[[*cols_id, *cols_dias, *rotulos, COL_TOTAL, *cols_acel]]
     return tabela.sort_values(cols_id).reset_index(drop=True)
 
 

@@ -10,6 +10,8 @@ import pytest
 
 from src.dashboard.kpis.gerais import ACELERADORES
 from src.dashboard.kpis.gestao import (
+    COL_DIAS,
+    METRICA_PROD_DIA,
     METRICA_VALOR,
     ROTULOS_ACELERADORES,
     BASE_MEDIA_GRUPO,
@@ -848,3 +850,118 @@ def test_criterio_de_super_conta_nao_exclui_o_valor(df_super_conta):
     )
     assert set(res["Consultor"]) == {"Joao"}
     assert res.set_index("Consultor").loc["Joao", "CNC"] == 18000.0
+
+
+# ══════════════════════════════════════════════════════
+# Metrica de produtividade (R$/dia elegivel)
+# ══════════════════════════════════════════════════════
+
+
+@pytest.fixture
+def df_vinculos_gestao():
+    """Dias elegiveis dos consultores de ``df_gestao``.
+
+    Maria tem METADE dos dias de Joao: e o caso que a metrica existe
+    para resolver.
+    """
+    return pd.DataFrame({
+        "CONSULTOR": ["Joao", "Maria", "Pedro"],
+        "LOJA": ["A", "B", "C"],
+        "REGIAO": ["R1", "R1", "R2"],
+        "REGIAO_ATUAL": ["R1", "R1", "R2"],
+        "DIAS_ELEGIVEIS": [20, 10, 20],
+        "DU_COMPETENCIA": [20, 20, 20],
+        "BASE_DIAS": ["ELIGIBLE_LINK_DAYS"] * 3,
+        "COBERTURA_AFASTAMENTO": ["NONE"] * 3,
+    })
+
+
+@pytest.mark.unit
+class TestMetricaProdutividade:
+    def test_divide_cada_produto_pelos_dias(
+        self, df_gestao, df_sup, df_vinculos_gestao
+    ):
+        tabela = construir_tabela(
+            df_gestao, df_sup,
+            metrica=METRICA_PROD_DIA,
+            df_vinculos=df_vinculos_gestao,
+        ).set_index("Consultor")
+
+        # Joao: CNC 10.000 em 20 dias.
+        assert tabela.loc["Joao", "CNC"] == pytest.approx(500.0)
+        assert tabela.loc["Joao", "Total"] == pytest.approx(55000.0 / 20)
+        # Maria: 20.000 em 10 dias — produtividade MAIOR que a do Joao,
+        # apesar da producao menor.
+        assert tabela.loc["Maria", "Total"] == pytest.approx(2000.0)
+
+    def test_coluna_de_dias_acompanha_a_metrica(
+        self, df_gestao, df_sup, df_vinculos_gestao
+    ):
+        tabela = construir_tabela(
+            df_gestao, df_sup,
+            metrica=METRICA_PROD_DIA,
+            df_vinculos=df_vinculos_gestao,
+        )
+
+        assert COL_DIAS in tabela.columns
+        # Contexto fica junto da identificacao, antes dos produtos.
+        assert list(tabela.columns).index(COL_DIAS) < list(
+            tabela.columns
+        ).index("CNC")
+
+    def test_sem_dia_elegivel_a_produtividade_e_ausente(
+        self, df_gestao, df_sup
+    ):
+        """Nunca zero: o furo esta no ledger, nao na pessoa."""
+        vin = pd.DataFrame({
+            "CONSULTOR": ["Joao"],
+            "LOJA": ["A"],
+            "REGIAO": ["R1"],
+            "REGIAO_ATUAL": ["R1"],
+            "DIAS_ELEGIVEIS": [20],
+            "DU_COMPETENCIA": [20],
+            "BASE_DIAS": ["ELIGIBLE_LINK_DAYS"],
+            "COBERTURA_AFASTAMENTO": ["NONE"],
+        })
+        tabela = construir_tabela(
+            df_gestao, df_sup, metrica=METRICA_PROD_DIA, df_vinculos=vin,
+        ).set_index("Consultor")
+
+        assert pd.isna(tabela.loc["Maria", "Total"])
+        assert tabela.loc["Maria", COL_DIAS] == 0
+
+    def test_nivel_loja_usa_razao_das_somas(
+        self, df_gestao, df_sup, df_vinculos_gestao
+    ):
+        tabela = construir_tabela(
+            df_gestao, df_sup,
+            nivel=NIVEL_LOJA,
+            metrica=METRICA_PROD_DIA,
+            df_vinculos=df_vinculos_gestao,
+        ).set_index("Loja")
+
+        # Loja A: so o Joao (55.000 / 20 dias).
+        assert tabela.loc["A", "Total"] == pytest.approx(2750.0)
+        assert tabela.loc["A", COL_DIAS] == 20
+
+    def test_sem_vinculos_a_metrica_nao_inventa_denominador(
+        self, df_gestao, df_sup
+    ):
+        tabela = construir_tabela(
+            df_gestao, df_sup, metrica=METRICA_PROD_DIA,
+        )
+
+        assert tabela["Total"].isna().all()
+        assert (tabela[COL_DIAS] == 0).all()
+
+    def test_demais_metricas_seguem_sem_a_coluna_de_dias(
+        self, df_gestao, df_sup, df_vinculos_gestao
+    ):
+        tabela = construir_tabela(
+            df_gestao, df_sup,
+            metrica=METRICA_VALOR,
+            df_vinculos=df_vinculos_gestao,
+        )
+
+        assert COL_DIAS not in tabela.columns
+        assert tabela.set_index("Consultor").loc["Joao", "Total"] == 55000.0

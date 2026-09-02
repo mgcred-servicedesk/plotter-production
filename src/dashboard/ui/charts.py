@@ -531,6 +531,76 @@ def criar_grafico_media_regiao(df_media):
     return _aplicar(fig, t)
 
 
+def criar_grafico_produtividade(
+    df_carteira,
+    df_consultores=None,
+):
+    """Evolucao da produtividade por dia elegivel, em competencias.
+
+    ``df_carteira``: ``[Competencia, R$/dia elegivel]`` — a razao das
+    somas do escopo, linha grossa de referencia. ``df_consultores``:
+    formato longo ``[Competencia, Consultor, R$/dia elegivel]``, uma
+    linha fina por pessoa selecionada.
+
+    Cada consultor entra com ``connectgaps=False``: competencia sem
+    dado e LACUNA, nao zero — ligar os pontos por cima do buraco
+    desenharia uma queda ou uma recuperacao que ninguem mediu.
+    """
+    t = _template()
+    fig = go.Figure()
+
+    if df_consultores is not None and not df_consultores.empty:
+        cores = [
+            CHART_COLORS["secondary"],
+            CHART_COLORS["warning"],
+            CHART_COLORS["danger"],
+            CHART_COLORS["neutral"],
+            CHART_COLORS["primary_dark"],
+        ]
+        for i, (nome, grupo) in enumerate(
+            df_consultores.groupby("Consultor", sort=False)
+        ):
+            fig.add_trace(
+                go.Scatter(
+                    x=grupo["Competencia"],
+                    y=grupo["R$/dia elegivel"],
+                    name=str(nome),
+                    mode="lines+markers",
+                    connectgaps=False,
+                    line=dict(width=2, color=cores[i % len(cores)]),
+                    marker=dict(size=6),
+                    hovertemplate=(
+                        "%{fullData.name}<br>%{x}: %{y:,.2f}/dia"
+                        "<extra></extra>"
+                    ),
+                )
+            )
+
+    if df_carteira is not None and not df_carteira.empty:
+        fig.add_trace(
+            go.Scatter(
+                x=df_carteira["Competencia"],
+                y=df_carteira["R$/dia elegivel"],
+                name="Carteira (razao das somas)",
+                mode="lines+markers",
+                connectgaps=False,
+                line=dict(width=4, color=CHART_COLORS["primary"]),
+                marker=dict(size=9),
+                hovertemplate="Carteira<br>%{x}: %{y:,.2f}/dia<extra></extra>",
+            )
+        )
+
+    fig.update_layout(
+        title="Produtividade por dia elegivel — competencias fechadas",
+        xaxis_title="Competencia",
+        yaxis_title="R$ por dia elegivel",
+        height=420,
+        autosize=True,
+        hovermode="x unified",
+    )
+    return _aplicar(fig, t)
+
+
 def criar_heatmap_regiao_produto(
     df_ranking,
     df_ating,

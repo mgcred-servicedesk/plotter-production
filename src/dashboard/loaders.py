@@ -19,24 +19,50 @@ side-effects em funcoes cacheadas.
 """
 
 import logging
+import time
 import uuid
 import calendar
-from datetime import datetime
-from typing import Callable, Dict, List, NamedTuple, Optional, Tuple
+from datetime import date, datetime
+from typing import Any, Callable, Dict, List, NamedTuple, Optional, Tuple
 
 import pandas as pd
 import streamlit as st
+from postgrest.exceptions import APIError
 
 from src.config.settings import NOMES_DISPLAY_PRODUTO
 from src.config.supabase_client import get_supabase_client
 from src.dashboard.kpis.detalhes_cards import aplicar_conta_valor
-from src.dashboard.kpis.gerais import excluir_supervisores, filtrar_janela_recente
+from src.dashboard.kpis.gerais import (
+    excluir_lojas_backoffice,
+    excluir_supervisores,
+    filtrar_janela_recente,
+)
 from src.dashboard.rls import _obter_perfil_efetivo, aplicar_rls
+from src.shared.dias_uteis import carregar_feriados
 
 logger = logging.getLogger(__name__)
 
 
 _PAGE_SIZE = 1000
+
+# Plano de tentativas de UMA pagina do keyset: (limite, espera_antes).
+# So entra em acao no erro 57014 (statement_timeout) — ver
+# _e_timeout_statement. O Supabase roda em compute Nano e a paginacao de
+# v_contratos_dashboard mede ~1-2s por pagina em repouso, mas ja foi
+# medida em 4s sob contencao (ETL do angry-man escrevendo em contratos);
+# com o teto de 15s por statement, uma rajada de escrita concorrente
+# cancela a pagina e derruba a carga inteira do dashboard.
+#
+# A 3a tentativa reduz o lote: menos linhas por statement = menos
+# trabalho por transacao, entao a pagina cabe no teto mesmo com o banco
+# ocupado. Quem pagina PRECISA comparar len(batch) com o limite
+# efetivamente usado (nao com _PAGE_SIZE) — por isso _executar_pagina
+# devolve os dois.
+_TENTATIVAS_PAGINA: Tuple[Tuple[int, float], ...] = (
+    (_PAGE_SIZE, 0.0),
+    (_PAGE_SIZE, 1.5),
+    (_PAGE_SIZE // 4, 4.0),
+)
 
 # Janela (dias de calendario) do detalhe de digitacao. Os quadros que o
 # consomem — "Ultimo Dia" e "Ultimos 7 Dias" (este, apos o recorte RLS
@@ -158,7 +184,61 @@ def _eh_mes_atual(mes: int, ano: int) -> bool:
     return mes == hoje.month and ano == hoje.year
 
 
-def _paginar_keyset(montar_query: Callable, coluna_chave: str) -> List[dict]:
+def _e_timeout_statement(exc: APIError) -> bool:
+    """True se a APIError for o cancelamento por statement_timeout.
+
+    57014 (``query_canceled``) e o unico erro que vale reexecutar: e
+    transitorio por definicao — o planejamento e a query nao mudaram,
+    o banco e que estava ocupado demais para entregar dentro do teto.
+    Qualquer outro codigo (permissao, coluna inexistente, sintaxe) e
+    deterministico e sobe intacto; retentar so atrasaria o erro.
+    """
+    return str(getattr(exc, "code", "")) == "57014"
+
+
+def _executar_pagina(
+    montar_pagina: Callable[[int], Any],
+    rotulo: str,
+) -> Tuple[List[dict], int]:
+    """Executa uma pagina do keyset, reexecutando em statement_timeout.
+
+    Devolve ``(linhas, limite_usado)``. O limite VOLTA junto porque a
+    ultima tentativa reduz o lote: quem pagina decide o fim do resultset
+    por ``len(linhas) < limite_usado``, e comparar com ``_PAGE_SIZE``
+    encerraria a paginacao cedo — truncando dados em silencio — sempre
+    que uma pagina reduzida viesse cheia.
+
+    Esgotadas as tentativas, o ultimo 57014 sobe: timeout persistente e
+    sintoma de banco degradado, nao algo para mascarar com resultado
+    parcial.
+    """
+    ultimo_erro: Optional[APIError] = None
+    total = len(_TENTATIVAS_PAGINA)
+
+    for tentativa, (limite, espera) in enumerate(_TENTATIVAS_PAGINA, 1):
+        if espera:
+            time.sleep(espera)
+        try:
+            return (montar_pagina(limite).execute().data or []), limite
+        except APIError as exc:
+            if not _e_timeout_statement(exc):
+                raise
+            ultimo_erro = exc
+            logger.warning(
+                "statement_timeout em %s (tentativa %d/%d, limite %d)",
+                rotulo,
+                tentativa,
+                total,
+                limite,
+            )
+
+    logger.error("statement_timeout persistente em %s — desisto", rotulo)
+    raise ultimo_erro  # type: ignore[misc]
+
+
+def _paginar_keyset(
+    montar_query: Callable[[int], Any], coluna_chave: str
+) -> List[dict]:
     """Pagina por cursor: WHERE chave > ultimo ORDER BY chave LIMIT N.
 
     Substitui a paginacao por OFFSET: com OFFSET cada pagina reordena o
@@ -166,20 +246,26 @@ def _paginar_keyset(montar_query: Callable, coluna_chave: str) -> List[dict]:
     dreno do Disk IO Budget, ver migration 054); com cursor todo request
     e um top-N de no maximo _PAGE_SIZE linhas, que cabe em work_mem.
 
-    ``montar_query`` deve devolver a query base ja com ``.order(
-    coluna_chave)`` e ``.limit(_PAGE_SIZE)``; ``coluna_chave`` deve ser
-    UNICA (PK/UNIQUE) — chave repetida faria linhas serem puladas entre
-    paginas.
+    ``montar_query`` recebe o LIMITE da pagina e devolve a query base ja
+    com ``.order(coluna_chave)`` e ``.limit(<limite>)`` — o limite e
+    parametro (nao ``_PAGE_SIZE`` fixo) porque o retry de
+    ``_executar_pagina`` reduz o lote na ultima tentativa.
+    ``coluna_chave`` deve ser UNICA (PK/UNIQUE) — chave repetida faria
+    linhas serem puladas entre paginas.
     """
     all_data: List[dict] = []
     ultimo = None
     while True:
-        query = montar_query()
-        if ultimo is not None:
-            query = query.gt(coluna_chave, ultimo)
-        batch = query.execute().data or []
+
+        def montar_pagina(limite: int, _ultimo=ultimo):
+            query = montar_query(limite)
+            if _ultimo is not None:
+                query = query.gt(coluna_chave, _ultimo)
+            return query
+
+        batch, limite_usado = _executar_pagina(montar_pagina, coluna_chave)
         all_data.extend(batch)
-        if len(batch) < _PAGE_SIZE:
+        if len(batch) < limite_usado:
             return all_data
         ultimo = batch[-1][coluna_chave]
 
@@ -341,13 +427,13 @@ def _fetch_contratos_pagos(mes: int, ano: int) -> pd.DataFrame:
     # paginacao keyset (nao e mapeado para o DataFrame).
     colunas = "id," + ",".join(_COLS_CONTRATOS_PAGOS)
     all_data = _paginar_keyset(
-        lambda: (
+        lambda limite: (
             _sb()
             .from_("v_contratos_dashboard")
             .select(colunas)
             .eq("periodo_id", periodo["id"])
             .order("id")
-            .limit(_PAGE_SIZE)
+            .limit(limite)
         ),
         "id",
     )
@@ -1498,6 +1584,274 @@ def carregar_consultores_ativos() -> pd.DataFrame:
     return df
 
 
+@st.cache_data(ttl=1800)
+def carregar_headcount_ponderado(mes: int, ano: int) -> pd.DataFrame:
+    """Headcount PONDERADO da competencia, por loja (migration 091).
+
+    Retorna [LOJA, PESO, CABECAS, DU_COMPETENCIA, REGIAO, REGIAO_ATUAL].
+
+    ``PESO`` e o gente-mes da loja na competencia: dias uteis em que a
+    pessoa tinha vinculo com a loja, nao estava afastada e nao era
+    supervisora, sobre os DU do mes (R2), rateados entre lojas quando
+    houve transferencia (R3) — de modo que a soma devolva UMA pessoa,
+    nunca duas. ``CABECAS`` e a contagem inteira point-in-time, para
+    auditoria; nao e o denominador.
+
+    E a MESMA fonte que o Caderno publica em ``weightedHeadcount``
+    (migration 092). Existe para que dashboard e Caderno parem de
+    responder numeros diferentes a "quantos consultores dividem esta
+    producao".
+
+    Dois filtros que a 091 NAO aplica e o Caderno reaplica, replicados
+    aqui pelo mesmo motivo: a 091 responde "quem estava onde", nao "o
+    que entra na media". Loja inativa sai (via ``carregar_lojas_ativas``)
+    e backoffice sai (``LOJAS_BACKOFFICE``) — sem o segundo, o
+    denominador do dashboard ficaria maior que o do Caderno exatamente
+    pelo VAI E VEM. Supervisores ja saem dentro da propria 091, pelo
+    ledger ``supervisor_vigencia``.
+
+    REGIAO := regiao ATUAL da loja, como em ``carregar_lojas_ativas``: o
+    ledger nao guarda regiao de proposito (a regiao point-in-time mora em
+    ``loja_regiao_vigencia``). Carrega global; recorte por perfil
+    client-side (``aplicar_rls``). TTL 30min — reflete upload do
+    angry-man e rematerializacao sem esperar horas.
+    """
+    cols = [
+        "LOJA", "PESO", "CABECAS", "DU_COMPETENCIA", "REGIAO", "REGIAO_ATUAL",
+    ]
+    resp = _sb().rpc(
+        "fn_headcount_ponderado", {"p_mes": mes, "p_ano": ano}
+    ).execute()
+    linhas = resp.data or []
+    if not linhas:
+        return pd.DataFrame(columns=cols)
+
+    df = pd.DataFrame(linhas).rename(
+        columns={
+            "loja": "LOJA",
+            "peso": "PESO",
+            "cabecas": "CABECAS",
+            "du_competencia": "DU_COMPETENCIA",
+        }
+    )
+    if "LOJA" not in df.columns:
+        return pd.DataFrame(columns=cols)
+
+    df["LOJA"] = df["LOJA"].fillna("").astype(str)
+    df["PESO"] = pd.to_numeric(
+        df.get("PESO"), errors="coerce"
+    ).fillna(0.0).astype(float)
+    df["CABECAS"] = pd.to_numeric(
+        df.get("CABECAS"), errors="coerce"
+    ).fillna(0).astype(int)
+    df["DU_COMPETENCIA"] = pd.to_numeric(
+        df.get("DU_COMPETENCIA"), errors="coerce"
+    ).fillna(0).astype(int)
+
+    df = excluir_lojas_backoffice(df)
+    df_lojas = carregar_lojas_ativas()
+    if df.empty or df_lojas.empty:
+        return pd.DataFrame(columns=cols)
+
+    df = df.merge(df_lojas, on="LOJA", how="inner")
+    df["REGIAO"] = df["REGIAO_ATUAL"]
+    return df.reindex(columns=cols).reset_index(drop=True)
+
+
+# ══════════════════════════════════════════════════════
+# Vinculos individuais (denominador por pessoa)
+# ══════════════════════════════════════════════════════
+
+# Base do denominador individual, publicada em TODA linha que sai
+# daqui. Sao dias de VINCULO, nao dias trabalhados: ferias, faltas e
+# afastamentos nao sao descontados — `consultor_afastamento` nao e
+# consultado nesta apuracao, de proposito (ver docstring abaixo).
+BASE_DIAS_VINCULO = "ELIGIBLE_LINK_DAYS"
+COBERTURA_AFASTAMENTO_NENHUMA = "NONE"
+
+
+def carregar_vinculos_consultores(mes: int, ano: int) -> pd.DataFrame:
+    """Dias uteis ELEGIVEIS por (consultor, loja) na competencia.
+
+    Retorna ``[CONSULTOR, LOJA, REGIAO, REGIAO_ATUAL, DIAS_ELEGIVEIS,
+    DU_COMPETENCIA, BASE_DIAS, COBERTURA_AFASTAMENTO]``.
+
+    E o **denominador por pessoa** que ``fn_headcount_ponderado`` (091)
+    nao devolve: aquela funcao agrega por LOJA, e por isso o dashboard
+    ate hoje nao conseguia perguntar "quanto essa pessoa produz por dia
+    de casa". A fonte e a mesma — o ledger ``consultor_vigencia``
+    (086/087) —, lido direto pelo PostgREST como
+    ``carregar_supervisores`` ja faz com ``supervisor_vigencia``. Sao
+    ~400 linhas no ledger inteiro: nao ha o que paginar nem RPC a criar.
+
+    Diferencas DELIBERADAS em relacao a 091, todas na direcao de
+    "menos regra derivada, mais fato":
+
+    - **Sem desconto de afastamento.** A 091 tira os dias de
+      ``consultor_afastamento``; aqui nao. A cobertura desse ledger e
+      parcial, e misturar ausencia real com ausencia nao registrada
+      produziria um numero que ninguem consegue auditar. Por isso toda
+      linha carrega ``COBERTURA_AFASTAMENTO = 'NONE'``.
+    - **Sem piso de 50%.** A 091 aplica piso quando a reducao e
+      INFERIDA (R2), para nao punir a loja por uma janela que o ETL
+      deduziu da producao. O piso protege a MEDIA da loja; num numero
+      individual ele inventaria dias que a pessoa nao teve.
+    - **Sem rateio.** A 091 divide o peso da pessoa entre as lojas
+      (R3) para que a soma devolva uma pessoa, nunca duas. Aqui a
+      transferencia vira dois segmentos com os dias reais de cada loja
+      — a soma continua sendo o mes da pessoa, sem sobreposicao,
+      porque o ledger proibe janelas sobrepostas (087, check 4).
+
+    Os dois filtros que ``carregar_headcount_ponderado`` reaplica sobre
+    a 091 valem aqui pelo mesmo motivo (o ledger responde "quem estava
+    onde", nao "o que entra na media"): loja inativa sai pelo inner
+    join com ``carregar_lojas_ativas`` e backoffice sai por
+    ``excluir_lojas_backoffice``. Supervisor sai pela ancora da
+    competencia — o papel vigente no ULTIMO DIA vale pelo mes inteiro,
+    a MESMA regra de ``carregar_supervisores`` e da migration 085, para
+    que numerador e denominador nunca discordem sobre quem era
+    supervisor.
+
+    REGIAO := regiao ATUAL da loja, como nos demais loaders de
+    cadastro. Carrega global; recorte por perfil client-side
+    (``aplicar_rls``). TTL 30min no mes corrente (reflete upload do
+    angry-man), 24h no historico.
+    """
+    if _eh_mes_atual(mes, ano):
+        return _vinculos_consultores_atual(mes, ano)
+    return _vinculos_consultores_historico(mes, ano)
+
+
+_COLS_VINCULOS = [
+    "CONSULTOR",
+    "LOJA",
+    "REGIAO",
+    "REGIAO_ATUAL",
+    "DIAS_ELEGIVEIS",
+    "DU_COMPETENCIA",
+    "BASE_DIAS",
+    "COBERTURA_AFASTAMENTO",
+]
+
+
+def _dias_uteis_competencia(mes: int, ano: int) -> List[date]:
+    """Dias uteis da competencia: seg-sex menos feriados.
+
+    Mesma definicao de ``src/shared/dias_uteis.py`` e da 091 — os DU do
+    mes precisam ser UM numero so no projeto inteiro.
+    """
+    ini = date(ano, mes, 1)
+    fim = date(ano, mes, calendar.monthrange(ano, mes)[1])
+    feriados = carregar_feriados(mes, ano)
+    return [
+        d.date()
+        for d in pd.bdate_range(ini, fim)
+        if d.date() not in feriados
+    ]
+
+
+def _fetch_vinculos_consultores(mes: int, ano: int) -> pd.DataFrame:
+    """Le o ledger e conta os dias uteis cobertos por cada janela."""
+    dias = _dias_uteis_competencia(mes, ano)
+    if not dias:
+        return pd.DataFrame(columns=_COLS_VINCULOS)
+    du_total = len(dias)
+    ini, fim = date(ano, mes, 1), dias[-1]
+
+    # Janela do ledger e meio-aberta [inicio, fim): sobrepoe a
+    # competencia se comecou ate o ultimo dia dela E ainda nao tinha
+    # encerrado no primeiro. O filtro no servidor evita trazer o
+    # historico inteiro para contar dias de um mes so.
+    resp = (
+        _sb()
+        .table("consultor_vigencia")
+        .select(
+            "nome, nome_normalizado, vigencia_inicio, vigencia_fim,"
+            " lojas(nome)"
+        )
+        .lte("vigencia_inicio", fim.isoformat())
+        .or_(
+            f"vigencia_fim.is.null,vigencia_fim.gt.{ini.isoformat()}"
+        )
+        .execute()
+    )
+    linhas = resp.data or []
+    if not linhas:
+        return pd.DataFrame(columns=_COLS_VINCULOS)
+
+    registros = []
+    for linha in linhas:
+        loja = (linha.get("lojas") or {}).get("nome") or ""
+        if not loja:
+            continue
+        v_ini = pd.to_datetime(linha.get("vigencia_inicio")).date()
+        v_fim_raw = linha.get("vigencia_fim")
+        v_fim = pd.to_datetime(v_fim_raw).date() if v_fim_raw else None
+        cobertos = sum(
+            1
+            for d in dias
+            if d >= v_ini and (v_fim is None or d < v_fim)
+        )
+        if cobertos == 0:
+            continue
+        registros.append(
+            {
+                "_key": linha.get("nome_normalizado") or "",
+                "CONSULTOR": (linha.get("nome") or "").strip(),
+                "LOJA": loja,
+                "DIAS_ELEGIVEIS": cobertos,
+                "_inicio": v_ini,
+            }
+        )
+    if not registros:
+        return pd.DataFrame(columns=_COLS_VINCULOS)
+
+    df = pd.DataFrame(registros)
+    # Grafia de exibicao: a da janela mais recente. Duas janelas da
+    # mesma pessoa na mesma loja (ex.: correcao manual partindo o
+    # periodo) somam os dias — sem sobreposicao, garantida pelo ledger.
+    df = df.sort_values("_inicio")
+    agrupado = (
+        df.groupby(["_key", "LOJA"], as_index=False)
+        .agg(
+            CONSULTOR=("CONSULTOR", "last"),
+            DIAS_ELEGIVEIS=("DIAS_ELEGIVEIS", "sum"),
+        )
+    )
+
+    df_sup = carregar_supervisores(mes, ano)
+    if not df_sup.empty and "SUPERVISOR" in df_sup.columns:
+        sups = {
+            " ".join(str(nome).upper().split())
+            for nome in df_sup["SUPERVISOR"].fillna("")
+        }
+        agrupado = agrupado[~agrupado["_key"].isin(sups)]
+
+    agrupado = excluir_lojas_backoffice(agrupado)
+    df_lojas = carregar_lojas_ativas()
+    if agrupado.empty or df_lojas.empty:
+        return pd.DataFrame(columns=_COLS_VINCULOS)
+
+    saida = agrupado.merge(df_lojas, on="LOJA", how="inner")
+    saida["REGIAO"] = saida["REGIAO_ATUAL"]
+    saida["DU_COMPETENCIA"] = du_total
+    saida["BASE_DIAS"] = BASE_DIAS_VINCULO
+    saida["COBERTURA_AFASTAMENTO"] = COBERTURA_AFASTAMENTO_NENHUMA
+    return saida.reindex(columns=_COLS_VINCULOS).reset_index(drop=True)
+
+
+@st.cache_data(ttl=1800)
+def _vinculos_consultores_atual(mes: int, ano: int) -> pd.DataFrame:
+    """Vinculos — mes corrente. TTL 30min."""
+    return _fetch_vinculos_consultores(mes, ano)
+
+
+@st.cache_data(ttl=86400)
+def _vinculos_consultores_historico(mes: int, ano: int) -> pd.DataFrame:
+    """Vinculos — historico. TTL 24h."""
+    return _fetch_vinculos_consultores(mes, ano)
+
+
 # ══════════════════════════════════════════════════════
 # Supervisores
 # ══════════════════════════════════════════════════════
@@ -1885,12 +2239,12 @@ def _fetch_pagamentos_online() -> pd.DataFrame:
     (max/sum/len) — nenhum consumidor depende da ordem das linhas.
     """
     all_data = _paginar_keyset(
-        lambda: (
+        lambda limite: (
             _sb()
             .from_("v_pagamentos_online_efetivo")
             .select("*")
             .order("proposta")
-            .limit(_PAGE_SIZE)
+            .limit(limite)
         ),
         "proposta",
     )
@@ -2115,12 +2469,12 @@ def _reconquista_todos() -> pd.DataFrame:
     """
     return pd.DataFrame(
         _paginar_keyset(
-            lambda: (
+            lambda limite: (
                 _sb()
                 .from_("v_reconquista")
                 .select("*")
                 .order("co_adesao")
-                .limit(_PAGE_SIZE)
+                .limit(limite)
             ),
             "co_adesao",
         )
@@ -2464,7 +2818,7 @@ def _fetch_cobranca_consignavel(mes: int, ano: int) -> pd.DataFrame:
     colunas = "id," + ",".join(_COLS_COBRANCA_CONSIGNAVEL)
     try:
         all_data = _paginar_keyset(
-            lambda: (
+            lambda limite: (
                 _sb()
                 .from_("v_contratos_dashboard")
                 .select(colunas)
@@ -2472,7 +2826,7 @@ def _fetch_cobranca_consignavel(mes: int, ano: int) -> pd.DataFrame:
                 .eq("status_pagamento_cliente", "PAGO AO CLIENTE")
                 .eq("is_cobranca_consignavel", True)
                 .order("id")
-                .limit(_PAGE_SIZE)
+                .limit(limite)
             ),
             "id",
         )

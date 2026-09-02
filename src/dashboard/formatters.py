@@ -17,6 +17,17 @@ def formatar_numero(valor):
     return f"{valor:,.0f}".replace(",", ".")
 
 
+def formatar_decimal(valor, casas: int = 1):
+    """Formata numero com separador de milhares e casas decimais.
+
+    Existe para o headcount ponderado, que e fracionario por construcao
+    (``gente-mes``: 112,5 pessoas nao e erro de arredondamento, e alguem
+    que trabalhou meio mes).
+    """
+    txt = f"{valor:,.{casas}f}"
+    return txt.replace(",", "X").replace(".", ",").replace("X", ".")
+
+
 def formatar_percentual(valor):
     """Formata percentual."""
     return f"{valor:.1f}%"

@@ -20,7 +20,11 @@ from typing import Dict, List, Optional
 import streamlit as st
 
 from src.config.settings import PACK_LABEL_AGREGADO
-from src.dashboard.formatters import formatar_numero, formatar_percentual
+from src.dashboard.formatters import (
+    formatar_decimal,
+    formatar_numero,
+    formatar_percentual,
+)
 from src.dashboard.ui.colors import (
     get_churn_status,
     get_ritmo_status,
@@ -141,8 +145,35 @@ def render_kpis_contexto_pts(
     num_lojas = int(
         medias_pts.get("num_lojas", 0) or kpis.get("num_lojas", 0) or 0
     )
+    # Mesmo denominador ponderado do dashboard de vendas — ver
+    # `kpi_cards_reforma`. Valor e pontos sao a mesma producao vista por
+    # duas reguas e nao podem discordar sobre quantas pessoas a fizeram.
+    peso_consultores = float(medias_pts.get("peso_consultores", 0) or 0)
+    usa_peso = (
+        medias_pts.get("denominador_consultores") == "peso"
+        and peso_consultores > 0
+    )
+    denom_consultor = (
+        peso_consultores if usa_peso else float(num_consultores)
+    )
+    if usa_peso:
+        rotulo_denominador = (
+            f"Dividido por {formatar_decimal(denom_consultor)} gente-m&#234;s "
+            f"({num_consultores:,} produziram)"
+        )
+    else:
+        rotulo_denominador = f"Acumulado entre {num_consultores:,} consultores"
+    # Numerador = pontos da populacao CONSULTOR, igual ao card de valor
+    # (ver `kpi_cards_reforma`): `total_pontos` soma supervisor e VAI E
+    # VEM, o denominador exclui os dois.
+    pts_consultores = medias_pts.get("pontos_consultores")
+    num_consultor = (
+        float(pts_consultores)
+        if pts_consultores is not None
+        else total_pontos
+    )
     media_consultor = (
-        total_pontos / num_consultores if num_consultores > 0 else 0.0
+        num_consultor / denom_consultor if denom_consultor > 0 else 0.0
     )
     media_loja = total_pontos / num_lojas if num_lojas > 0 else 0.0
     media_du_consultor = float(medias_pts.get("media_du_consultor_pontos", 0) or 0)
@@ -184,7 +215,7 @@ def render_kpis_contexto_pts(
             <div class="mg-kpi-ctx-valor">{_fmt_pts(media_consultor)}</div>
             <div class="mg-kpi-ctx-sub">
                 <span style="font-size:12px;">{_fmt_pts_total(media_consultor)}</span><br>
-                Acumulado entre {num_consultores:,} consultores<br>
+                {rotulo_denominador}<br>
                 Média DU/consultor: <strong>{_fmt_pts(media_du_consultor)} pts</strong>
             </div>
         </div>"""

@@ -498,6 +498,85 @@ negociação (raro ficar contrato pago sem remanejar). Consequências:
 - Não confundir com `_REGIOES_EXCLUIR_MEDIA` (região `ALEXANDRE` = DIGITAL +
   VAI E VEM, usada só na média da organização p/ gerente_comercial): DIGITAL
   **conta** nas métricas de consultor — a exclusão nova é por **loja**.
+- No Caderno de Fechamento, `VAI E VEM` fica fora de lojas, regiões, ranking,
+  produtividade e headcount, mas sua produção e seus pontos entram no
+  resultado geral da rede. Desde a migration 108, a série mensal marca essas
+  linhas como `NETWORK_ONLY`; linhas territoriais usam `STORE_REGION`. Não
+  remover o backoffice do total da rede e não atribuí-lo a uma região para
+  forçar conciliação.
+
+## Produtividade por dia elegível (individual)
+
+Métrica individual do dashboard — **`produção paga / dias úteis de vínculo`**,
+em `src/dashboard/kpis/produtividade.py`, alimentada por
+`carregar_vinculos_consultores` (ledger `consultor_vigencia`, migrations
+086/087). Existe porque nenhuma superfície media a pessoa contra o **próprio
+tempo**: quem entrou no dia 20 era lido como mau vendedor ao lado de quem
+ficou o mês inteiro.
+
+**A base é de VÍNCULO, não de presença.** Férias, faltas e afastamentos
+**não** são descontados — `consultor_afastamento` (089) não é consultado.
+Toda linha publica `BASE_DIAS = ELIGIBLE_LINK_DAYS` e
+`COBERTURA_AFASTAMENTO = NONE`, e a UI carrega aviso permanente. É leitura
+exploratória e de conversa com o time; **não** é insumo de decisão de RH.
+
+Diferenças deliberadas em relação a `fn_headcount_ponderado` (091), que
+responde por LOJA e não por pessoa:
+
+| | 091 (peso da loja) | Produtividade individual |
+|---|---|---|
+| Afastamento | descontado | **não** descontado |
+| Piso de 50% em redução inferida | aplica (R2) | **não** aplica |
+| Transferência | rateio entre lojas (R3) | segmentos somados na pessoa |
+
+Filtros idênticos aos do denominador dos cards: loja inativa e backoffice
+fora; supervisor fora **pela âncora da competência** (papel do último dia
+vale pelo mês — migration 085). Numerador e denominador são a **mesma
+população** — a regra que a 096 firmou no Caderno.
+
+Benchmarks (loja, região, carteira) usam **razão das somas**
+(`sum(produção)/sum(dias)`), nunca a média das produtividades individuais:
+média de médias daria o mesmo peso a quem teve 2 dias e a quem teve 23.
+
+Casos de borda com decisão fixa:
+
+- **Elegível sem venda** permanece na tabela com produtividade 0 — removê-lo
+  faria a média da loja **subir** no mês em que mais gente deixou de vender.
+- **Produção sem janela no ledger** fica com produtividade **ausente**
+  (`NaN`), nunca 0 e nunca com denominador emprestado; sai dos dois lados de
+  todo benchmark e aparece como diagnóstico nominal na UI.
+- **Competência ausente** na série é lacuna, não zero: a variação não compara
+  meses não consecutivos, e o gráfico não liga os pontos por cima do buraco.
+- **Mês corrente** não entra na série — mês pela metade ao lado de meses
+  inteiros desenha queda que não existe.
+
+Superfície: sub-visão **Performance do time** na aba Gestão de Consultores
+(admin/gestor/gerente_comercial), mais a métrica `prod_dia` na tabela de
+critérios da mesma aba.
+
+### Snapshot privado para o Bereshit
+
+A migration 101 materializa a mesma métrica em
+`produtividade_individual_snapshot`, separada do Caderno agregado porque o
+payload contém nomes. As coleções `consultantProductivity` e
+`consultantWeeklyProductivity` são legíveis somente pela `service_role`; o
+Bereshit as compõe no servidor depois de validar a sessão.
+
+`fn_materializar_caderno` congela agregado e nominal na mesma transação. A
+publicação falha fechado quando a **data de cadastro do contrato pago** não
+encontra vínculo da pessoa na loja de origem, quando há sobreposição de loja no
+mesmo dia ou quando a soma individual por loja difere mais de R$ 0,01 de
+`productivity.paidByConsultants`. Corrigir o ledger ou a atribuição do contrato
+é obrigatório; o materializador nunca infere admissão ou transferência pela
+primeira venda.
+
+A série continua no eixo de `data_status_pagamento`. Por isso, depois de uma
+transferência, um segmento semanal pode ter pagamento na loja antiga e zero
+dias nessa loja: o contrato nasceu durante vínculo válido e apenas pagou mais
+tarde. Esse segmento não bloqueia a publicação e é consolidado com os dias da
+pessoa nas demais lojas da mesma semana antes de calcular produtividade. A
+data de cadastro é usada somente para validar a atribuição de origem, nunca
+para mudar a competência ou a semana do numerador.
 
 ## Universo de consultores ativos — cadastro duplicado
 

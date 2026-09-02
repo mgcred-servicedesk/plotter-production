@@ -16,6 +16,7 @@ import streamlit_antd_components as sac
 
 from src.config.settings import PACK_LABEL_AGREGADO
 from src.dashboard.formatters import (
+    formatar_decimal,
     formatar_moeda,
     formatar_numero,
     formatar_percentual,
@@ -341,6 +342,19 @@ def _card_media_du_consultor(medias: Dict) -> None:
     """Card: Media DU Consultor."""
     media_du_consultor = medias.get("media_du_consultor", 0)
     num_consultores = medias.get("num_consultores", 0)
+    # Rodape mostra o denominador REAL da media exibida acima
+    # (gente-mes da 091), com a contagem de produtores ao lado.
+    peso_consultores = float(medias.get("peso_consultores", 0) or 0)
+    if (
+        medias.get("denominador_consultores") == "peso"
+        and peso_consultores > 0
+    ):
+        rodape_denominador = (
+            f"{formatar_decimal(peso_consultores)} gente-m&#234;s "
+            f"&#183; {num_consultores} produziram"
+        )
+    else:
+        rodape_denominador = f"{num_consultores} consultores"
 
     def fmt(v: float) -> str:
         return formatar_moeda(v).replace("$", "&#36;")
@@ -354,7 +368,7 @@ def _card_media_du_consultor(medias: Dict) -> None:
         f"{fmt(media_du_consultor)}</div>"
         f'<div class="mg-prod-footer">'
         f'<span class="mg-prod-footer-meta">'
-        f"&#128100; {num_consultores} consultores</span>"
+        f"&#128100; {rodape_denominador}</span>"
         f'<span class="mg-prod-footer-media">'
         f"M&#233;dia por consultor</span>"
         f"</div>"

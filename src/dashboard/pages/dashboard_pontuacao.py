@@ -47,6 +47,7 @@ def render_dashboard_pontuacao(
     mapa_pontos: Dict[str, float],
     du_decorridos: int,
     perfil: Optional[str],
+    peso_headcount: Optional[float] = None,
 ) -> None:
     """Renderiza a pagina de Pontuacao.
 
@@ -84,7 +85,7 @@ def render_dashboard_pontuacao(
         df_cancelados, df, df_analise, mapa_pontos
     )
     medias_pts = calcular_medias_pontos_por_nivel(
-        df, du_decorridos, df_sup
+        df, du_decorridos, df_sup, peso_headcount=peso_headcount
     )
     mix_pontos = calcular_mix_pontos(df, meta_prata, du_total)
 
