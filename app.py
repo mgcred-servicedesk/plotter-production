@@ -15,7 +15,7 @@ tabelas via st.dataframe, CSS design system customizado.
 import logging
 import sys
 import warnings
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 from typing import Callable, NamedTuple
 
@@ -472,6 +472,16 @@ def main():
             dia_atual = datetime.now().day
         _, du_decorridos, _ = calcular_dias_uteis(ano, mes, dia_atual)
 
+        # Data de referencia da apuracao: ULTIMO DIA COM DADO na
+        # competencia — a mesma que resolve `du_decorridos` acima. Vai
+        # para o denominador individual de produtividade, que sem ela
+        # contaria o mes inteiro contra a producao de hoje. Sem dado no
+        # periodo nao ha referencia: `None` deixa a competencia
+        # inteira, e o numerador zerado ja diz o que precisa.
+        data_ref_apuracao = (
+            date(ano, mes, dia_atual) if ultima_data is not None else None
+        )
+
         # ── Dados filtrados (RLS ja aplicado) ─────────
         # Aliases: aplicar_filtros_ui (abaixo) ja retorna novos
         # DataFrames com .copy() interno, entao manter referencias
@@ -841,7 +851,11 @@ def main():
             # filtro, nunca da producao —, para que numerador e
             # denominador nunca respondam por populacoes diferentes.
             _vinculos_gestao = aplicar_filtros_ui(
-                aplicar_rls(carregar_vinculos_consultores(mes, ano))
+                aplicar_rls(
+                    carregar_vinculos_consultores(
+                        mes, ano, data_ref_apuracao
+                    )
+                )
             )
 
             def _carregar_competencia_gestao(m: int, a: int):

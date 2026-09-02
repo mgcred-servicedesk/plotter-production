@@ -1670,11 +1670,26 @@ BASE_DIAS_VINCULO = "ELIGIBLE_LINK_DAYS"
 COBERTURA_AFASTAMENTO_NENHUMA = "NONE"
 
 
-def carregar_vinculos_consultores(mes: int, ano: int) -> pd.DataFrame:
+def carregar_vinculos_consultores(
+    mes: int,
+    ano: int,
+    ate: Optional[date] = None,
+) -> pd.DataFrame:
     """Dias uteis ELEGIVEIS por (consultor, loja) na competencia.
 
     Retorna ``[CONSULTOR, LOJA, REGIAO, REGIAO_ATUAL, DIAS_ELEGIVEIS,
-    DU_COMPETENCIA, BASE_DIAS, COBERTURA_AFASTAMENTO]``.
+    DU_COMPETENCIA, DU_DECORRIDOS, BASE_DIAS, COBERTURA_AFASTAMENTO]``.
+
+    ``ate`` e a DATA DE REFERENCIA da apuracao: dias uteis posteriores
+    a ela nao entram em ``DIAS_ELEGIVEIS``. Sem isso, no mes em curso o
+    denominador contava o mes INTEIRO — dias que ainda nao aconteceram
+    — contra um numerador que so tem a producao ate hoje, e o R$/dia
+    saia dividido por ``DU_total/DU_decorridos`` (10,5x no 2o dia util
+    de 09/2026). E a mesma convencao do ``du_decorridos`` que
+    ``kpis/gerais.py`` e o ``app.py`` ja aplicam em toda media por dia
+    util; passe o ULTIMO DIA COM DADO, nao ``today``, para que atraso
+    de ETL nao invente um dia util sem producao. Competencia fechada
+    nao muda: ``ate`` posterior ao fim do mes nao trunca nada.
 
     E o **denominador por pessoa** que ``fn_headcount_ponderado`` (091)
     nao devolve: aquela funcao agrega por LOJA, e por isso o dashboard
@@ -1718,8 +1733,8 @@ def carregar_vinculos_consultores(mes: int, ano: int) -> pd.DataFrame:
     angry-man), 24h no historico.
     """
     if _eh_mes_atual(mes, ano):
-        return _vinculos_consultores_atual(mes, ano)
-    return _vinculos_consultores_historico(mes, ano)
+        return _vinculos_consultores_atual(mes, ano, ate)
+    return _vinculos_consultores_historico(mes, ano, ate)
 
 
 _COLS_VINCULOS = [
@@ -1729,6 +1744,7 @@ _COLS_VINCULOS = [
     "REGIAO_ATUAL",
     "DIAS_ELEGIVEIS",
     "DU_COMPETENCIA",
+    "DU_DECORRIDOS",
     "BASE_DIAS",
     "COBERTURA_AFASTAMENTO",
 ]
@@ -1750,12 +1766,29 @@ def _dias_uteis_competencia(mes: int, ano: int) -> List[date]:
     ]
 
 
-def _fetch_vinculos_consultores(mes: int, ano: int) -> pd.DataFrame:
-    """Le o ledger e conta os dias uteis cobertos por cada janela."""
+def _fetch_vinculos_consultores(
+    mes: int,
+    ano: int,
+    ate: Optional[date] = None,
+) -> pd.DataFrame:
+    """Le o ledger e conta os dias uteis cobertos por cada janela.
+
+    ``ate`` corta os dias uteis ainda nao decorridos (ver a docstring
+    publica). O corte e por DIA, nunca por proporcao: quem foi admitido
+    depois da referencia fica com zero dias — e nao com uma fracao de
+    dia que nunca existiu.
+    """
     dias = _dias_uteis_competencia(mes, ano)
     if not dias:
         return pd.DataFrame(columns=_COLS_VINCULOS)
     du_total = len(dias)
+    if ate is not None:
+        dias = [d for d in dias if d <= ate]
+    if not dias:
+        return pd.DataFrame(columns=_COLS_VINCULOS)
+    du_decorridos = len(dias)
+    # `fim` e o ultimo dia CONSIDERADO: o filtro no servidor ja deixa
+    # de trazer quem so tem vinculo depois da referencia.
     ini, fim = date(ano, mes, 1), dias[-1]
 
     # Janela do ledger e meio-aberta [inicio, fim): sobrepoe a
@@ -1835,21 +1868,31 @@ def _fetch_vinculos_consultores(mes: int, ano: int) -> pd.DataFrame:
     saida = agrupado.merge(df_lojas, on="LOJA", how="inner")
     saida["REGIAO"] = saida["REGIAO_ATUAL"]
     saida["DU_COMPETENCIA"] = du_total
+    saida["DU_DECORRIDOS"] = du_decorridos
     saida["BASE_DIAS"] = BASE_DIAS_VINCULO
     saida["COBERTURA_AFASTAMENTO"] = COBERTURA_AFASTAMENTO_NENHUMA
     return saida.reindex(columns=_COLS_VINCULOS).reset_index(drop=True)
 
 
 @st.cache_data(ttl=1800)
-def _vinculos_consultores_atual(mes: int, ano: int) -> pd.DataFrame:
-    """Vinculos — mes corrente. TTL 30min."""
-    return _fetch_vinculos_consultores(mes, ano)
+def _vinculos_consultores_atual(
+    mes: int, ano: int, ate: Optional[date] = None
+) -> pd.DataFrame:
+    """Vinculos — mes corrente. TTL 30min.
+
+    ``ate`` entra na chave de cache: avancar a data de referencia
+    (novo dia util com dado) recarrega, em vez de servir o
+    denominador de ontem.
+    """
+    return _fetch_vinculos_consultores(mes, ano, ate)
 
 
 @st.cache_data(ttl=86400)
-def _vinculos_consultores_historico(mes: int, ano: int) -> pd.DataFrame:
+def _vinculos_consultores_historico(
+    mes: int, ano: int, ate: Optional[date] = None
+) -> pd.DataFrame:
     """Vinculos — historico. TTL 24h."""
-    return _fetch_vinculos_consultores(mes, ano)
+    return _fetch_vinculos_consultores(mes, ano, ate)
 
 
 # ══════════════════════════════════════════════════════

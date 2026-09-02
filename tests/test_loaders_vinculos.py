@@ -83,17 +83,17 @@ def julho_sem_feriados(monkeypatch):
     )
 
 
-def _fetch(monkeypatch, linhas):
+def _fetch(monkeypatch, linhas, ate=None):
     monkeypatch.setattr(loaders, "_sb", lambda: _ClienteFake(linhas))
-    return loaders._fetch_vinculos_consultores(7, 2026)
+    return loaders._fetch_vinculos_consultores(7, 2026, ate)
 
 
 @pytest.mark.unit
 class TestVinculosConsultores:
     COLS = [
         "CONSULTOR", "LOJA", "REGIAO", "REGIAO_ATUAL",
-        "DIAS_ELEGIVEIS", "DU_COMPETENCIA", "BASE_DIAS",
-        "COBERTURA_AFASTAMENTO",
+        "DIAS_ELEGIVEIS", "DU_COMPETENCIA", "DU_DECORRIDOS",
+        "BASE_DIAS", "COBERTURA_AFASTAMENTO",
     ]
 
     def test_janela_aberta_cobre_a_competencia_inteira(
@@ -242,3 +242,85 @@ class TestVinculosConsultores:
 
         assert out.empty
         assert list(out.columns) == self.COLS
+
+
+@pytest.mark.unit
+class TestDataDeReferencia:
+    """``ate`` corta os dias uteis que ainda nao aconteceram.
+
+    Sem esse corte, o denominador do mes EM CURSO era o mes inteiro
+    contra um numerador com a producao ate hoje: o R$ por dia elegivel
+    saia dividido por ``DU_total/DU_decorridos`` (medido em 09/2026,
+    2o dia util: R$ 128,28 no lugar de R$ 1.346,91). Mesma convencao do
+    ``du_decorridos`` de ``kpis/gerais.py``.
+    """
+
+    def test_trunca_na_data_de_referencia(
+        self, julho_sem_feriados, monkeypatch
+    ):
+        # 02/07/2026 e quinta: 2 dias uteis decorridos (01 e 02).
+        out = _fetch(
+            monkeypatch,
+            [_linha("Ana", "LOJA A", "2020-01-01")],
+            ate=date(2026, 7, 2),
+        )
+
+        assert int(out.iloc[0]["DIAS_ELEGIVEIS"]) == 2
+        assert int(out.iloc[0]["DU_DECORRIDOS"]) == 2
+        # O DU do MES nao muda: o card precisa dos dois para dizer
+        # "2 de 23".
+        assert int(out.iloc[0]["DU_COMPETENCIA"]) == 23
+
+    def test_sem_referencia_conta_a_competencia_inteira(
+        self, julho_sem_feriados, monkeypatch
+    ):
+        out = _fetch(monkeypatch, [_linha("Ana", "LOJA A", "2020-01-01")])
+
+        assert int(out.iloc[0]["DIAS_ELEGIVEIS"]) == 23
+        assert int(out.iloc[0]["DU_DECORRIDOS"]) == 23
+
+    def test_competencia_fechada_ignora_referencia_posterior(
+        self, julho_sem_feriados, monkeypatch
+    ):
+        """Referencia depois do fim do mes nao trunca nada."""
+        out = _fetch(
+            monkeypatch,
+            [_linha("Ana", "LOJA A", "2020-01-01")],
+            ate=date(2026, 9, 2),
+        )
+
+        assert int(out.iloc[0]["DIAS_ELEGIVEIS"]) == 23
+        assert int(out.iloc[0]["DU_DECORRIDOS"]) == 23
+
+    def test_admitido_depois_da_referencia_fica_sem_dias(
+        self, julho_sem_feriados, monkeypatch
+    ):
+        """Zero dias, nunca uma fracao de dia que nao existiu.
+
+        A pessoa sai do denominador; se tiver producao paga (pagamento
+        tardio de contrato de outra loja), cai no diagnostico de
+        producao SEM VINCULO, que e onde esse caso deve aparecer.
+        """
+        out = _fetch(
+            monkeypatch,
+            [
+                _linha("Ana", "LOJA A", "2020-01-01"),
+                _linha("Bia", "LOJA B", "2026-07-20"),
+            ],
+            ate=date(2026, 7, 2),
+        )
+
+        assert list(out["CONSULTOR"]) == ["Ana"]
+
+    def test_referencia_antes_do_mes_nao_devolve_linha(
+        self, julho_sem_feriados, monkeypatch
+    ):
+        """Nenhum dia util decorrido: frame vazio, nunca dias emprestados."""
+        out = _fetch(
+            monkeypatch,
+            [_linha("Ana", "LOJA A", "2020-01-01")],
+            ate=date(2026, 6, 30),
+        )
+
+        assert out.empty
+        assert list(out.columns) == TestVinculosConsultores.COLS

@@ -11,6 +11,7 @@ aba, sem alguma chave.
 """
 from datetime import date
 
+import pandas as pd
 import pytest
 
 from src.dashboard.loaders import (
@@ -29,6 +30,7 @@ from src.dashboard.kpis.gestao import (
 from src.dashboard.tabs.gestao_consultores import (
     _ATALHOS_PERIODO,
     _competencias_fechadas,
+    _du_apuracao,
     _BASES,
     _COMBINACOES,
     _METRICAS,
@@ -323,3 +325,48 @@ class TestCompetenciasFechadas:
 
     def test_janela_zero_devolve_vazio(self):
         assert _competencias_fechadas(7, 2026, 0, hoje=date(2026, 8, 31)) == []
+
+
+@pytest.mark.unit
+class TestDuApuracao:
+    """Referencia dos cards de dias em Performance do time.
+
+    Devolve ``(DU considerados, DU do mes)``. Os dois so divergem no
+    mes em curso, onde o loader trunca os dias elegiveis na ultima data
+    com dado — e o card precisa dizer "de N DU decorridos" em vez de
+    "na competencia".
+    """
+
+    def _vinculos(self, du_mes, du_dec=None):
+        dados = {
+            "CONSULTOR": ["ANA", "BIA"],
+            "DIAS_ELEGIVEIS": [20, 10],
+            "DU_COMPETENCIA": du_mes,
+        }
+        if du_dec is not None:
+            dados["DU_DECORRIDOS"] = du_dec
+        return pd.DataFrame(dados)
+
+    def test_competencia_fechada_nao_diverge(self):
+        assert _du_apuracao(self._vinculos([21, 21], [21, 21])) == (21, 21)
+
+    def test_mes_em_curso_devolve_o_decorrido_e_o_do_mes(self):
+        """O card le 2 como teto, mas ainda sabe que o mes tem 21."""
+        assert _du_apuracao(self._vinculos([21, 21], [2, 2])) == (2, 21)
+
+    def test_sem_a_coluna_de_decorridos_cai_para_o_du_do_mes(self):
+        """Retrocompat: frame antigo (sem truncagem) nao quebra o card."""
+        assert _du_apuracao(self._vinculos([21, 21])) == (21, 21)
+
+    def test_sem_nenhuma_coluna_de_du(self):
+        df = self._vinculos([21, 21]).drop(columns=["DU_COMPETENCIA"])
+
+        assert _du_apuracao(df) == (None, None)
+
+    def test_vinculos_vazio_ou_ausente(self):
+        assert _du_apuracao(None) == (None, None)
+        assert _du_apuracao(pd.DataFrame()) == (None, None)
+
+    def test_du_nulo_ou_zero_nao_vira_referencia(self):
+        assert _du_apuracao(self._vinculos([None, None])) == (None, None)
+        assert _du_apuracao(self._vinculos([0, 0])) == (None, None)

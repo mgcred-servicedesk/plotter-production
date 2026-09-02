@@ -257,6 +257,25 @@ class TestBenchmark:
         assert resumo["colaboradores"] == 2
         assert resumo["sem_vinculo"] == 0
 
+    def test_media_de_dias_por_colaborador(self):
+        """O card do topo le a MEDIA, nao a soma de dias-colaborador."""
+        vin = _vinculos(
+            [("ANA", "LOJA A", "R1", 20), ("BIA", "LOJA B", "R1", 10)]
+        )
+        df = _producao([("ANA", "LOJA A", "R1", 10000.0)])
+
+        resumo = produtividade_carteira(produtividade_por_consultor(df, vin))
+
+        # 30 dias-colaborador / 2 pessoas — quem entrou no meio do mes
+        # puxa a media para baixo do DU da competencia.
+        assert resumo["dias_por_colaborador"] == pytest.approx(15.0)
+
+    def test_media_de_dias_sem_ninguem_no_escopo(self):
+        """Escopo vazio nao divide por zero."""
+        resumo = produtividade_carteira(pd.DataFrame())
+
+        assert resumo["dias_por_colaborador"] == 0.0
+
     def test_carteira_conta_quem_nao_vendeu(self):
         vin = _vinculos(
             [("ANA", "LOJA A", "R1", 20), ("BIA", "LOJA A", "R1", 20)]

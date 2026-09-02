@@ -296,12 +296,21 @@ def produtividade_carteira(df_prod: pd.DataFrame) -> Dict[str, float]:
     ``produtividade`` e a razao das somas do escopo inteiro — o mesmo
     criterio dos benchmarks, para o card do topo e a tabela contarem a
     mesma historia.
+
+    ``dias`` e a soma dos dias de vinculo de TODO o escopo: sao
+    dias-colaborador (homem-dia), nao dias de calendario. Sozinho ele
+    nao e leitura de KPI — 2.352 num mes de 21 dias uteis so confunde
+    quem le. Quem responde "quanto de mes cada pessoa teve" e
+    ``dias_por_colaborador`` (a media do escopo), que a UI mostra
+    contra o DU da competencia; o total fica disponivel como base
+    auditavel do ``produtividade``.
     """
     if df_prod.empty:
         return {
             "producao": 0.0,
             "dias": 0,
             "produtividade": 0.0,
+            "dias_por_colaborador": 0.0,
             "colaboradores": 0,
             "sem_vinculo": 0,
             "sem_producao": 0,
@@ -310,11 +319,15 @@ def produtividade_carteira(df_prod: pd.DataFrame) -> Dict[str, float]:
     com_dias = df_prod[df_prod[COL_DIAS] > 0]
     producao = float(com_dias[COL_PRODUCAO].sum())
     dias = int(com_dias[COL_DIAS].sum())
+    colaboradores = int(len(com_dias))
     return {
         "producao": producao,
         "dias": dias,
         "produtividade": producao / dias if dias > 0 else 0.0,
-        "colaboradores": int(len(com_dias)),
+        "dias_por_colaborador": (
+            dias / colaboradores if colaboradores > 0 else 0.0
+        ),
+        "colaboradores": colaboradores,
         "sem_vinculo": int((df_prod[COL_DIAS] == 0).sum()),
         "sem_producao": int(
             ((df_prod[COL_DIAS] > 0) & (df_prod[COL_PRODUCAO] <= 0)).sum()

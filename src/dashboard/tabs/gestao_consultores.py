@@ -25,6 +25,7 @@ from src.config.settings import MESES_PT
 from src.dashboard.auth import usuario_logado
 from src.dashboard.components.tables import exibir_tabela
 from src.dashboard.formatters import (
+    formatar_decimal,
     formatar_moeda,
     formatar_numero,
     formatar_percentual,
@@ -1126,18 +1127,117 @@ def _competencias_fechadas(
     return list(reversed(saida))
 
 
-def _render_cards_carteira(resumo: Dict[str, float]) -> None:
-    """Quatro numeros do escopo, na razao das somas."""
+def _du_coluna(df_vinculos: pd.DataFrame, coluna: str) -> Optional[int]:
+    """Le uma coluna de DU do loader de vinculos.
+
+    A coluna e constante em todas as linhas (``loaders.py``,
+    ``_fetch_vinculos_consultores``); o ``max`` so escolhe um valor sem
+    depender da ordem.
+    """
+    if coluna not in df_vinculos.columns:
+        return None
+    valores = pd.to_numeric(df_vinculos[coluna], errors="coerce").dropna()
+    if valores.empty:
+        return None
+    du = int(valores.max())
+    return du if du > 0 else None
+
+
+def _du_apuracao(
+    df_vinculos: Optional[pd.DataFrame],
+) -> Tuple[Optional[int], Optional[int]]:
+    """``(DU considerados, DU do mes)`` da apuracao em tela.
+
+    Os dois so divergem no mes EM CURSO, onde o loader trunca os dias
+    elegiveis na ultima data com dado: ai o teto do denominador e o DU
+    DECORRIDO, nao o do mes, e o card precisa dizer isso — "20,4 de 21"
+    e "2,0 de 2" contam historias diferentes sobre o mesmo escopo.
+    ``None`` quando o escopo nao trouxe a coluna; sem referencia o card
+    mostra so a media.
+    """
+    if df_vinculos is None or df_vinculos.empty:
+        return None, None
+    du_mes = _du_coluna(df_vinculos, "DU_COMPETENCIA")
+    du_considerado = _du_coluna(df_vinculos, "DU_DECORRIDOS") or du_mes
+    return du_considerado, du_mes
+
+
+def _render_cards_carteira(
+    resumo: Dict[str, float],
+    du_considerado: Optional[int] = None,
+    du_mes: Optional[int] = None,
+) -> None:
+    """Quatro numeros do escopo, na razao das somas.
+
+    O card de dias mostra a MEDIA por colaborador, nao a soma do
+    escopo: a soma e dias-colaborador (112 pessoas x ~21 dias uteis =
+    2.352) e, sob o rotulo "dias" num mes de 21, nao se le como KPI
+    nenhum. A media contra o DU da competencia responde a pergunta que
+    esta sub-visao faz — quanto de mes cada pessoa teve —, e o total
+    continua visivel no ``help`` como base do R$/dia ao lado.
+
+    No mes em curso os dois cards de dias falam do PERIODO DECORRIDO —
+    e o rotulo diz isso. Numerador e denominador param na mesma data
+    (``data_ref_apuracao``, no ``app.py``); ler "de 2 DU decorridos"
+    avisa que o R$/dia ao lado ainda e uma amostra de dois dias, nao o
+    mes.
+    """
+    parcial = bool(
+        du_considerado and du_mes and du_considerado < du_mes
+    )
     col_a, col_b, col_c, col_d = st.columns(4)
     col_a.metric("Producao paga", formatar_moeda(resumo["producao"]))
     col_b.metric(
-        "Dias elegiveis", formatar_numero(resumo["dias"])
+        "Dias por colaborador",
+        formatar_decimal(resumo["dias_por_colaborador"]),
+        delta=(
+            f"de {du_considerado} DU decorridos"
+            if parcial
+            else (
+                f"de {du_considerado} DU na competencia"
+                if du_considerado
+                else "media do escopo"
+            )
+        ),
+        delta_color="off",
+        help=(
+            "Media de dias uteis de VINCULO por pessoa no escopo. "
+            f"Base: {formatar_numero(resumo['dias'])} dias-colaborador "
+            f"({formatar_numero(resumo['colaboradores'])} pessoas x os "
+            "dias de vinculo de cada uma) — o mesmo denominador do "
+            "R$ por dia elegivel ao lado. Abaixo do teto = gente que "
+            "entrou, saiu ou foi transferida no meio do periodo."
+            + (
+                f" Mes EM CURSO: a apuracao para no ultimo dia com "
+                f"dado ({du_considerado} de {du_mes} DU do mes)."
+                if parcial
+                else ""
+            )
+        ),
     )
     col_c.metric(
         "R$ por dia elegivel",
         formatar_moeda(resumo["produtividade"]),
-        delta="razao das somas",
+        delta=(
+            f"razao das somas · {du_considerado} DU decorridos"
+            if parcial
+            else "razao das somas"
+        ),
         delta_color="off",
+        help=(
+            "Producao paga do escopo dividida pelos dias elegiveis do "
+            "MESMO escopo — razao das somas, nunca a media das "
+            "produtividades individuais."
+            + (
+                " Mes em curso: os dois lados param na ultima data com "
+                "dado, entao o valor ja e comparavel com o de uma "
+                "competencia fechada — mas apoiado em "
+                f"{du_considerado} de {du_mes} dias uteis, e uma "
+                "amostra curta oscila."
+                if parcial
+                else ""
+            )
+        ),
     )
     col_d.metric(
         "Colaboradores",
@@ -1285,7 +1385,10 @@ def _render_performance(
         st.warning("Nenhum colaborador no escopo desta competencia.")
         return
 
-    _render_cards_carteira(produtividade_carteira(prod))
+    _du_considerado, _du_mes = _du_apuracao(df_vinculos)
+    _render_cards_carteira(
+        produtividade_carteira(prod), _du_considerado, _du_mes
+    )
 
     sac.divider(
         label="Por colaborador", icon="person-badge", align="left",
