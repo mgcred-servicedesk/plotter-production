@@ -965,3 +965,105 @@ class TestMetricaProdutividade:
 
         assert COL_DIAS not in tabela.columns
         assert tabela.set_index("Consultor").loc["Joao", "Total"] == 55000.0
+
+
+@pytest.mark.unit
+class TestMediaDoGrupoNaProdutividade:
+    """"Media do grupo" em metrica de RAZAO e a razao das somas.
+
+    Fixture: CNC de Joao 10k/20d = 500/dia, Maria 20k/10d = 2.000/dia,
+    Pedro 0/20d = 0/dia.
+
+    - razao das somas: 30.000 / 50 dias = **600/dia**
+    - media aritmetica das produtividades: (500+2000+0)/3 = **833,33/dia**
+
+    A segunda da o mesmo peso aos 10 dias de Maria e aos 20 de Joao — e
+    era a que os Criterios usavam, discordando do card "R$ por dia
+    elegivel" e da sub-visao Performance do time.
+    """
+
+    def test_base_media_do_grupo_usa_razao_das_somas(
+        self, df_gestao, df_sup, df_vinculos_gestao
+    ):
+        tabela = construir_tabela(
+            df_gestao,
+            df_sup,
+            metrica=METRICA_PROD_DIA,
+            df_vinculos=df_vinculos_gestao,
+        )
+        # 80% da media do grupo: 480/dia pela razao das somas contra
+        # 666,67/dia pela media simples — Joao (500/dia) cai de um lado
+        # do limiar e nao do outro.
+        res = filtrar_por_criterios(
+            tabela,
+            {"CNC": {"modo": "ate", "base": BASE_MEDIA_GRUPO, "max": 80.0}},
+        )
+
+        assert set(res["Consultor"]) == {"Pedro"}
+
+    def test_base_media_da_regiao_usa_razao_das_somas(
+        self, df_gestao, df_sup, df_vinculos_gestao
+    ):
+        tabela = construir_tabela(
+            df_gestao,
+            df_sup,
+            metrica=METRICA_PROD_DIA,
+            df_vinculos=df_vinculos_gestao,
+        )
+        # R1 = Joao + Maria: 30.000/30 dias = 1.000/dia pela razao das
+        # somas, 1.250/dia pela media simples. A 45%, o limiar e 450 de
+        # um lado e 562,50 do outro — Joao (500/dia) muda de lado.
+        res = filtrar_por_criterios(
+            tabela,
+            {"CNC": {"modo": "ate", "base": BASE_MEDIA_REGIAO, "max": 45.0}},
+        )
+
+        nomes = set(res["Consultor"])
+        assert "Joao" not in nomes  # 500 > 450 (45% de 1.000)
+        assert "Maria" not in nomes  # 2.000 > 450
+        assert "Pedro" in nomes  # 0 <= 0, sozinho em R2
+
+    def test_dias_de_quem_nao_vendeu_pesam_no_denominador(
+        self, df_gestao, df_sup, df_vinculos_gestao
+    ):
+        """Os 20 dias de Pedro sem CNC PUXAM a media do grupo para baixo.
+
+        E o comportamento certo de uma razao das somas — e o que a
+        media aritmetica nao fazia. Com Pedro elegivel a media do CNC
+        e 30.000/50 = 600/dia; tirando a janela dele do ledger ela sobe
+        para 30.000/30 = 1.000/dia. A 60%, o limiar sai de 360 para
+        600, e Joao (500/dia) muda de lado.
+        """
+        criterio = {
+            "CNC": {"modo": "ate", "base": BASE_MEDIA_GRUPO, "max": 60.0}
+        }
+
+        com_pedro = filtrar_por_criterios(
+            construir_tabela(
+                df_gestao,
+                df_sup,
+                metrica=METRICA_PROD_DIA,
+                df_vinculos=df_vinculos_gestao,
+            ),
+            criterio,
+        )
+        # Limiar 360/dia: nem Joao passa.
+        assert "Joao" not in set(com_pedro["Consultor"])
+
+        # Pedro perde a janela no ledger: produtividade ausente, e ele
+        # sai dos DOIS lados da razao — nunca com valor e sem dias,
+        # que e o defeito que `benchmark_por` evita do outro lado.
+        sem_pedro = filtrar_por_criterios(
+            construir_tabela(
+                df_gestao,
+                df_sup,
+                metrica=METRICA_PROD_DIA,
+                df_vinculos=df_vinculos_gestao[
+                    df_vinculos_gestao["CONSULTOR"] != "Pedro"
+                ],
+            ),
+            criterio,
+        )
+        # Limiar 600/dia: Joao entra, Maria (2.000/dia) nao, e Pedro
+        # nao aparece nem como zero — ficou sem denominador.
+        assert set(sem_pedro["Consultor"]) == {"Joao"}

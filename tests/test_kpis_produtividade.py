@@ -15,10 +15,21 @@ from src.dashboard.kpis.produtividade import (
     COL_COMPETENCIA,
     COL_CONSULTOR,
     COL_DIAS,
-    COL_IDX_LOJA,
+    COL_IDX_CARTEIRA,
     COL_LOJA,
+    COL_POS_LOJA,
     COL_PROD_DIA,
     COL_PRODUCAO,
+    COL_REGIAO,
+    COL_SHARE_LOJA,
+    COL_SHARE_REGIAO,
+    COL_SITUACAO,
+    SIT_AUSENTE_ANTERIOR,
+    SIT_CAIU,
+    SIT_SAIU_DE_ZERO,
+    SIT_SEM_DENOMINADOR,
+    SIT_SUBIU,
+    SIT_ZERADO_NOS_DOIS,
     benchmark_por,
     linhas_sem_vinculo,
     produtividade_carteira,
@@ -85,7 +96,11 @@ class TestProdutividadePorConsultor:
         # Metade da producao, metade dos dias: MESMA produtividade.
         assert prod.loc["ANA", COL_PROD_DIA] == pytest.approx(500.0)
         assert prod.loc["BIA", COL_PROD_DIA] == pytest.approx(500.0)
-        assert prod.loc["BIA", COL_IDX_LOJA] == pytest.approx(100.0)
+        # E, por isso, a MESMA fatia — apesar de BIA ter tido metade
+        # dos dias. E o motivo de a fatia ser da taxa, nao do dinheiro:
+        # pelo dinheiro BIA ficaria com 33,3% contra 66,7% de ANA.
+        assert prod.loc["ANA", COL_SHARE_LOJA] == pytest.approx(50.0)
+        assert prod.loc["BIA", COL_SHARE_LOJA] == pytest.approx(50.0)
 
     def test_elegivel_sem_pagamento_fica_na_tabela_com_zero(self):
         vin = _vinculos(
@@ -226,7 +241,7 @@ class TestBenchmark:
 
         assert bench["LOJA A"] == pytest.approx(10100.0 / 21.0)
 
-    def test_indice_compara_com_a_propria_loja(self):
+    def test_fatia_da_loja_e_a_parte_da_taxa_somada(self):
         vin = _vinculos(
             [("ANA", "LOJA A", "R1", 10), ("BIA", "LOJA A", "R1", 10)]
         )
@@ -237,9 +252,10 @@ class TestBenchmark:
 
         prod = produtividade_por_consultor(df, vin).set_index(COL_CONSULTOR)
 
-        # Loja = 8.000/20 = 400/dia. ANA 600 (150%), BIA 200 (50%).
-        assert prod.loc["ANA", COL_IDX_LOJA] == pytest.approx(150.0)
-        assert prod.loc["BIA", COL_IDX_LOJA] == pytest.approx(50.0)
+        # ANA 600/dia, BIA 200/dia: soma 800. Fatias 75% e 25%, que
+        # somam 100%. Fatia justa numa loja de dois = 50%.
+        assert prod.loc["ANA", COL_SHARE_LOJA] == pytest.approx(75.0)
+        assert prod.loc["BIA", COL_SHARE_LOJA] == pytest.approx(25.0)
 
     def test_carteira_usa_razao_das_somas(self):
         vin = _vinculos(
@@ -286,6 +302,187 @@ class TestBenchmark:
 
         assert resumo["sem_producao"] == 1
         assert resumo["colaboradores"] == 2
+
+
+
+@pytest.mark.unit
+class TestFatiaEComparacao:
+    """As colunas percentuais respondem a duas perguntas distintas.
+
+    FATIA (loja, regiao): soma 100% no grupo, neutro em ``100 / n``.
+    COMPARACAO (carteira): neutro em 100%.
+    """
+
+    def test_fatias_somam_cem_por_cento_no_grupo(self):
+        vin = _vinculos(
+            [("ANA", "DOIS", "R1", 10), ("BIA", "DOIS", "R1", 20)]
+            + [
+                (nome, "QUATRO", "R1", 15)
+                for nome in ("CLARA", "DUDA", "ELIS", "FLOR")
+            ]
+        )
+        df = _producao(
+            [("ANA", "DOIS", "R1", 4000.0),
+             ("BIA", "DOIS", "R1", 3000.0),
+             ("CLARA", "QUATRO", "R1", 9000.0),
+             ("DUDA", "QUATRO", "R1", 1500.0)]
+        )
+
+        prod = produtividade_por_consultor(df, vin)
+
+        por_loja = prod.groupby(COL_LOJA)[COL_SHARE_LOJA].sum()
+        assert por_loja["DOIS"] == pytest.approx(100.0)
+        assert por_loja["QUATRO"] == pytest.approx(100.0)
+        assert (
+            prod.groupby(COL_REGIAO)[COL_SHARE_REGIAO].sum()["R1"]
+            == pytest.approx(100.0)
+        )
+
+    def test_fatia_nao_tem_teto_ligado_ao_tamanho_do_time(self):
+        # Mesma situacao nas duas lojas: uma pessoa produz, as outras
+        # nao. Quem produz leva a fatia INTEIRA nos dois casos — o
+        # indice antigo travava em 200% numa loja e 400% na outra.
+        vin = _vinculos(
+            [("ANA", "DOIS", "R1", 10), ("BIA", "DOIS", "R1", 10)]
+            + [
+                (nome, "QUATRO", "R1", 10)
+                for nome in ("CLARA", "DUDA", "ELIS", "FLOR")
+            ]
+        )
+        df = _producao(
+            [("ANA", "DOIS", "R1", 4000.0),
+             ("CLARA", "QUATRO", "R1", 4000.0)]
+        )
+
+        prod = produtividade_por_consultor(df, vin).set_index(COL_CONSULTOR)
+
+        assert prod.loc["ANA", COL_SHARE_LOJA] == pytest.approx(100.0)
+        assert prod.loc["CLARA", COL_SHARE_LOJA] == pytest.approx(100.0)
+        # E a comparacao com a carteira tambem nao muda com o tamanho.
+        assert (
+            prod.loc["ANA", COL_IDX_CARTEIRA]
+            == pytest.approx(prod.loc["CLARA", COL_IDX_CARTEIRA])
+        )
+
+    def test_sozinho_na_loja_leva_a_fatia_inteira_e_isso_e_verdade(self):
+        vin = _vinculos(
+            [("ANA", "LOJA A", "R1", 10), ("BIA", "LOJA B", "R1", 10)]
+        )
+        df = _producao(
+            [("ANA", "LOJA A", "R1", 100.0),
+             ("BIA", "LOJA B", "R1", 90000.0)]
+        )
+
+        prod = produtividade_por_consultor(df, vin).set_index(COL_CONSULTOR)
+
+        # 100% da propria loja e literalmente verdade para quem esta
+        # sozinho — diferente do indice antigo, onde 100% significava
+        # "na media de si mesmo" e nao dizia nada.
+        assert prod.loc["ANA", COL_SHARE_LOJA] == pytest.approx(100.0)
+        assert prod.loc["BIA", COL_SHARE_LOJA] == pytest.approx(100.0)
+        # A comparacao com a carteira separa as duas.
+        assert prod.loc["ANA", COL_IDX_CARTEIRA] < 1.0
+        assert prod.loc["BIA", COL_IDX_CARTEIRA] > 190.0
+
+    def test_fatia_e_da_taxa_nunca_do_dinheiro(self):
+        """O caso ILUARA: mes parcial nao pode virar fatia pequena.
+
+        Medido em 08/2026 na HELP CASCADURA — 5 dias uteis de 21 e o
+        melhor R$/dia da loja. Pela fatia do dinheiro ela cairia para
+        atras de quem ficou o mes inteiro.
+        """
+        vin = _vinculos(
+            [("PARCIAL", "LOJA A", "R1", 5), ("INTEIRO", "LOJA A", "R1", 20)]
+        )
+        df = _producao(
+            [("PARCIAL", "LOJA A", "R1", 10000.0),   # 2.000/dia
+             ("INTEIRO", "LOJA A", "R1", 20000.0)]   # 1.000/dia
+        )
+
+        prod = produtividade_por_consultor(df, vin).set_index(COL_CONSULTOR)
+
+        # Pela taxa: 2.000 de 3.000 somados = 66,7%.
+        assert prod.loc["PARCIAL", COL_SHARE_LOJA] == pytest.approx(
+            2000.0 / 3000.0 * 100.0
+        )
+        # Pelo dinheiro seria 10.000/30.000 = 33,3% — e ela apareceria
+        # como a pior da loja tendo o melhor R$/dia.
+        assert prod.loc["PARCIAL", COL_SHARE_LOJA] > 50.0
+        assert prod.loc["PARCIAL", COL_POS_LOJA] == "1 de 2"
+
+    def test_indice_da_carteira_usa_a_razao_das_somas_do_escopo(self):
+        vin = _vinculos(
+            [("ANA", "LOJA A", "R1", 20), ("BIA", "LOJA B", "R1", 10)]
+        )
+        df = _producao(
+            [("ANA", "LOJA A", "R1", 10000.0),
+             ("BIA", "LOJA B", "R1", 2000.0)]
+        )
+
+        prod = produtividade_por_consultor(df, vin).set_index(COL_CONSULTOR)
+
+        # Carteira = 12.000/30 = 400/dia. ANA 500 (125%), BIA 200 (50%).
+        assert prod.loc["ANA", COL_IDX_CARTEIRA] == pytest.approx(125.0)
+        assert prod.loc["BIA", COL_IDX_CARTEIRA] == pytest.approx(50.0)
+
+    def test_carteira_sem_venda_nenhuma_deixa_indice_ausente(self):
+        vin = _vinculos(
+            [("ANA", "LOJA A", "R1", 10), ("BIA", "LOJA A", "R1", 10)]
+        )
+        prod = produtividade_por_consultor(_producao([]), vin)
+
+        # Sem denominador de rede o indice e ausente — nunca 0%, que
+        # afirmaria posicao relativa que nao foi medida.
+        assert prod[COL_IDX_CARTEIRA].isna().all()
+        assert prod[COL_SHARE_LOJA].isna().all()
+
+    def test_posicao_na_loja_nao_depende_do_tamanho(self):
+        vin = _vinculos(
+            [("ANA", "LOJA A", "R1", 10), ("BIA", "LOJA A", "R1", 10),
+             ("CLARA", "LOJA A", "R1", 10)]
+        )
+        df = _producao(
+            [("ANA", "LOJA A", "R1", 9000.0),
+             ("BIA", "LOJA A", "R1", 5000.0),
+             ("CLARA", "LOJA A", "R1", 1000.0)]
+        )
+
+        prod = produtividade_por_consultor(df, vin).set_index(COL_CONSULTOR)
+
+        assert prod.loc["ANA", COL_POS_LOJA] == "1 de 3"
+        assert prod.loc["BIA", COL_POS_LOJA] == "2 de 3"
+        assert prod.loc["CLARA", COL_POS_LOJA] == "3 de 3"
+
+    def test_empate_divide_a_posicao(self):
+        vin = _vinculos(
+            [("ANA", "LOJA A", "R1", 10), ("BIA", "LOJA A", "R1", 10),
+             ("CLARA", "LOJA A", "R1", 10)]
+        )
+        df = _producao(
+            [("ANA", "LOJA A", "R1", 5000.0),
+             ("BIA", "LOJA A", "R1", 5000.0),
+             ("CLARA", "LOJA A", "R1", 1000.0)]
+        )
+
+        prod = produtividade_por_consultor(df, vin).set_index(COL_CONSULTOR)
+
+        assert prod.loc["ANA", COL_POS_LOJA] == "1 de 3"
+        assert prod.loc["BIA", COL_POS_LOJA] == "1 de 3"
+        assert prod.loc["CLARA", COL_POS_LOJA] == "3 de 3"
+
+    def test_sem_dia_elegivel_nao_recebe_posicao(self):
+        vin = _vinculos([("ANA", "LOJA A", "R1", 10)])
+        df = _producao(
+            [("ANA", "LOJA A", "R1", 5000.0),
+             ("ZE", "LOJA A", "R1", 8000.0)]
+        )
+
+        prod = produtividade_por_consultor(df, vin).set_index(COL_CONSULTOR)
+
+        # ZE produziu sem janela no ledger: sem denominador nao ha
+        # produtividade, e portanto nao ha posicao a atribuir.
+        assert prod.loc["ANA", COL_POS_LOJA] == "1 de 1"
+        assert prod.loc["ZE", COL_POS_LOJA] == ""
 
 
 @pytest.mark.unit
@@ -351,3 +548,98 @@ class TestSerieEVariacao:
         assert variacao_ultima_competencia(
             serie_por_consultor(frames)
         ).empty
+
+
+@pytest.mark.unit
+class TestSituacaoDaVariacao:
+    """Cada causa de ``Variacao %`` ausente tem nome proprio.
+
+    Antes, as quatro viravam o mesmo ``NaN`` e a aba relatava todas
+    como "nao aparecem nas duas competencias" — inclusive quem saiu de
+    zero, que e a maior virada possivel.
+    """
+
+    def _frames(self, anterior, atual, nomes=("ANA",)):
+        vin = _vinculos([(n, "LOJA A", "R1", 20) for n in nomes])
+        return {
+            (2026, 6): produtividade_por_consultor(_producao(anterior), vin),
+            (2026, 7): produtividade_por_consultor(_producao(atual), vin),
+        }
+
+    def _situacao(self, frames, nome="ANA"):
+        var = variacao_ultima_competencia(
+            serie_por_consultor(frames)
+        ).set_index(COL_CONSULTOR)
+        return var.loc[nome, COL_SITUACAO]
+
+    def test_saiu_de_zero_nao_e_ausencia(self):
+        frames = self._frames(
+            anterior=[],
+            atual=[("ANA", "LOJA A", "R1", 10000.0)],
+        )
+
+        assert self._situacao(frames) == SIT_SAIU_DE_ZERO
+
+    def test_zerado_nos_dois_meses(self):
+        assert self._situacao(self._frames([], [])) == SIT_ZERADO_NOS_DOIS
+
+    def test_ausente_no_anterior_continua_ausente(self):
+        frames = {
+            (2026, 6): produtividade_por_consultor(
+                _producao([("ANA", "LOJA A", "R1", 8000.0)]),
+                _vinculos([("ANA", "LOJA A", "R1", 20)]),
+            ),
+            (2026, 7): produtividade_por_consultor(
+                _producao(
+                    [("ANA", "LOJA A", "R1", 8000.0),
+                     ("NOVA", "LOJA A", "R1", 4000.0)]
+                ),
+                _vinculos(
+                    [("ANA", "LOJA A", "R1", 20),
+                     ("NOVA", "LOJA A", "R1", 20)]
+                ),
+            ),
+        }
+
+        assert self._situacao(frames, "NOVA") == SIT_AUSENTE_ANTERIOR
+
+    def test_sem_dia_elegivel_agora_nao_vira_ausencia(self):
+        frames = {
+            (2026, 6): produtividade_por_consultor(
+                _producao([("ANA", "LOJA A", "R1", 8000.0)]),
+                _vinculos([("ANA", "LOJA A", "R1", 20)]),
+            ),
+            # Em 07 a pessoa produziu mas sumiu do ledger: o furo esta
+            # no cadastro, nao no desempenho dela.
+            (2026, 7): produtividade_por_consultor(
+                _producao([("ANA", "LOJA A", "R1", 9000.0)]),
+                _vinculos([("OUTRA", "LOJA A", "R1", 20)]),
+            ),
+        }
+
+        assert self._situacao(frames) == SIT_SEM_DENOMINADOR
+
+    def test_subiu_e_caiu_seguem_pelo_sinal(self):
+        subiu = self._frames(
+            [("ANA", "LOJA A", "R1", 8000.0)],
+            [("ANA", "LOJA A", "R1", 10000.0)],
+        )
+        caiu = self._frames(
+            [("ANA", "LOJA A", "R1", 10000.0)],
+            [("ANA", "LOJA A", "R1", 8000.0)],
+        )
+
+        assert self._situacao(subiu) == SIT_SUBIU
+        assert self._situacao(caiu) == SIT_CAIU
+
+    def test_queda_a_zero_e_queda_de_cem_por_cento_nao_lacuna(self):
+        frames = self._frames(
+            [("ANA", "LOJA A", "R1", 8000.0)],
+            [],
+        )
+        var = variacao_ultima_competencia(
+            serie_por_consultor(frames)
+        ).set_index(COL_CONSULTOR)
+
+        assert var.loc["ANA", "Variacao %"] == pytest.approx(-100.0)
+        assert var.loc["ANA", COL_SITUACAO] == SIT_CAIU

@@ -27,7 +27,17 @@ from src.dashboard.kpis.gestao import (
     METRICA_TICKET,
     NIVEL_LOJA,
 )
+from src.dashboard.kpis.produtividade import (
+    COL_CONSULTOR as COL_CONSULTOR_PROD,
+    COL_DIAS as COL_DIAS_PROD,
+    COL_IDX_CARTEIRA,
+    COL_PROD_DIA,
+    COL_PRODUCAO as COL_PRODUCAO_PROD,
+    COL_SHARE_LOJA,
+)
 from src.dashboard.tabs.gestao_consultores import (
+    _CORTE_MAX,
+    _recortar_e_ordenar,
     _ATALHOS_PERIODO,
     _competencias_fechadas,
     _du_apuracao,
@@ -370,3 +380,83 @@ class TestDuApuracao:
     def test_du_nulo_ou_zero_nao_vira_referencia(self):
         assert _du_apuracao(self._vinculos([None, None])) == (None, None)
         assert _du_apuracao(self._vinculos([0, 0])) == (None, None)
+
+
+@pytest.mark.unit
+class TestCorteEOrdenacaoDaPerformance:
+    """O corte e a ordenacao nao podem esconder indice AUSENTE.
+
+    Indice ``NaN`` acontece quando a loja inteira nao vendeu no
+    periodo: o benchmark do grupo vai a zero e a divisao devolve
+    ausente. Sao pessoas com R$ 0/dia — o pior caso possivel —, e as
+    duas leituras que existem para achar baixa performance (o corte e a
+    ordem crescente) as escondiam.
+    """
+
+    def _prod(self):
+        """Tres pessoas: uma acima da rede, uma abaixo, uma sem indice."""
+        return pd.DataFrame({
+            COL_CONSULTOR_PROD: ["FORTE", "FRACA", "SEM INDICE"],
+            COL_DIAS_PROD: [20, 20, 20],
+            COL_PRODUCAO_PROD: [20000.0, 2000.0, 0.0],
+            COL_PROD_DIA: [1000.0, 100.0, 0.0],
+            COL_IDX_CARTEIRA: [180.0, 18.0, float("nan")],
+            COL_SHARE_LOJA: [75.0, 25.0, float("nan")],
+        })
+
+    def test_corte_baixo_mantem_quem_esta_sem_indice(self):
+        visao = _recortar_e_ordenar(
+            self._prod(), "Menor produtividade", corte=50
+        )
+
+        nomes = set(visao[COL_CONSULTOR_PROD])
+        assert "FORTE" not in nomes  # 180% da rede, acima do corte
+        assert "FRACA" in nomes  # 18% da rede
+        # Sem o guarda de `isna`, o `<=` descartava esta linha em
+        # silencio — a pessoa que o corte de 50% mais procura.
+        assert "SEM INDICE" in nomes
+
+    def test_corte_no_maximo_nao_filtra_ninguem(self):
+        visao = _recortar_e_ordenar(
+            self._prod(), "Menor produtividade", corte=_CORTE_MAX
+        )
+
+        assert len(visao) == 3
+
+    def test_ordem_crescente_poe_indice_ausente_no_topo(self):
+        visao = _recortar_e_ordenar(
+            self._prod(), "Mais abaixo da media da carteira",
+            corte=_CORTE_MAX
+        )
+
+        # Lista do pior para o melhor: quem esta sem indice abre a
+        # lista, nunca a fecha.
+        assert visao.iloc[0][COL_CONSULTOR_PROD] == "SEM INDICE"
+        assert visao.iloc[-1][COL_CONSULTOR_PROD] == "FORTE"
+
+    def test_ordem_decrescente_deixa_ausente_no_fim(self):
+        visao = _recortar_e_ordenar(
+            self._prod(), "Maior produtividade", corte=_CORTE_MAX
+        )
+
+        assert visao.iloc[0][COL_CONSULTOR_PROD] == "FORTE"
+        assert visao.iloc[-1][COL_CONSULTOR_PROD] == "SEM INDICE"
+
+    def test_sem_dia_elegivel_nunca_entra_na_tabela(self):
+        prod = self._prod()
+        prod.loc[len(prod)] = {
+            COL_CONSULTOR_PROD: "ORFA",
+            COL_DIAS_PROD: 0,
+            COL_PRODUCAO_PROD: 5000.0,
+            COL_PROD_DIA: float("nan"),
+            COL_IDX_CARTEIRA: float("nan"),
+            COL_SHARE_LOJA: float("nan"),
+        }
+
+        visao = _recortar_e_ordenar(
+            prod, "Menor produtividade", corte=_CORTE_MAX
+        )
+
+        # Producao sem vinculo tem expander proprio de diagnostico; na
+        # tabela ela viraria uma linha sem denominador nenhum.
+        assert "ORFA" not in set(visao[COL_CONSULTOR_PROD])

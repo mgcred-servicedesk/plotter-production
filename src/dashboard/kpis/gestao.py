@@ -665,6 +665,69 @@ def _chave_mix(rotulo: str) -> str:
     return equivalencia.get(rotulo, "")
 
 
+def _peso_do_grupo(tabela: pd.DataFrame) -> Optional[pd.Series]:
+    """Peso de cada linha na media do grupo, ou ``None`` se nao houver.
+
+    Hoje so a metrica de produtividade tem peso: ela e uma RAZAO
+    (R$ por dia), e a media de um grupo de razoes e a razao das somas,
+    nunca a media aritmetica das razoes. ``COL_DIAS`` so existe na
+    tabela quando a metrica ativa e ``prod_dia`` (``_aplicar_metrica``),
+    e serve para as duas pontas: e o denominador de cada linha e o peso
+    dela no grupo.
+
+    Nas demais metricas a media simples e a leitura certa (valor e
+    quantidade sao somas, nao razoes) e o peso e ``None``.
+    """
+    if COL_DIAS not in tabela.columns:
+        return None
+    return pd.to_numeric(tabela[COL_DIAS], errors="coerce")
+
+
+def _media_do_grupo(
+    valores: pd.Series,
+    pesos: Optional[pd.Series],
+) -> float:
+    """Media de um grupo: razao das somas quando ha peso, simples quando nao.
+
+    Sem isso, a base "% da media do grupo" media a produtividade pela
+    media ARITMETICA das produtividades individuais, dando o mesmo peso
+    a quem teve 2 dias e a quem teve 23 — exatamente a media de medias
+    que ``kpis/produtividade.py`` proibe e que o card "R$ por dia
+    elegivel" nao usa. Medido em 08/2026: media simples R$ 3.782,97/dia
+    contra R$ 3.911,89/dia da razao das somas (-3,3%; -5,6% na regiao
+    SANDRA). A mesma pessoa podia aparecer acima da media na sub-visao
+    Performance e abaixo de 100% da media do grupo nos Criterios.
+
+    Linha sem peso (sem dia elegivel) fica fora dos DOIS lados da
+    razao, pelo mesmo motivo de ``benchmark_por``: entraria com valor e
+    sem denominador.
+    """
+    val = pd.to_numeric(valores, errors="coerce")
+    if pesos is None:
+        return float(val.mean()) if val.notna().any() else 0.0
+    peso = pesos.fillna(0.0)
+    validos = val.notna() & (peso > 0)
+    if not validos.any():
+        return 0.0
+    return float((val[validos] * peso[validos]).sum() / peso[validos].sum())
+
+
+def _media_por_regiao(
+    tabela: pd.DataFrame,
+    rotulo: str,
+    pesos: Optional[pd.Series],
+) -> pd.Series:
+    """``_media_do_grupo`` aplicada dentro de cada regiao, por linha."""
+    coluna = pd.to_numeric(tabela[rotulo], errors="coerce")
+    regiao = tabela["Regiao"]
+    if pesos is None:
+        return coluna.groupby(regiao).transform("mean")
+    peso = pesos.fillna(0.0).where(coluna.notna() & (pesos.fillna(0.0) > 0))
+    numerador = (coluna * peso).groupby(regiao).transform("sum")
+    denominador = peso.groupby(regiao).transform("sum")
+    return numerador / denominador.where(denominador > 0)
+
+
 def _resolver_limiar(
     tabela: pd.DataFrame,
     rotulo: str,
@@ -678,6 +741,13 @@ def _resolver_limiar(
     do grupo, 80% da meta, percentil 20. Isso deixa o criterio vivo mes
     a mes — um teto fixo em R$ envelhece, "metade da media" nao.
 
+    "Media do grupo" e a RAZAO DAS SOMAS quando a metrica e uma razao
+    (produtividade), e a media simples quando e uma soma (valor,
+    quantidade) — ver ``_media_do_grupo``. E a mesma definicao de media
+    que o card "R$ por dia elegivel" e a sub-visao Performance do time
+    usam; antes desta correcao as duas metades da aba discordavam sobre
+    o que era "a media" em 3,3% na rede e ate 5,6% numa regiao.
+
     Devolve ``None`` quando a base nao pode ser resolvida (ex.: meta
     inexistente para o rotulo), sinalizando que o criterio deve ser
     ignorado em vez de silenciosamente zerar a lista.
@@ -688,13 +758,13 @@ def _resolver_limiar(
 
     if base == BASE_ABSOLUTA:
         return numero
+    pesos = _peso_do_grupo(tabela)
     if base == BASE_MEDIA_GRUPO:
-        return float(coluna.mean()) * numero / 100.0
+        return _media_do_grupo(coluna, pesos) * numero / 100.0
     if base == BASE_MEDIA_REGIAO:
         if "Regiao" not in tabela.columns:
-            return float(coluna.mean()) * numero / 100.0
-        media = tabela.groupby("Regiao")[rotulo].transform("mean")
-        return media * numero / 100.0
+            return _media_do_grupo(coluna, pesos) * numero / 100.0
+        return _media_por_regiao(tabela, rotulo, pesos) * numero / 100.0
     if base == BASE_PERCENTIL:
         return float(coluna.quantile(min(max(numero, 0.0), 100.0) / 100.0))
     if base == BASE_META:

@@ -537,6 +537,75 @@ população** — a regra que a 096 firmou no Caderno.
 Benchmarks (loja, região, carteira) usam **razão das somas**
 (`sum(produção)/sum(dias)`), nunca a média das produtividades individuais:
 média de médias daria o mesmo peso a quem teve 2 dias e a quem teve 23.
+Isso vale também para a base **"% da média do grupo/região"** dos Critérios
+quando a métrica é `prod_dia` (`_media_do_grupo`, `_media_por_regiao` em
+`kpis/gestao.py`): até 2026-09-03 ela usava média aritmética e discordava do
+card em 3,3% na rede e 5,6% na região SANDRA (08/2026).
+
+#### Fatia e comparação — duas perguntas, dois pontos neutros
+
+As colunas percentuais **não** respondem a mesma coisa. Cada leitura vale onde
+o grupo tem o tamanho certo para ela.
+
+| Coluna | Tipo | Fórmula | Ponto neutro | Faixa |
+|---|---|---|---|---|
+| `% da loja` | **fatia** | `taxa ÷ Σ taxas da loja` | `100 ÷ n` (25–100%) | 0–100% |
+| `% da região` | **fatia** | `taxa ÷ Σ taxas da região` | `100 ÷ n` (3,0–25,0%) | 0–100% |
+| `vs. média da carteira` | **comparação** | `taxa ÷ razão das somas do escopo` | **100%** | 0–320%¹ |
+| `Na loja` | posição | rank por `R$/dia`, `"2 de 3"` | — | — |
+
+¹ máximo medido em 08/2026; 719% no 2º dia útil de 09/2026.
+
+**Fatias somam exatamente 100% dentro do grupo** (verificado: 47 das 48 lojas e
+as 5 regiões em 09/2026 — a exceção é a loja onde ninguém vendeu, cuja fatia é
+**ausente**, nunca 0%). O neutro **não** é 100%: é a *fatia justa*, `100 ÷ n`.
+Sem a fatia justa impressa ao lado o número não se interpreta, e por isso a UI
+calcula e publica a fatia justa de cada tamanho de loja e de cada região do
+escopo — nunca um texto fixo.
+
+**A fatia é da TAXA (R$/dia), nunca do dinheiro.** As duas somam 100% e
+concordam quase sempre (1 loja de 48 muda de ordem interna; diferença mediana
+de 0,0 p.p.), mas divergem até 34,2 p.p. exatamente sobre quem teve mês
+parcial — que é quem esta métrica existe para não punir. HELP CASCADURA,
+08/2026:
+
+| Pessoa | Dias | R$/dia | Na loja | Fatia da taxa | Fatia do dinheiro |
+|---|---|---|---|---|---|
+| ILUARA BORGES CABRAL | 5 | 2.844,30 | 1 de 4 | **63,2%** | 29,0% |
+| JOYCE ANNY DA S. F. DE JESUS | 21 | 1.322,00 | 2 de 4 | 29,4% | 56,6% |
+| TACILA DE LIMA GUIMARAES | 21 | 335,50 | 3 de 4 | 7,5% | 14,4% |
+| JESSICA TEIXEIRA SANTOS | 21 | 0,00 | 4 de 4 | 0,0% | 0,0% |
+
+Pela fatia do dinheiro, ILUARA — a melhor da loja por dia — apareceria em
+segundo, atrás de quem ficou o mês inteiro.
+
+**Por que não índice na loja, e por que não fatia na rede:**
+
+- *Índice na loja* tinha teto mecânico `n × 100%` (medido em 09/2026,
+  exatamente 100/200/300/400% nas lojas de 1/2/3/4). Com 48 lojas de até 4
+  pessoas e 84% do time em loja de até 3, o mesmo desempenho virava número
+  diferente conforme o tamanho da equipe, e quem estava sozinho marcava 100%
+  para sempre — dizendo nada. Na fatia, quem está sozinho marca 100% e isso é
+  **literalmente verdade**.
+- *Fatia na rede* foi medida e descartada: com 122 pessoas a fatia justa é
+  **0,82%** e o máximo observado foi **2,76%** — verdadeiro, mas é ruído
+  visual, não leitura de destaque.
+- *Leave-one-out por loja* foi medido e descartado: com o colega no
+  denominador o índice explode (máximo de 30.690% e desvio-padrão de 4.459 nas
+  lojas de duas pessoas em 08/2026).
+
+O **corte do slider** incide sobre `vs. média da carteira`, a única coluna com
+o mesmo ponto neutro para todo mundo: cortar pela fatia da loja seria severo
+numa loja de dois (justo 50%) e generoso numa de quatro (justo 25%).
+
+**Os percentuais são do escopo em tela**, não da rede: `app.py` entrega `df` e
+`df_vinculos` já recortados por RLS e pelos filtros da sidebar. Filtrar uma
+loja faz "% da região" deixar de ser a região; filtrar um consultor faz os três
+valerem 100% por construção. A UI avisa nos dois casos.
+
+`Região` aqui é a **região atual** da loja (`REGIAO_ATUAL`, `loaders.py`), não
+a vigente na data do contrato (`loja_regiao_vigencia`) — divergência
+deliberada, porque o benchmark compara os times de hoje.
 
 Casos de borda com decisão fixa:
 
@@ -547,12 +616,30 @@ Casos de borda com decisão fixa:
   todo benchmark e aparece como diagnóstico nominal na UI.
 - **Competência ausente** na série é lacuna, não zero: a variação não compara
   meses não consecutivos, e o gráfico não liga os pontos por cima do buraco.
+- **Percentual ausente** (`NaN`, quando a loja inteira não vendeu e a soma das
+  taxas zera) **sobrevive ao corte** do slider e vai para o **topo** da ordem
+  crescente. O `<=` sozinho descartava em silêncio, e `na_position="last"`
+  punha essas pessoas no fim de uma lista de piores. Nunca vira 0%: fatia de um
+  grupo que não produziu é indefinida, não nula.
+- **Variação sem percentual** tem quatro causas com nomes distintos
+  (`Situacao`): ausente no mês anterior, saiu de zero (não há % sobre zero),
+  zerado nos dois, sem dia elegível agora. Contar tudo como "não aparece nas
+  duas" transformava a maior virada do mês em ausência — medido em 07→08/2026,
+  3 das 18 "lacunas" eram gente presente nos dois meses, duas delas saindo de
+  R$ 0 para R$ 918,78 e R$ 3.056,38/dia.
 - **Mês corrente** não entra na série — mês pela metade ao lado de meses
   inteiros desenha queda que não existe.
 
 Superfície: sub-visão **Performance do time** na aba Gestão de Consultores
 (admin/gestor/gerente_comercial), mais a métrica `prod_dia` na tabela de
 critérios da mesma aba.
+
+A média do grupo nos **Critérios** e o card da **Performance** usam a mesma
+*definição* de média, mas **não têm de bater em valor**: o `Total` dos
+Critérios soma apenas os produtos selecionados no filtro, e a população só
+inclui quem não vendeu quando "incluir zerados" está ligado. Divergência de
+numerador e de população é esperada; divergência de *definição de média* era o
+defeito corrigido.
 
 ### Snapshot privado para o Bereshit
 

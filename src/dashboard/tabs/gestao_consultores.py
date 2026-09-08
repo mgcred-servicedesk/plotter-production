@@ -72,11 +72,21 @@ from src.dashboard.kpis.produtividade import (
     COL_COMPETENCIA,
     COL_CONSULTOR as COL_CONSULTOR_PROD,
     COL_DIAS as COL_DIAS_PROD,
-    COL_IDX_LOJA as COL_IDX_LOJA_PROD,
-    COL_IDX_REGIAO as COL_IDX_REGIAO_PROD,
+    COL_IDX_CARTEIRA as COL_IDX_CARTEIRA_PROD,
     COL_LOJA as COL_LOJA_PROD,
     COL_PROD_DIA as COL_PROD_DIA_PROD,
     COL_PRODUCAO as COL_PRODUCAO_PROD,
+    COL_REGIAO as COL_REGIAO_PROD,
+    COL_SHARE_LOJA as COL_SHARE_LOJA_PROD,
+    COL_SHARE_REGIAO as COL_SHARE_REGIAO_PROD,
+    COL_SITUACAO,
+    SIT_AUSENTE_ANTERIOR,
+    SIT_CAIU,
+    SIT_ESTAVEL,
+    SIT_SAIU_DE_ZERO,
+    SIT_SEM_DENOMINADOR,
+    SIT_SUBIU,
+    SIT_ZERADO_NOS_DOIS,
     benchmark_por,
     linhas_sem_vinculo,
     produtividade_carteira,
@@ -1093,6 +1103,13 @@ _JANELAS_TENDENCIA = {"3 meses": 3, "6 meses": 6, "12 meses": 12}
 # grafico vira um novelo e ninguem le nenhuma das linhas.
 _MAX_LINHAS_SERIE = 5
 
+# Teto do slider de corte E sentinela de "sem filtro". O corte incide
+# sobre `vs. media da carteira`, cujo maximo medido foi 320% numa competencia
+# fechada (08/2026) e 719% no segundo dia util de 09/2026 — nenhum teto
+# fixo cobre o mes em curso, entao o topo do slider desliga o filtro em
+# vez de fingir que 400% e o limite do mundo.
+_CORTE_MAX = 400
+
 
 def _competencias_fechadas(
     mes: int,
@@ -1247,6 +1264,135 @@ def _render_cards_carteira(
     )
 
 
+def _aviso_escopo_dos_percentuais(prod: pd.DataFrame) -> None:
+    """Avisa quando o filtro da sidebar degenerou a base de comparacao.
+
+    Todo percentual desta sub-visao compara a pessoa com o escopo EM
+    TELA — ``app.py`` entrega ``df`` e ``df_vinculos`` ja recortados por
+    RLS e pelos filtros granulares. Filtrar uma loja faz "% da regiao"
+    deixar de ser a regiao; filtrar um consultor faz todo percentual
+    valer 100% por construcao. Nada disso aparecia na tela, e o numero
+    continuava com o mesmo rotulo.
+    """
+    com_dias = prod[prod[COL_DIAS_PROD] > 0]
+    if com_dias.empty:
+        return
+
+    if len(com_dias) == 1:
+        st.warning(
+            "**Uma unica pessoa no escopo.** As fatias e a comparacao "
+            "usam o grupo em tela — com uma pessoa so, o grupo e ela "
+            "mesma: as duas fatias dao 100% e a comparacao da 100%, "
+            "todas por construcao. Limpe o filtro de consultor na "
+            "barra lateral para ter com quem comparar.",
+            icon=":material/warning:",
+        )
+        return
+
+    colapsos = []
+    if com_dias[COL_LOJA_PROD].nunique() == 1:
+        colapsos.append(
+            "so uma LOJA no escopo — a fatia '% da loja' passa a ser "
+            "a fatia da carteira inteira"
+        )
+    if com_dias[COL_REGIAO_PROD].nunique() == 1:
+        colapsos.append(
+            "so uma REGIAO no escopo — a fatia '% da regiao' passa a "
+            "ser a fatia da carteira inteira"
+        )
+    if colapsos:
+        st.warning(
+            "**O filtro estreitou a base de comparacao:** "
+            + "; ".join(colapsos)
+            + ". Os percentuais comparam a pessoa com o que sobrou do "
+            "filtro, nunca com a rede inteira.",
+            icon=":material/filter_alt:",
+        )
+
+
+def _legenda_percentuais(
+    prod: pd.DataFrame,
+    exibidos: int,
+    parcial: bool,
+    du_considerado: Optional[int] = None,
+    du_mes: Optional[int] = None,
+) -> None:
+    """Publica o ponto neutro de cada coluna, com os numeros do escopo.
+
+    As colunas percentuais respondem a duas perguntas com dois pontos
+    neutros diferentes, e nenhuma das duas se interpreta sozinha:
+
+    - as FATIAS (loja, regiao) somam 100% no grupo, entao o neutro e
+      ``100 / n`` — 50% numa loja de dois, 25% numa de quatro, 3,0% na
+      maior regiao. Sem a fatia justa impressa, "33%" nao diz se a
+      pessoa esta bem ou mal;
+    - a COMPARACAO (carteira) tem neutro em 100%.
+
+    Por isso a legenda calcula e imprime a fatia justa de cada tamanho
+    de loja e de cada regiao presentes no escopo — nao um texto fixo,
+    que envelheceria junto com o organograma.
+    """
+    com_dias = prod[prod[COL_DIAS_PROD] > 0]
+    total = len(com_dias)
+    por_loja = com_dias.groupby(COL_LOJA_PROD).size()
+    por_regiao = com_dias.groupby(COL_REGIAO_PROD).size()
+    teto_loja = int(por_loja.max()) if not por_loja.empty else 0
+
+    # Virgula decimal: o resto do dashboard e pt-BR, e "33.3%" no meio
+    # de uma frase em portugues le como outra coisa.
+    def _pct(valor: float) -> str:
+        inteiro = f"{valor:.0f}%" if float(valor).is_integer() else None
+        return inteiro or f"{valor:.1f}%".replace(".", ",")
+
+    justos_loja = sorted(
+        {_pct(100.0 / n) for n in por_loja.unique()},
+        key=lambda t: float(t.rstrip("%").replace(",", ".")),
+    )
+    justos_regiao = ", ".join(
+        f"{nome} {_pct(100.0 / int(qtd))} ({int(qtd)})"
+        for nome, qtd in por_regiao.sort_values().items()
+    )
+
+    st.caption(
+        f"**{exibidos}** de {total} colaboradores com vinculo na "
+        "competencia. As colunas percentuais respondem a DUAS "
+        "perguntas diferentes — repare no ponto neutro de cada uma:"
+    )
+    st.markdown(
+        "**Fatia** — quanto da produtividade somada do grupo e da "
+        "pessoa. Somam 100% dentro do grupo, e o neutro e a *fatia "
+        "justa* (`100 ÷ nº de pessoas`), nunca 100%:\n"
+        f"- **% da loja** — entre as **{int(por_loja.min())} a "
+        f"{teto_loja}** pessoas da propria loja ({len(por_loja)} lojas "
+        f"no escopo). Fatia justa: {', '.join(justos_loja)} — a coluna "
+        "*Na loja* ao lado ja diz de quantos.\n"
+        f"- **% da regiao** — entre as pessoas da propria regiao. "
+        f"Fatia justa por regiao: {justos_regiao}.\n\n"
+        "**Comparacao** — quantas vezes a media do escopo a pessoa "
+        "produz por dia. Aqui o neutro **e** 100%:\n"
+        f"- **vs. media da carteira** — contra as **{total}** pessoas "
+        "em tela, com o mesmo denominador do card *R$ por dia "
+        "elegivel* acima. E a coluna do corte, por ter o mesmo ponto "
+        "neutro para todo mundo.\n\n"
+        "**Posicao** — **Na loja** (*1 de 3* = melhor dos tres). "
+        "Empate divide a posicao."
+    )
+    st.caption(
+        ":gray[A fatia e da TAXA (R$/dia), nao do dinheiro: quem teve "
+        "mes parcial nao e penalizado por ter tido menos dias. Regiao = "
+        "a regiao ATUAL da loja no cadastro, nao a vigente na data do "
+        "contrato.]"
+    )
+    if parcial:
+        st.caption(
+            f":orange[Mes EM CURSO: os percentuais desta tabela se "
+            f"apoiam em {du_considerado} de {du_mes} dias uteis. Numa "
+            "amostra dessas, quem ainda nao teve pagamento processado "
+            "aparece com 0% sem ter parado de vender — a tabela so "
+            "vira leitura estavel com a competencia fechada.]"
+        )
+
+
 def _render_tendencia(
     prod_atual: pd.DataFrame,
     mes: int,
@@ -1340,14 +1486,78 @@ def _render_tendencia(
         )
         return
 
-    subiu = int((variacao["Variacao %"] > 0).sum())
-    caiu = int((variacao["Variacao %"] < 0).sum())
-    lacuna = int(variacao["Variacao %"].isna().sum())
+    # Cada situacao e contada pelo que ELA e. Antes, todo `NaN` de
+    # variacao virava "nao aparecem nas duas": medido em 07->08/2026,
+    # 3 das 18 lacunas eram gente presente nos dois meses, duas delas
+    # saindo de zero — as maiores viradas do periodo, relatadas como
+    # ausencia.
+    contagem = variacao[COL_SITUACAO].value_counts()
+    partes = [
+        (SIT_SUBIU, "subiram"),
+        (SIT_CAIU, "cairam"),
+        (SIT_ESTAVEL, "ficaram iguais"),
+        (SIT_SAIU_DE_ZERO, "sairam do zero (nao ha % sobre zero)"),
+        (SIT_ZERADO_NOS_DOIS, "seguiram zerados nos dois meses"),
+        (SIT_AUSENTE_ANTERIOR, "nao aparecem na competencia anterior"),
+        (SIT_SEM_DENOMINADOR, "estao sem dia elegivel nesta"),
+    ]
+    linhas = [
+        f"**{int(contagem[chave])}** {texto}"
+        for chave, texto in partes
+        if int(contagem.get(chave, 0)) > 0
+    ]
     st.caption(
-        f"Entre as duas ultimas competencias fechadas: **{subiu}** "
-        f"subiram, **{caiu}** cairam, **{lacuna}** sem comparacao "
-        "possivel (nao aparecem nas duas)."
+        "Entre as duas ultimas competencias fechadas: "
+        + ", ".join(linhas)
+        + "."
     )
+
+
+_ORDENS_PERFORMANCE = {
+    "Menor produtividade": (COL_PROD_DIA_PROD, True),
+    "Maior produtividade": (COL_PROD_DIA_PROD, False),
+    "Mais abaixo da media da carteira": (COL_IDX_CARTEIRA_PROD, True),
+    "Menor fatia da loja": (COL_SHARE_LOJA_PROD, True),
+    "Maior producao": (COL_PRODUCAO_PROD, False),
+}
+
+
+def _recortar_e_ordenar(
+    prod: pd.DataFrame,
+    ordem: str,
+    corte: int,
+) -> pd.DataFrame:
+    """Aplica o corte do usuario e a ordenacao escolhida.
+
+    Duas decisoes que a versao anterior errava, as duas em cima de
+    indice AUSENTE (loja inteira sem venda no periodo zera o benchmark
+    e o indice vira ``NaN`` — duas pessoas em 09/2026):
+
+    1. **O corte guarda o `NaN` explicitamente.** ``coluna <= corte`` e
+       ``False`` para ``NaN``, entao baixar o corte para cacar baixa
+       performance FAZIA SUMIR justamente quem esta sem indice porque a
+       loja nao vendeu nada — o caso que o corte procura.
+    2. **Ordem crescente poe `NaN` no topo.** Crescente e a lista do
+       pior para o melhor; com ``na_position="last"`` esses nomes
+       caiam no fim dela, no lugar reservado a quem vai melhor.
+
+    O corte incide sobre ``vs. media da carteira`` porque e a unica
+    coluna com o MESMO ponto neutro para todo mundo (100%). Cortar pela
+    fatia da loja mediria coisa diferente em cada loja: a fatia justa e
+    50% numa loja de dois e 25% numa de quatro, entao "ate 40%" seria
+    um corte severo num caso e generoso no outro.
+    """
+    visao = prod[prod[COL_DIAS_PROD] > 0].copy()
+    if corte < _CORTE_MAX:
+        indice = visao[COL_IDX_CARTEIRA_PROD]
+        visao = visao[(indice <= corte) | indice.isna()]
+
+    coluna_ordem, crescente = _ORDENS_PERFORMANCE[ordem]
+    return visao.sort_values(
+        coluna_ordem,
+        ascending=crescente,
+        na_position="first" if crescente else "last",
+    ).reset_index(drop=True)
 
 
 def _render_performance(
@@ -1389,67 +1599,60 @@ def _render_performance(
     _render_cards_carteira(
         produtividade_carteira(prod), _du_considerado, _du_mes
     )
+    _parcial = bool(
+        _du_considerado and _du_mes and _du_considerado < _du_mes
+    )
 
     sac.divider(
         label="Por colaborador", icon="person-badge", align="left",
         color="gray",
     )
+    _aviso_escopo_dos_percentuais(prod)
 
     col_ordem, col_corte = st.columns([1.4, 1])
     with col_ordem:
         ordem = st.selectbox(
             "Ordenar por",
-            [
-                "Menor produtividade",
-                "Maior produtividade",
-                "Menor % da loja",
-                "Maior producao",
-            ],
+            list(_ORDENS_PERFORMANCE),
             key="perf_ordem",
         )
     with col_corte:
         corte = st.slider(
-            "Mostrar ate X% da media da loja",
+            "Mostrar ate X% da media da carteira",
             min_value=0,
-            max_value=200,
-            value=200,
+            max_value=_CORTE_MAX,
+            value=_CORTE_MAX,
             step=10,
             key="perf_corte",
             help=(
-                "100% = exatamente a media da propria loja. Deixe em "
-                "200% para ver o time inteiro. O corte e SEU: a aba "
-                "nao classifica ninguem sozinha."
+                "100% = a media da carteira em tela, o mesmo numero do "
+                "card 'R$ por dia elegivel'. O corte usa esta coluna, e "
+                "nao as fatias, porque e a unica com o mesmo ponto "
+                "neutro para todo mundo: a fatia JUSTA da loja e 50% "
+                "numa loja de duas pessoas e 25% numa de quatro, entao "
+                "'ate 40%' seria severo num caso e generoso no outro. "
+                f"Deixe em {_CORTE_MAX}% para ver o time inteiro. O "
+                "corte e SEU: a aba nao classifica ninguem sozinha."
             ),
         )
 
-    visao = prod[prod[COL_DIAS_PROD] > 0].copy()
-    if corte < 200:
-        visao = visao[visao[COL_IDX_LOJA_PROD] <= corte]
-
-    ascendente = {
-        "Menor produtividade": (COL_PROD_DIA_PROD, True),
-        "Maior produtividade": (COL_PROD_DIA_PROD, False),
-        "Menor % da loja": (COL_IDX_LOJA_PROD, True),
-        "Maior producao": (COL_PRODUCAO_PROD, False),
-    }[ordem]
-    visao = visao.sort_values(
-        ascendente[0], ascending=ascendente[1], na_position="last"
-    ).reset_index(drop=True)
+    visao = _recortar_e_ordenar(prod, ordem, corte)
 
     if visao.empty:
         st.info("Nenhum colaborador dentro do corte escolhido.")
     else:
-        st.caption(
-            f"**{len(visao)}** de {int((prod[COL_DIAS_PROD] > 0).sum())} "
-            "colaboradores com vinculo na competencia. "
-            "**% da loja** e **% da regiao** comparam a pessoa com a "
-            "razao das somas do proprio grupo (100% = na media)."
+        _legenda_percentuais(
+            prod, len(visao), _parcial, _du_considerado, _du_mes
         )
         exibir_tabela(
             visao,
             colunas_moeda=[COL_PRODUCAO_PROD, COL_PROD_DIA_PROD],
             colunas_numero=[COL_DIAS_PROD],
-            colunas_percentual=[COL_IDX_LOJA_PROD, COL_IDX_REGIAO_PROD],
+            colunas_percentual=[
+                COL_SHARE_LOJA_PROD,
+                COL_SHARE_REGIAO_PROD,
+                COL_IDX_CARTEIRA_PROD,
+            ],
         )
         st.download_button(
             label="Exportar CSV",

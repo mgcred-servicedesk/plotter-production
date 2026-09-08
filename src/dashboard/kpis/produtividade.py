@@ -37,6 +37,60 @@ Loja, regiao e carteira usam ``sum(producao) / sum(dias)``, nunca a
 media simples das produtividades individuais. Media de medias daria o
 mesmo peso a quem teve 2 dias e a quem teve 23.
 
+DUAS PERGUNTAS DIFERENTES: FATIA E COMPARACAO
+---------------------------------------------
+As colunas percentuais NAO respondem a mesma coisa, e a distincao e
+deliberada — cada leitura vale onde o grupo tem o tamanho certo para
+ela.
+
+**FATIA (share) — ``% da loja`` e ``% da regiao``.** Quanto da
+produtividade somada do grupo e daquela pessoa::
+
+    share_i = (R$/dia da pessoa) / (soma dos R$/dia do grupo) x 100
+
+Somam exatamente 100% dentro do grupo, ficam no universo de 0 a 100 e
+respondem "que destaque essa pessoa tem no time dela". O ponto neutro
+NAO e 100%: e a fatia justa, ``100 / n_pessoas`` — 50% numa loja de
+dois, 33,3% numa de tres, 25% numa de quatro; de 3,0% a 25,0% nas
+regioes. A UI publica a fatia justa ao lado, porque sem ela o numero
+nao se interpreta sozinho.
+
+A fatia e da TAXA, nunca do dinheiro. Medido em 08/2026, e a diferenca
+que carrega o proposito deste modulo: ILUARA BORGES CABRAL, 5 dias uteis
+de 21 na HELP CASCADURA, produziu R$ 2.844/dia — a MELHOR da loja por
+dia. Na fatia da taxa ela aparece com 63,2%; na fatia do dinheiro,
+29,0%, atras de quem ficou o mes inteiro. As duas fatias somam 100% e
+concordam quase sempre (1 loja de 48 muda de ordem interna, diferenca
+mediana de 0,0 p.p.), mas divergem ate 34,2 p.p. exatamente sobre quem
+teve mes parcial — que e quem esta metrica existe para nao punir.
+
+**COMPARACAO (indice) — ``vs. media da carteira``.** Quantas vezes a
+media do escopo em tela a pessoa produz por dia, em percentual. Aqui
+100% E o ponto neutro, e o denominador e o MESMO do card "R$ por dia
+elegivel". Cabe no nivel da carteira (122 pessoas) porque a pessoa pesa
+menos de 1% do proprio benchmark; nao caberia na loja, onde ela pesa
+metade dele.
+
+POR QUE NAO INDICE NA LOJA, E POR QUE NAO FATIA NA REDE
+--------------------------------------------------------
+- **Indice na loja** tinha teto mecanico ``n_pessoas x 100%``: medido em
+  09/2026, exatamente 100 / 200 / 300 / 400% nas lojas de 1 / 2 / 3 / 4
+  pessoas. Com 48 lojas de ate 4 pessoas e 84% do time em loja de ate
+  3, o mesmo desempenho virava numero diferente conforme o tamanho da
+  equipe, e quem estava sozinho marcava 100% para sempre — dizendo nada.
+  Na fatia, quem esta sozinho marca 100% e isso e LITERALMENTE verdade:
+  ele e toda a produtividade da loja dele.
+- **Fatia na rede** foi medida e descartada: com 122 pessoas, a fatia
+  justa e 0,82% e o maximo observado foi 2,76%. Verdadeiro, mas nao e
+  leitura de destaque — e ruido visual.
+- **Leave-one-out por loja** tambem foi medido e descartado: com o
+  colega no denominador o indice explode (maximo de 30.690% e
+  desvio-padrao de 4.459 nas lojas de dois em 08/2026), porque um unico
+  colega que quase nao vendeu vira o divisor de todo mundo.
+
+``COL_POS_LOJA`` ("2 de 3") acompanha a fatia da loja: da a fatia justa
+de graca (``100 / n``) e ordena sem depender de escala nenhuma.
+
 PRODUCAO SEM VINCULO
 --------------------
 Contrato pago de quem o ledger nao conhece na competencia (desligado
@@ -63,8 +117,14 @@ COL_REGIAO = "Regiao"
 COL_PRODUCAO = "Producao paga"
 COL_DIAS = "Dias elegiveis"
 COL_PROD_DIA = "R$/dia elegivel"
-COL_IDX_LOJA = "% da loja"
-COL_IDX_REGIAO = "% da regiao"
+COL_POS_LOJA = "Na loja"
+# FATIA: soma 100% no grupo, ponto neutro em `100 / n`.
+COL_SHARE_LOJA = "% da loja"
+COL_SHARE_REGIAO = "% da regiao"
+# COMPARACAO: ponto neutro em 100%. O "vs." separa as duas leituras no
+# cabecalho — tres colunas em "%" com dois significados era exatamente
+# a confusao que esta sub-visao veio desfazer.
+COL_IDX_CARTEIRA = "vs. media da carteira"
 
 COLUNAS_PRODUTIVIDADE = [
     COL_CONSULTOR,
@@ -73,8 +133,10 @@ COLUNAS_PRODUTIVIDADE = [
     COL_PRODUCAO,
     COL_DIAS,
     COL_PROD_DIA,
-    COL_IDX_LOJA,
-    COL_IDX_REGIAO,
+    COL_POS_LOJA,
+    COL_SHARE_LOJA,
+    COL_SHARE_REGIAO,
+    COL_IDX_CARTEIRA,
 ]
 
 # ── Colunas da serie temporal ────────────────────────
@@ -92,6 +154,24 @@ COLUNAS_SERIE = [
     COL_DIAS,
     COL_PROD_DIA,
 ]
+
+# ── Situacao na variacao entre competencias ──────────
+# A variacao percentual sozinha nao distingue os casos em que ela e
+# AUSENTE: quem nao estava no mes anterior, quem estava com R$ 0/dia
+# (percentual sobre zero nao existe) e quem esta sem denominador agora
+# viravam todos o mesmo `NaN`, e a aba os relatava como "nao aparecem
+# nas duas competencias". Medido em 07->08/2026: das 18 lacunas, 3
+# eram gente PRESENTE nos dois meses — duas delas saindo de zero para
+# R$ 918,78/dia e R$ 3.056,38/dia, as duas maiores viradas do mes,
+# arquivadas como ausencia.
+COL_SITUACAO = "Situacao"
+SIT_SUBIU = "SUBIU"
+SIT_CAIU = "CAIU"
+SIT_ESTAVEL = "ESTAVEL"
+SIT_SAIU_DE_ZERO = "SAIU DE ZERO"
+SIT_ZERADO_NOS_DOIS = "ZERADO NOS DOIS"
+SIT_AUSENTE_ANTERIOR = "AUSENTE NO ANTERIOR"
+SIT_SEM_DENOMINADOR = "SEM DIA ELEGIVEL AGORA"
 
 
 def _competencia(ano: int, mes: int) -> str:
@@ -265,6 +345,65 @@ def _identificacao_da_producao(
     ).reset_index(drop=True)
 
 
+def _share_do_grupo(base: pd.DataFrame, coluna_grupo: str) -> pd.Series:
+    """Fatia da pessoa na produtividade SOMADA do proprio grupo.
+
+    ``R$/dia da pessoa / soma dos R$/dia do grupo x 100``. Soma
+    exatamente 100% dentro do grupo (verificado contra o banco em
+    08/2026, nas 48 lojas e nas 5 regioes) e vive no universo de 0 a
+    100 — que e o pedido: um numero que se le como destaque, sem teto
+    dependente do tamanho do time.
+
+    **A fatia e da TAXA, nunca do dinheiro.** Fatia do dinheiro somaria
+    100% igual, mas devolveria o viés que este modulo existe para
+    remover: ILUARA BORGES CABRAL, 5 dias de 21 e a melhor da HELP
+    CASCADURA por dia (R$ 2.844), sai de 63,2% para 29,0% e volta a
+    parecer a terceira da loja.
+
+    Quem nao tem dia elegivel entra com ``R$/dia`` ausente: nao soma no
+    denominador (o ``sum`` ignora ``NaN``) e nao recebe fatia. Grupo com
+    produtividade somada zero — loja inteira sem venda no periodo —
+    devolve fatia ausente para todo mundo, nunca uma divisao por zero
+    disfarcada de 0%.
+    """
+    taxa = base[COL_PROD_DIA]
+    total = taxa.groupby(base[coluna_grupo]).transform("sum")
+    return taxa / total.replace(0, np.nan) * 100.0
+
+
+def _posicao_na_loja(base: pd.DataFrame) -> pd.Series:
+    """Posicao por ``R$/dia`` DENTRO da propria loja, no formato "2 de 3".
+
+    Existe porque ``% da loja`` nao e escala comparavel entre lojas: com
+    a pessoa dentro do proprio benchmark, o teto do indice e
+    ``n_pessoas x 100%`` — medido em 09/2026, exatamente 100 / 200 /
+    300 / 400% nas lojas de 1 / 2 / 3 / 4 pessoas. Num parque de 48
+    lojas de ate 4 pessoas, o mesmo desempenho relativo vira numero
+    diferente conforme o tamanho da equipe, e ordenar a rede por esse
+    percentual ordena parcialmente por tamanho de time.
+
+    A posicao responde a MESMA pergunta ("como estou entre os meus")
+    sem teto e sem depender do tamanho: "1 de 2" e "1 de 4" dizem a
+    mesma coisa sobre o topo da propria loja.
+
+    Empate divide a posicao (``method="min"``): dois primeiros de tres
+    aparecem os dois como "1 de 3". Linha sem dia elegivel fica em
+    BRANCO — sem denominador nao ha produtividade, e portanto nao ha
+    posicao a atribuir.
+    """
+    posicao = pd.Series("", index=base.index, dtype=object)
+    com_dias = base[COL_DIAS] > 0
+    if not com_dias.any():
+        return posicao
+
+    elegiveis = base.loc[com_dias]
+    grupo = elegiveis.groupby(COL_LOJA)[COL_PROD_DIA]
+    ordem = grupo.rank(ascending=False, method="min").astype(int)
+    total = grupo.transform("size").astype(int)
+    posicao.loc[com_dias] = ordem.astype(str) + " de " + total.astype(str)
+    return posicao
+
+
 def benchmark_por(
     df_prod: pd.DataFrame,
     coluna: str,
@@ -288,6 +427,21 @@ def benchmark_por(
 
     somas = com_dias.groupby(coluna)[[COL_PRODUCAO, COL_DIAS]].sum()
     return somas[COL_PRODUCAO] / somas[COL_DIAS].where(somas[COL_DIAS] > 0)
+
+
+def _benchmark_carteira(df_prod: pd.DataFrame) -> float:
+    """``sum(producao) / sum(dias)`` do escopo inteiro em tela.
+
+    ``NaN`` quando o escopo nao tem dia elegivel ou nao vendeu nada: o
+    indice devolve ausente em vez de dividir por zero. Mesma regra dos
+    demais benchmarks — linha sem vinculo fica fora dos dois lados.
+    """
+    com_dias = df_prod[df_prod[COL_DIAS] > 0]
+    dias = float(com_dias[COL_DIAS].sum())
+    producao = float(com_dias[COL_PRODUCAO].sum())
+    if dias <= 0 or producao <= 0:
+        return np.nan
+    return producao / dias
 
 
 def produtividade_carteira(df_prod: pd.DataFrame) -> Dict[str, float]:
@@ -358,6 +512,11 @@ def produtividade_por_consultor(
         loja subir justamente quando mais gente deixou de vender.
         Produtividade e ``NaN`` (nunca 0) para quem produziu sem
         vinculo no ledger.
+
+        ``% da loja`` e ``% da regiao`` sao FATIAS (somam 100% no
+        grupo, neutro em ``100 / n``); ``vs. media da carteira`` e
+        COMPARACAO (neutro em 100%). Ver a secao "Duas perguntas
+        diferentes" no topo do modulo.
     """
     esqueleto = _esqueleto_vinculos(df_vinculos)
     producao = _producao_por_consultor(df, df_supervisores)
@@ -383,18 +542,19 @@ def produtividade_por_consultor(
         np.nan,
     )
 
-    bench_loja = benchmark_por(base, COL_LOJA)
-    bench_regiao = benchmark_por(base, COL_REGIAO)
-    base[COL_IDX_LOJA] = (
+    # FATIA nos grupos pequenos: soma 100% e o neutro e `100 / n`.
+    base[COL_SHARE_LOJA] = _share_do_grupo(base, COL_LOJA)
+    base[COL_SHARE_REGIAO] = _share_do_grupo(base, COL_REGIAO)
+    # COMPARACAO no grupo grande: aqui o neutro E 100%, porque a pessoa
+    # pesa menos de 1% do proprio benchmark. Mesmo denominador do card
+    # "R$ por dia elegivel", de proposito — os dois numeros precisam
+    # contar a mesma historia.
+    base[COL_IDX_CARTEIRA] = (
         base[COL_PROD_DIA]
-        / base[COL_LOJA].map(bench_loja).replace(0, np.nan)
+        / _benchmark_carteira(base)
         * 100.0
     )
-    base[COL_IDX_REGIAO] = (
-        base[COL_PROD_DIA]
-        / base[COL_REGIAO].map(bench_regiao).replace(0, np.nan)
-        * 100.0
-    )
+    base[COL_POS_LOJA] = _posicao_na_loja(base)
 
     saida = base[COLUNAS_PRODUTIVIDADE].sort_values(
         [COL_PROD_DIA, COL_PRODUCAO], ascending=[False, False]
@@ -456,12 +616,21 @@ def variacao_ultima_competencia(serie: pd.DataFrame) -> pd.DataFrame:
     """Variacao da produtividade entre as duas ultimas competencias.
 
     Returns:
-        ``[Consultor, R$/dia elegivel, Anterior, Variacao %]``. So
-        compara competencias CONSECUTIVAS: se a pessoa nao aparece no
+        ``[Consultor, R$/dia elegivel, Anterior, Variacao %, Situacao]``.
+        So compara competencias CONSECUTIVAS: se a pessoa nao aparece no
         mes anterior (entrou depois, saiu e voltou, ou o mes nao foi
         carregado), a variacao e ``NaN`` — lacuna nao e queda de 100%.
+
+        ``Situacao`` existe porque ``Variacao %`` ausente tem QUATRO
+        causas diferentes e quem le precisa saber qual: nao estava no
+        mes anterior, estava com R$ 0/dia (nao ha percentual sobre
+        zero), seguiu zerado nos dois, ou esta sem dia elegivel agora.
+        Contar tudo como "nao aparece nas duas" transformava a maior
+        virada do mes — sair de zero — em ausencia.
     """
-    cols = [COL_CONSULTOR, COL_PROD_DIA, "Anterior", "Variacao %"]
+    cols = [
+        COL_CONSULTOR, COL_PROD_DIA, "Anterior", "Variacao %", COL_SITUACAO,
+    ]
     if serie.empty or COL_COMPETENCIA not in serie.columns:
         return pd.DataFrame(columns=cols)
 
@@ -480,4 +649,25 @@ def variacao_ultima_competencia(serie: pd.DataFrame) -> pd.DataFrame:
         (saida[COL_PROD_DIA] / saida["Anterior"].replace(0, np.nan) - 1.0)
         * 100.0
     )
-    return saida.reset_index(drop=True)
+    # A ordem importa: os casos sem percentual sao testados ANTES de
+    # olhar o sinal da variacao, que e `NaN` em todos eles.
+    saida[COL_SITUACAO] = np.select(
+        [
+            saida[COL_PROD_DIA].isna(),
+            saida["Anterior"].isna(),
+            (saida["Anterior"] == 0) & (saida[COL_PROD_DIA] > 0),
+            (saida["Anterior"] == 0) & (saida[COL_PROD_DIA] == 0),
+            saida["Variacao %"] > 0,
+            saida["Variacao %"] < 0,
+        ],
+        [
+            SIT_SEM_DENOMINADOR,
+            SIT_AUSENTE_ANTERIOR,
+            SIT_SAIU_DE_ZERO,
+            SIT_ZERADO_NOS_DOIS,
+            SIT_SUBIU,
+            SIT_CAIU,
+        ],
+        default=SIT_ESTAVEL,
+    )
+    return saida[cols].reset_index(drop=True)
