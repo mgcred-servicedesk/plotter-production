@@ -23,10 +23,15 @@ from src.dashboard.kpis.rankings import (
 )
 from src.dashboard.loaders import (
     carregar_consultores_ativos,
+    carregar_metas_produto_consultor,
     carregar_universo_lojas,
     consolidar_dados,
 )
-from src.dashboard.rls import aplicar_rls, aplicar_rls_supervisores
+from src.dashboard.rls import (
+    aplicar_rls,
+    aplicar_rls_metas,
+    aplicar_rls_supervisores,
+)
 from src.dashboard.ui.sidebar import aplicar_filtros_ui
 from src.shared.dias_uteis import calcular_dias_uteis
 
@@ -206,11 +211,21 @@ def tool_ranking_periodo(contexto: ChatContext, entrada: dict) -> dict:
                     contexto.df, contexto.df_metas, top_n=limite
                 )
             else:
+                # Meta do consultor e o alvo INDIVIDUAL da loja dele
+                # (escopo CONSULTOR). Sem este frame o ranking
+                # responderia 0% de atingimento para todo mundo.
+                _metas_cons = aplicar_rls_metas(
+                    carregar_metas_produto_consultor(
+                        contexto.mes, contexto.ano
+                    ),
+                    contexto.df,
+                )
                 ranking = calcular_ranking_consultores(
                     contexto.df,
                     contexto.df_metas,
                     top_n=limite,
                     df_supervisores=contexto.df_sup,
+                    df_metas_consultor=_metas_cons,
                 )
         elif criterio == "pontos":
             ranking = calcular_ranking_pontos(

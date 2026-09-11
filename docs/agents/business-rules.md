@@ -432,6 +432,77 @@ denominador é uma aproximação do período.
 - Metas gerais (tabela `metas`, `escopo='GERAL'` ou por loja).
 - Metas por produto (tabela `metas_produto`).
 
+### Meta do consultor — escopo CONSULTOR, nunca rateio
+
+A tabela `metas` tem escopo `LOJA` e escopo `CONSULTOR`. O escopo
+`CONSULTOR` é chaveado por `loja_id` (não existe `consultor_id`): cada
+linha é o alvo **individual** de cada consultor daquela loja. Carrega
+por `carregar_metas_produto_consultor(mes, ano)` — pivot por loja, com
+`META_PRATA` / `META_OURO` em **pontos** (produto `GERAL`).
+
+- **Atingimento do consultor = pontos dele / `META_PRATA` (escopo
+  CONSULTOR) da loja dele.** Vale no ranking de consultores
+  (`calcular_ranking_consultores`) e nos cards/KPIs gerais quando o
+  recorte é um único consultor (`role == "consultor"` ou
+  `ui_filtro_consultor` preenchido).
+- **Proibido ratear a meta da loja** (`META_PRATA_loja / nº de
+  consultores que produziram). O rateio subestimava a meta individual
+  em 33% a 60% em 43 das 47 lojas — a meta da loja é deliberadamente
+  menor que (meta individual × headcount): 35,4M contra 57,5M em
+  08/2026 — e premiava quem estava em loja com equipe desfalcada, onde
+  o divisor era pequeno.
+- **Sem fallback silencioso**: loja fora do frame, `META_PRATA` nulo ou
+  ≤ 0 ⇒ meta 0 ⇒ atingimento 0%, **com aviso na tela** (a aba Rankings
+  nomeia as lojas afetadas; o `app.py` avisa no recorte de consultor).
+  Hoje as 47 lojas têm meta individual; `DIGITAL` e `VAI E VEM` não têm
+  meta em nenhum dos dois escopos (VAI E VEM já sai do ranking por
+  `excluir_lojas_backoffice`; DIGITAL aparece e dispara o aviso).
+- `calcular_kpis_gerais` **soma** as linhas de `META_PRATA`. Uma pessoa
+  tem UMA meta, então o frame do recorte por consultor tem **uma única
+  linha** — montada por `metas_pontos_consultor` (`kpis/gerais.py`), que
+  preserva as demais colunas do escopo LOJA (`REGIAO`, `REGIAO_ATUAL`).
+- O ranking de **lojas** continua usando a meta de escopo LOJA — ali é
+  o alvo correto.
+
+### Meta de acelerador — quantidade, só no escopo CONSULTOR
+
+Os quatro aceleradores (`BMG_MED`, `EMISSAO`, `SUPER_CONTA`,
+`VIDA_FAMILIAR`) têm alvo **individual** em **quantidade de contratos**:
+PRATA 6, OURO 12 a 15. O alvo existe **só no escopo CONSULTOR** — a
+empresa não define meta de acelerador por loja, e o escopo LOJA volta
+sem essas colunas (meta 0, que é o correto).
+
+- **Nunca extrapolar** (meta individual × headcount) para produzir uma
+  meta de loja: a própria empresa define a meta GERAL da loja MENOR que
+  individual × headcount (35,4M contra 57,5M em 08/2026), então a
+  extrapolação contradiz a prática observada.
+- **Nunca somar lojas no recorte de um consultor.** Em
+  `calcular_kpis_qtd_produtos` a meta vem de `LOJA.isin(lojas_do_recorte)`
+  + `.sum()`; com um único consultor o recorte usa apenas a **loja
+  principal** dele (`resolver_loja_principal`), senão quem produziu em
+  duas lojas no mês recebe 6 + 6 = 12.
+- Aba Gestão: `matriz_metas` devolve os quatro aceleradores no nível
+  PRATA, e a base "% da meta" funciona para eles. **Eles nunca entram
+  no `COL_TOTAL`** — o Total soma R$ (ou a métrica ativa dos produtos)
+  e acelerador é contagem.
+- Mapa rótulo → coluna: `ACELERADORES_COL_META` (`kpis/gerais.py`),
+  irmão de `PRODUTOS_DASHBOARD_COL_META`.
+
+### Loja do consultor — maior produção no período
+
+Com a meta individual, a loja deixou de ser rótulo e virou **chave da
+meta**, então precisa ser determinística (era `("LOJA", "first")` — a
+primeira linha na ordem de chegada):
+
+> A loja do consultor no período é aquela onde ele somou **mais
+> pontos**; empate exato resolve pelo **nome da loja em ordem
+> alfabética**. A mesma loja vale para exibir e para buscar a meta.
+
+Helper único: `resolver_loja_principal` (`kpis/gerais.py`), usado por
+`_agrupar` (escopo consultor) e por `metas_pontos_consultor`. Escopo
+`loja` não muda. Afeta 3 a 6 consultores por mês (transferência no meio
+do mês; 6 em 08/2026).
+
 ### Meta diária restante
 
 ```

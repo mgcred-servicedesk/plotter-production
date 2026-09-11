@@ -32,6 +32,7 @@ import pandas as pd
 from src.config.settings import PACK_SPLIT_LABELS
 from src.dashboard.kpis.gerais import (
     ACELERADORES,
+    ACELERADORES_COL_META,
     PRODUTOS_DASHBOARD,
     PRODUTOS_DASHBOARD_COL_META,
     excluir_lojas_backoffice,
@@ -69,8 +70,14 @@ COL_TOTAL = "Total"
 
 # Aceleradores entram na aba como colunas de CRITERIO, sempre em
 # quantidade de contratos — qualquer que seja a metrica escolhida para
-# os produtos. Nao somam no ``Total`` (unidade diferente) e nao tem
-# meta individual. Os rotulos vem de kpis/gerais.py.
+# os produtos. **Nunca somam no ``Total``**: ele soma R$ (ou a metrica
+# ativa dos produtos) e acelerador e contagem de contratos.
+#
+# TEM meta individual, sim: o escopo CONSULTOR da tabela `metas` define
+# um alvo por acelerador (PRATA 6, OURO 12 a 15, em quantidade), entao
+# a base "% da meta" se aplica a eles — ver ``matriz_metas``. Era falso
+# dizer que nao tinham; so o escopo LOJA e que nao define alvo de
+# acelerador. Os rotulos vem de kpis/gerais.py.
 ROTULOS_ACELERADORES: List[str] = list(ACELERADORES)
 
 # Super Conta e o unico acelerador que TAMBEM e produto: o valor dela
@@ -627,6 +634,16 @@ def matriz_metas(
     categoria — dividi-la em tres seria inventar numero. Rotulos sem
     meta saem como ``NaN`` e o criterio correspondente e ignorado
     (ver :func:`diagnosticar_criterios`).
+
+    Os quatro **aceleradores** tambem saem aqui, no nivel PRATA (a base
+    pela convencao fechada: nome nu e PRATA, ``_OURO`` e o contexto).
+    Sao QUANTIDADE de contratos, unidade da propria coluna deles na
+    tabela — por isso a base "% da meta" funciona para eles.
+
+    ``COL_TOTAL`` soma **apenas os produtos**: acelerador e contagem de
+    contratos e o Total segue a metrica dos produtos (R$ por padrao).
+    Misturar as duas unidades numa soma so produziria um numero sem
+    significado.
     """
     vazia = pd.DataFrame(index=tabela.index)
     if (
@@ -649,8 +666,14 @@ def matriz_metas(
         if col_meta and col_meta in metas.columns:
             saida[rotulo] = chave_loja.map(metas[col_meta]).astype(float)
     if not saida.empty:
-        # Total = soma das metas dos produtos com alvo individual.
+        # Total = soma das metas dos PRODUTOS com alvo individual.
+        # Calculado antes dos aceleradores de proposito: eles sao
+        # contagem de contratos e nao podem entrar nesta soma.
         saida[COL_TOTAL] = saida.sum(axis=1, min_count=1)
+    for rotulo in ROTULOS_ACELERADORES:
+        col_meta = ACELERADORES_COL_META.get(rotulo)
+        if col_meta and col_meta in metas.columns:
+            saida[rotulo] = chave_loja.map(metas[col_meta]).astype(float)
     return saida
 
 

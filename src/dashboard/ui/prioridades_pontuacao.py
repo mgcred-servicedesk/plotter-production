@@ -43,9 +43,19 @@ def _fmt_pts(valor: float) -> str:
     return formatar_numero(valor)
 
 
-def _html_card_produto_pts(i: int, prio: Dict) -> str:
+def _html_card_produto_pts(
+    i: int,
+    prio: Dict,
+    meta_prata: float = 0.0,
+    meta_ouro: float = 0.0,
+) -> str:
     """Card por produto: peso, pontos pagos, pontos em analise,
-    e quanto fecharia da Meta Prata e Ouro se converter."""
+    e quanto fecharia da Meta Prata e Ouro se converter.
+
+    ``meta_prata``/``meta_ouro`` existem so para separar "gap zero
+    porque bateu" de "gap zero porque nao ha meta cadastrada" — os
+    dicts de ``calcular_prioridades_pontuacao`` carregam apenas o gap.
+    """
     nome = _NOMES_MIX.get(prio["produto"], prio["produto"])
     pontos_pagos = float(prio.get("pontos_pagos", 0) or 0)
     pontos_analise = float(prio.get("pontos_analise", 0) or 0)
@@ -56,10 +66,23 @@ def _html_card_produto_pts(i: int, prio: Dict) -> str:
     gap_prata = float(prio.get("gap_prata", 0) or 0)
     gap_ouro = float(prio.get("gap_ouro", 0) or 0)
 
+    # `gap_prata` zera tanto quando a Prata foi batida quanto quando nao
+    # ha meta cadastrada — so `meta_prata` separa os dois casos. Regra
+    # por valor (`meta <= 0`), nunca por nome de loja.
+    sem_meta_prata = meta_prata <= 0
+    sem_meta_ouro = meta_ouro <= 0
+
     # Cor do card vem do impacto na Prata (gap mais imediato)
-    cor = get_status_color(fecha_prata)
-    bg_cor = get_status_bg_color(fecha_prata)
-    label = get_status_label(fecha_prata) if gap_prata > 0 else "Atingida"
+    if sem_meta_prata:
+        cor = "var(--mg-text-muted)"
+        bg_cor = "var(--mg-border)"
+        label = "Sem meta"
+    else:
+        cor = get_status_color(fecha_prata)
+        bg_cor = get_status_bg_color(fecha_prata)
+        label = (
+            get_status_label(fecha_prata) if gap_prata > 0 else "Atingida"
+        )
 
     badge_topo = (
         f'<span class="mg-prioridade-badge" '
@@ -74,10 +97,24 @@ def _html_card_produto_pts(i: int, prio: Dict) -> str:
     )
 
     if pontos_analise > 0:
-        cor_prata = get_status_color(fecha_prata) if gap_prata > 0 else "#10A37F"
-        cor_ouro = get_status_color(fecha_ouro) if gap_ouro > 0 else "#10A37F"
+        if sem_meta_prata:
+            cor_prata = "var(--mg-text-muted)"
+        else:
+            cor_prata = (
+                get_status_color(fecha_prata) if gap_prata > 0 else "#10A37F"
+            )
+        if sem_meta_ouro:
+            cor_ouro = "var(--mg-text-muted)"
+        else:
+            cor_ouro = (
+                get_status_color(fecha_ouro) if gap_ouro > 0 else "#10A37F"
+            )
 
-        if gap_prata <= 0:
+        if sem_meta_prata:
+            txt_prata = (
+                f"<span style='color:{cor_prata};'>sem meta definida</span>"
+            )
+        elif gap_prata <= 0:
             txt_prata = "Prata já atingida"
         elif fecha_prata >= 100:
             txt_prata = (
@@ -92,7 +129,11 @@ def _html_card_produto_pts(i: int, prio: Dict) -> str:
                 f"<em>(faltariam {_fmt_pts(gap_prata - pontos_analise)} pts)</em>"
             )
 
-        if gap_ouro <= 0:
+        if sem_meta_ouro:
+            txt_ouro = (
+                f"<span style='color:{cor_ouro};'>sem meta definida</span>"
+            )
+        elif gap_ouro <= 0:
             txt_ouro = "Ouro já atingida"
         elif fecha_ouro >= 100:
             txt_ouro = (
@@ -131,7 +172,12 @@ def _html_card_produto_pts(i: int, prio: Dict) -> str:
     )
 
 
-def _render_lista(prios: List[Dict], top_n: int) -> None:
+def _render_lista(
+    prios: List[Dict],
+    top_n: int,
+    meta_prata: float = 0.0,
+    meta_ouro: float = 0.0,
+) -> None:
     if not prios:
         st.success("Sem prioridades em pontos — ótimo cenário!")
         return
@@ -140,14 +186,15 @@ def _render_lista(prios: List[Dict], top_n: int) -> None:
     restantes = prios[top_n:]
 
     html = "".join(
-        _html_card_produto_pts(i + 1, p) for i, p in enumerate(visiveis)
+        _html_card_produto_pts(i + 1, p, meta_prata, meta_ouro)
+        for i, p in enumerate(visiveis)
     )
     st.markdown(html, unsafe_allow_html=True)
 
     if restantes:
         with st.expander(f"Ver mais {len(restantes)} produtos"):
             html_rest = "".join(
-                _html_card_produto_pts(top_n + i + 1, p)
+                _html_card_produto_pts(top_n + i + 1, p, meta_prata, meta_ouro)
                 for i, p in enumerate(restantes)
             )
             st.markdown(html_rest, unsafe_allow_html=True)
@@ -159,6 +206,8 @@ def render_prioridades_pontuacao(
     df_metas_produto: pd.DataFrame,
     df_sup: Optional[pd.DataFrame] = None,
     perfil: str = "",
+    meta_prata: float = 0.0,
+    meta_ouro: float = 0.0,
 ) -> None:
     """Renderiza o bloco 'Onde Agir Agora' focado em pontos.
 
@@ -169,6 +218,10 @@ def render_prioridades_pontuacao(
         df_metas_produto: metas por produto pos-RLS.
         df_sup: supervisores pos-RLS (opcional, usado em aceleradores).
         perfil: role efetivo, para a logica dos aceleradores.
+        meta_prata: Meta Prata do escopo em pontos. ``<= 0`` significa
+            meta nao cadastrada — exibida como "sem meta definida", e
+            nunca como meta atingida.
+        meta_ouro: idem para a Meta Ouro.
     """
     if df_sup is None:
         df_sup = pd.DataFrame()
@@ -233,7 +286,12 @@ def render_prioridades_pontuacao(
         unsafe_allow_html=True,
     )
 
-    _render_lista(prioridades, top_n=5)
+    _render_lista(
+        prioridades,
+        top_n=5,
+        meta_prata=meta_prata,
+        meta_ouro=meta_ouro,
+    )
 
     # Aceleradores em quantidade — exibidos como referencia,
     # nao entram em pontos.
@@ -246,7 +304,13 @@ def render_prioridades_pontuacao(
         pontos_an = float(top.get("pontos_analise", 0) or 0)
         if pontos_an > 0:
             fecha = float(top.get("fecha_prata_pct", 0) or 0)
-            if top.get("gap_prata", 0) <= 0:
+            if meta_prata <= 0:
+                acao_txt = (
+                    f"Sem meta Prata definida para este escopo. "
+                    f"<strong>{nome_top}</strong> concentra o pipeline: "
+                    f"{_fmt_pts(pontos_an)} pts em análise."
+                )
+            elif top.get("gap_prata", 0) <= 0:
                 acao_txt = (
                     f"Prata já atingida. Focar em <strong>{nome_top}</strong> "
                     f"para alavancar Ouro: {_fmt_pts(pontos_an)} pts em análise."

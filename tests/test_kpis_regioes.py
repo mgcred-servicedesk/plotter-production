@@ -116,6 +116,90 @@ class TestCalcularHeatmapRegiaoProduto:
         )
         assert rk.empty and at.empty
 
+    def test_sem_meta_em_nenhuma_regiao_ranqueia_por_volume(
+        self, df_rank, categorias_regioes
+    ):
+        """SAQUE sem meta: quem vendeu mais fica em 1o; quem nao
+        vendeu fica fora do ranking (nao herda a posicao seguinte).
+        """
+        metas = pd.DataFrame({
+            "LOJA": ["A", "B"],
+            "CNC": [1000.0, 1000.0],
+            "SAQUE": [0.0, 0.0],
+        })
+        rk, at = calcular_heatmap_regiao_produto(
+            df_rank, metas, categorias_regioes,
+        )
+        # Sem meta cadastrada → atingimento indefinido, nao 0%.
+        assert at["SAQUE"].isna().all()
+        # R1 vendeu 500 em SAQUE; R2 nao vendeu nada.
+        assert rk.loc["R1", "SAQUE"] == 1
+        assert pd.isna(rk.loc["R2", "SAQUE"])
+        # A coluna com meta segue pelo atingimento.
+        assert rk.loc["R2", "CNC"] == 1
+        assert rk.loc["R1", "CNC"] == 2
+
+    def test_sem_meta_e_sem_producao_fica_sem_posicao(
+        self, df_rank, categorias_regioes
+    ):
+        """Produto sem meta e sem producao no periodo nao rende
+        ranking — antes ``rank`` dava 1o lugar para todas as regioes.
+        """
+        df = df_rank[df_rank["grupo_dashboard"] != "SAQUE"]
+        metas = pd.DataFrame({
+            "LOJA": ["A", "B"],
+            "CNC": [1000.0, 1000.0],
+            "SAQUE": [0.0, 0.0],
+        })
+        rk, at = calcular_heatmap_regiao_produto(
+            df, metas, categorias_regioes,
+        )
+        assert rk["SAQUE"].isna().all()
+        assert at["SAQUE"].isna().all()
+
+    def test_meta_cadastrada_sem_producao_fica_sem_posicao(
+        self, df_rank, categorias_regioes
+    ):
+        """Meta cadastrada e ninguem produziu (inicio de mes): sem
+        ranking, em vez de empate de todas as regioes em 1o lugar.
+        """
+        df = df_rank.copy()
+        df.loc[df["grupo_dashboard"] == "CNC", "VALOR"] = 0.0
+        metas = pd.DataFrame({
+            "LOJA": ["A", "B"],
+            "CNC": [1000.0, 1000.0],
+            "SAQUE": [500.0, 500.0],
+        })
+        rk, at = calcular_heatmap_regiao_produto(
+            df, metas, categorias_regioes,
+        )
+        assert rk["CNC"].isna().all()
+        # Atingimento continua 0% (tem meta, nao produziu) — o que
+        # some e a posicao, nao o indicador.
+        assert (at["CNC"] == 0).all()
+
+    def test_regiao_sem_meta_fica_fora_do_ranking(
+        self, df_rank, categorias_regioes
+    ):
+        """Meta parcial: regiao sem meta do produto sai do ranking em
+        vez de cair para o ultimo lugar com 0% herdado.
+        """
+        metas = pd.DataFrame({
+            "LOJA": ["A", "B"],
+            "REGIAO": ["R1", "R2"],
+            "CNC": [1000.0, 0.0],
+            "SAQUE": [500.0, 500.0],
+        })
+        rk, at = calcular_heatmap_regiao_produto(
+            df_rank, metas, categorias_regioes,
+        )
+        # R2 tem o maior volume de CNC (2300) mas nao tem meta.
+        assert pd.isna(at.loc["R2", "CNC"])
+        assert pd.isna(rk.loc["R2", "CNC"])
+        # R1 continua ranqueada pelo proprio atingimento.
+        assert at.loc["R1", "CNC"] == pytest.approx(100.0)
+        assert rk.loc["R1", "CNC"] == 1
+
 
 @pytest.mark.unit
 class TestCalcularKpisPorProdutoRegiao:

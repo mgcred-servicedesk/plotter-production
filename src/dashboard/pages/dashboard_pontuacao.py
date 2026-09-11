@@ -110,6 +110,8 @@ def render_dashboard_pontuacao(
         df_metas_produto=df_metas_produto,
         df_sup=df_sup,
         perfil=perfil or "",
+        meta_prata=meta_prata,
+        meta_ouro=meta_ouro,
     )
 
 

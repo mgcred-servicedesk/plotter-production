@@ -1122,8 +1122,9 @@ def render_tab_produtos(
             chart_card_open(
                 "Ranking Região × Produto",
                 icon="🗺️",
-                subtitle="Posição de cada região por produto"
-                " (1º = melhor atingimento)",
+                subtitle="1º = melhor atingimento da meta;"
+                " produto sem meta cadastrada é ranqueado por"
+                " volume de produção (— = fora do ranking)",
             )
 
             col_hm, col_ev = st.columns([3, 2])

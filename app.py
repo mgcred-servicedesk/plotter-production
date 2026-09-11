@@ -34,6 +34,7 @@ from src.dashboard.components.tables import exibir_tabela
 from src.dashboard.kpis.gerais import (
     calcular_kpis_analise,
     limpar_cache_kpis,
+    metas_pontos_consultor,
     obter_kpis_gerais_periodo,
     obter_kpis_pipeline_periodo,
     obter_kpis_qtd_periodo,
@@ -554,12 +555,46 @@ def main():
         # ── Meta MIX por consultor: troca df_metas_prod_f ─
         # Ativa quando o perfil nativo é consultor OU quando outro perfil
         # filtrou até um consultor específico via filtro granular de UI.
+        # Vale tambem para a meta de PONTOS (prata/ouro) dos cards e do
+        # dashboard de Pontuacao: o escopo LOJA compara os pontos de UMA
+        # pessoa contra a meta da LOJA INTEIRA (atingimento subestimado
+        # ~2x). `df_metas_kpis` troca so a fonte dos KPIs gerais — os
+        # demais consumidores de `df_metas_f` (aba Regioes, chat IA,
+        # ranking de lojas) seguem no escopo LOJA, que ali esta certo.
         _consultor_selecionado = bool(st.session_state.get("ui_filtro_consultor"))
+        df_metas_kpis = df_metas_f
         if role == "consultor" or _consultor_selecionado:
-            _mpc = carregar_metas_produto_consultor(mes, ano)
-            _mpc = filtrar_metas_ui(_mpc, df_f)
-            if not _mpc.empty:
-                df_metas_prod_f = _mpc
+            _mpc = filtrar_metas_ui(
+                carregar_metas_produto_consultor(mes, ano), df_f
+            )
+            # Sem fallback para o escopo LOJA: no recorte de UMA pessoa,
+            # meta ausente e meta ZERO — comparar os pontos dela com a
+            # meta da loja inteira subestimava o atingimento ~2x, que e
+            # a distorcao que esta troca existe para corrigir. Frame
+            # vazio propaga 0 e a tela avisa o porque.
+            df_metas_prod_f = _mpc
+            # Uma pessoa tem UMA meta e `calcular_kpis_gerais` SOMA as
+            # linhas do frame: `metas_pontos_consultor` devolve a linha
+            # unica da loja do consultor (a de maior producao no
+            # periodo, desempate alfabetico).
+            df_metas_kpis, _loja_meta_cons = metas_pontos_consultor(
+                df_metas_f, _mpc, df_f
+            )
+            if _mpc.empty:
+                st.caption(
+                    "⚠ Sem metas de escopo CONSULTOR no período — meta 0 "
+                    "(os cards não comparam com a meta da loja)."
+                )
+            elif _loja_meta_cons is None:
+                st.caption(
+                    "⚠ Sem produção no período para resolver a loja do "
+                    "consultor — meta individual indisponível (0)."
+                )
+            elif float(df_metas_kpis["META_PRATA"].sum()) <= 0:
+                st.caption(
+                    f"⚠ Loja {_loja_meta_cons} sem meta individual "
+                    "(escopo CONSULTOR) no período — meta 0."
+                )
 
         # ── KPIs gerais (memoizados em session_state) ─────
         # A cadeia de calculo vive em kpis/gerais.py, hoje quebrada em
@@ -581,7 +616,7 @@ def main():
             role=role,
             perfil_efetivo=perfil_efetivo,
             df=df_f,
-            df_metas=df_metas_f,
+            df_metas=df_metas_kpis,
             df_metas_produto=df_metas_prod_f,
             dia_atual=dia_atual,
             df_sup=df_sup_f,
@@ -803,6 +838,10 @@ def main():
             # so os usa para admin/gestor/gerente_comercial.
             _univ_lojas = aplicar_rls(carregar_universo_lojas(mes, ano))
             _univ_cons = aplicar_rls(carregar_consultores_ativos())
+            # Metas de escopo CONSULTOR (alvo INDIVIDUAL por loja):
+            # base do atingimento no ranking de consultores, que deixou
+            # de ratear a meta da loja. Org-wide (sem aplicar_rls_metas),
+            # igual a df_metas_full — a aba compara todo mundo.
             render_tab_rankings(
                 df_full,
                 df_metas_full,
@@ -811,6 +850,7 @@ def main():
                 perfil=role,
                 df_lojas_univ=_univ_lojas,
                 df_cons_univ=_univ_cons,
+                df_metas_cons=carregar_metas_produto_consultor(mes, ano),
             )
 
         def _render_gestao() -> None:

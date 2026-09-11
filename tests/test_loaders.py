@@ -17,7 +17,10 @@ from src.dashboard.loaders import (
     VIGENCIA_PROXIMA,
     VIGENCIA_SEM_REF,
     VIGENCIA_VIGENTE,
+    _ACELERADORES_META_CONSULTOR,
+    _COLUNAS_NIVEL_META_CONSULTOR,
     _colapsar_cadastro_recente,
+    _coluna_meta_consultor,
     _fatiar_ref,
     _marcar_vigencia_reconquista,
     _mes_apuracao_seguinte,
@@ -95,6 +98,245 @@ class TestMesApuracaoSeguinte:
 
     def test_rollover_dezembro(self):
         assert _mes_apuracao_seguinte(12, 2025) == (1, 2026)
+
+
+@pytest.mark.unit
+class TestColunaMetaConsultor:
+    """O par (produto, nivel) inteiro define a coluna do pivot de
+    ``carregar_metas_produto_consultor`` — nunca só o produto. Sem
+    isso, BRONZE/PRATA/OURO do mesmo produto colapsariam numa única
+    coluna e seriam SOMADOS pelo pivot."""
+
+    def test_nivel_null_devolve_o_proprio_produto(self):
+        assert _coluna_meta_consultor("CNC", None) == "CNC"
+
+    def test_geral_prata_devolve_meta_prata(self):
+        assert _coluna_meta_consultor("GERAL", "PRATA") == "META_PRATA"
+
+    def test_geral_ouro_devolve_meta_ouro(self):
+        assert _coluna_meta_consultor("GERAL", "OURO") == "META_OURO"
+
+    def test_acelerador_prata_devolve_nome_nu(self):
+        assert _coluna_meta_consultor("BMG_MED", "PRATA") == "BMG_MED"
+
+    def test_acelerador_ouro_devolve_sufixo_ouro(self):
+        assert _coluna_meta_consultor("BMG_MED", "OURO") == "BMG_MED_OURO"
+
+    def test_bronze_devolve_none_em_qualquer_produto(self):
+        assert _coluna_meta_consultor("GERAL", "BRONZE") is None
+        assert _coluna_meta_consultor("BMG_MED", "BRONZE") is None
+
+    def test_bug_que_a_coluna_previne_colisao_de_niveis_no_pivot(self):
+        """Sem o par (produto, nivel), BRONZE + PRATA + OURO do mesmo
+        acelerador colapsariam na mesma coluna e um pivot os SOMARIA
+        (0 + 6 + 12 = 18 contratos) — bug silencioso que nenhum
+        consumidor teria como detectar."""
+        linhas = pd.DataFrame({
+            "produto": ["BMG_MED", "BMG_MED", "BMG_MED"],
+            "nivel": ["BRONZE", "PRATA", "OURO"],
+            "valor": [0, 6, 12],
+        })
+        linhas["coluna"] = [
+            _coluna_meta_consultor(p, n)
+            for p, n in zip(linhas["produto"], linhas["nivel"])
+        ]
+        # BRONZE é descartado (coluna None); PRATA e OURO vão para
+        # colunas DIFERENTES — nenhum pivot soma os dois.
+        por_nivel = linhas.set_index("nivel")["coluna"]
+        assert pd.isna(por_nivel["BRONZE"])
+        assert por_nivel["PRATA"] == "BMG_MED"
+        assert por_nivel["OURO"] == "BMG_MED_OURO"
+
+
+@pytest.fixture
+def periodo_stub(monkeypatch):
+    """Período resolvido sem tocar o banco (mesmo padrão de
+    ``test_loaders_cobranca_consignavel.py``)."""
+    monkeypatch.setattr(loaders, "carregar_periodo", lambda m, a: {"id": "p1"})
+
+
+def _linha_meta_consultor(produto, nivel=None, valor=0.0, loja="HELP PENHA"):
+    """Linha crua da query de metas (escopo CONSULTOR), como o Supabase
+    devolveria: ``lojas(nome)`` é o embed do FK."""
+    return {
+        "produto": produto,
+        "nivel": nivel,
+        "valor": valor,
+        "lojas": {"nome": loja},
+    }
+
+
+class _FakeQueryMetasConsultor:
+    """Query fluente que só REGISTRA os filtros montados, sem executar
+    nada — usada para travar que a query de metas (CONSULTOR) nunca
+    filtre por ``nivel`` no servidor. Mesmo padrão de ``_FakeQuery`` em
+    ``test_loaders_cobranca_consignavel.py``."""
+
+    def __init__(self, registro: dict):
+        self._registro = registro
+
+    def table(self, nome):
+        self._registro["tabela"] = nome
+        return self
+
+    def select(self, colunas):
+        self._registro["colunas"] = colunas
+        return self
+
+    def eq(self, coluna, valor):
+        self._registro.setdefault("eq", {})[coluna] = valor
+        return self
+
+    def is_(self, coluna, valor):
+        self._registro.setdefault("is_", {})[coluna] = valor
+        return self
+
+    def gt(self, coluna, valor):  # usado pelo keyset a partir da 2a pagina
+        self._registro.setdefault("gt", {})[coluna] = valor
+        return self
+
+    def order(self, coluna):
+        self._registro["order"] = coluna
+        return self
+
+    def limit(self, n):
+        self._registro["limit"] = n
+        return self
+
+
+@pytest.mark.unit
+class TestFetchMetasProdutoConsultorPivot:
+    """Contrato da montagem do pivot em ``_fetch_metas_produto_consultor``
+    — nada além de ``TestColunaMetaConsultor`` cobria essa função antes
+    do incidente de 09/2026 (ranking de consultores 0% para todo mundo:
+    ver ``tests/test_loaders_cache_version.py`` para a causa raiz de
+    CACHE; aqui é o contrato do FORMATO que o cache serve). Trava
+    especificamente a regressão "alguém recoloca o filtro
+    ``nivel IS NULL``" — o bug original que apagou as metas de ponto e
+    de acelerador do pivot inteiro, silenciosamente."""
+
+    def test_tres_familias_de_colunas_aparecem_no_pivot(
+        self, monkeypatch, periodo_stub
+    ):
+        linhas = [
+            _linha_meta_consultor("CNC", None, 20000.0),        # monetario
+            _linha_meta_consultor("GERAL", "PRATA", 360000.0),  # ponto PRATA
+            _linha_meta_consultor("GERAL", "OURO", 500000.0),   # ponto OURO
+            _linha_meta_consultor("BMG_MED", "PRATA", 6.0),     # acelerador PRATA
+            _linha_meta_consultor("BMG_MED", "OURO", 12.0),     # acelerador OURO
+        ]
+        monkeypatch.setattr(loaders, "_paginar_keyset", lambda q, c: linhas)
+
+        df = loaders._fetch_metas_produto_consultor(9, 2026)
+
+        linha = df.set_index("LOJA").loc["HELP PENHA"]
+        assert linha["CNC"] == pytest.approx(20000.0)
+        assert linha["META_PRATA"] == pytest.approx(360000.0)
+        assert linha["META_OURO"] == pytest.approx(500000.0)
+        assert linha["BMG_MED"] == pytest.approx(6.0)
+        assert linha["BMG_MED_OURO"] == pytest.approx(12.0)
+
+    def test_bronze_e_descartado_do_pivot(self, monkeypatch, periodo_stub):
+        monkeypatch.setattr(
+            loaders, "_paginar_keyset",
+            lambda q, c: [
+                _linha_meta_consultor("CNC", None, 1000.0),
+                _linha_meta_consultor("BMG_MED", "BRONZE", 999.0),
+            ],
+        )
+
+        df = loaders._fetch_metas_produto_consultor(9, 2026)
+
+        assert "BRONZE" not in df.columns
+        # BMG_MED é coluna garantida, mas BRONZE nunca a populou —
+        # fica no default (0.0), não no valor (999) da linha BRONZE.
+        assert df.set_index("LOJA").loc["HELP PENHA", "BMG_MED"] == 0.0
+
+    def test_niveis_do_mesmo_produto_nao_sao_somados(
+        self, monkeypatch, periodo_stub
+    ):
+        """O bug que ``_coluna_meta_consultor`` existe para prevenir,
+        agora na montagem real do pivot: sem o par (produto, nivel) na
+        chave, BRONZE + PRATA + OURO colapsariam e o aggfunc somaria
+        (0 + 6 + 12 = 18 contratos)."""
+        monkeypatch.setattr(
+            loaders, "_paginar_keyset",
+            lambda q, c: [
+                _linha_meta_consultor("BMG_MED", "BRONZE", 0.0),
+                _linha_meta_consultor("BMG_MED", "PRATA", 6.0),
+                _linha_meta_consultor("BMG_MED", "OURO", 12.0),
+            ],
+        )
+
+        df = loaders._fetch_metas_produto_consultor(9, 2026)
+
+        linha = df.set_index("LOJA").loc["HELP PENHA"]
+        assert linha["BMG_MED"] == pytest.approx(6.0)       # não 18
+        assert linha["BMG_MED_OURO"] == pytest.approx(12.0)
+
+    def test_colunas_de_nivel_sempre_presentes_com_zero_quando_ausentes(
+        self, monkeypatch, periodo_stub
+    ):
+        """Sem NENHUMA linha de ponto/acelerador no período (só
+        monetário) — as colunas de nível não podem sumir do pivot: o
+        consumidor lê ``df[col]`` sem checar existência primeiro."""
+        monkeypatch.setattr(
+            loaders, "_paginar_keyset",
+            lambda q, c: [_linha_meta_consultor("CNC", None, 1000.0)],
+        )
+
+        df = loaders._fetch_metas_produto_consultor(9, 2026)
+
+        linha = df.set_index("LOJA").loc["HELP PENHA"]
+        for col in _COLUNAS_NIVEL_META_CONSULTOR:
+            assert linha[col] == 0.0, col
+        # As 4 famílias de acelerador da fonte única (kpis/gerais.py,
+        # via loaders) estão todas cobertas pela constante acima.
+        assert len(_ACELERADORES_META_CONSULTOR) == 4
+
+    def test_periodo_ausente_devolve_vazio_sem_chamar_paginacao(
+        self, monkeypatch
+    ):
+        monkeypatch.setattr(loaders, "carregar_periodo", lambda m, a: None)
+        chamou = []
+        monkeypatch.setattr(
+            loaders, "_paginar_keyset",
+            lambda q, c: chamou.append(1) or [],
+        )
+
+        df = loaders._fetch_metas_produto_consultor(9, 2026)
+
+        assert df.empty
+        assert chamou == []
+
+    def test_query_nao_filtra_por_nivel_no_servidor(
+        self, monkeypatch, periodo_stub
+    ):
+        """O bug original (pré-incidente de 09/2026): um filtro
+        ``nivel IS NULL`` no servidor escondia do dashboard INTEIRO as
+        metas de ponto (``GERAL``) e de acelerador — a query hoje traz
+        TODOS os níveis, e só ``BRONZE`` é descartado depois, no
+        client (``_coluna_meta_consultor``). Os testes acima do
+        pivot/coluna não pegariam esse filtro voltar, porque mockam
+        ``_paginar_keyset`` inteiro (a query nunca chega a ser
+        inspecionada); este aqui inspeciona a query MONTADA."""
+        registro: dict = {}
+
+        def _capturar(montar_query, coluna_chave):
+            montar_query(loaders._PAGE_SIZE)
+            return []
+
+        monkeypatch.setattr(
+            loaders, "_sb", lambda: _FakeQueryMetasConsultor(registro)
+        )
+        monkeypatch.setattr(loaders, "_paginar_keyset", _capturar)
+
+        loaders._fetch_metas_produto_consultor(9, 2026)
+
+        assert "nivel" not in registro.get("eq", {})
+        assert "nivel" not in registro.get("is_", {})
+        assert registro.get("eq", {}).get("escopo") == "CONSULTOR"
+        assert registro.get("tabela") == "metas"
 
 
 @pytest.mark.unit

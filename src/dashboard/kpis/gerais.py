@@ -110,6 +110,118 @@ def excluir_lojas_backoffice(df: pd.DataFrame) -> pd.DataFrame:
     return df[~lojas_norm.isin(LOJAS_BACKOFFICE)].copy()
 
 
+def resolver_loja_principal(df: pd.DataFrame) -> pd.Series:
+    """Loja de cada consultor no periodo: a de MAIOR pontuacao.
+
+    A loja do consultor deixou de ser um rotulo (era a PRIMEIRA
+    ocorrencia na ordem das linhas, arbitraria) e passou a ser a CHAVE
+    da meta INDIVIDUAL dele (escopo CONSULTOR da tabela ``metas``, que
+    e chaveado por loja) — entao precisa ser deterministica.
+
+    Regra: 3 a 6 consultores por mes tem producao em duas lojas
+    (transferencia no meio do mes). A loja e aquela onde ele somou mais
+    PONTOS no periodo; empate exato resolve pelo nome da loja em ordem
+    alfabetica. A mesma loja vale para exibir e para buscar a meta —
+    mostrar loja A e aplicar meta de loja B seria incoerente.
+
+    Retorna Series indexada por CONSULTOR -> LOJA (vazia quando o frame
+    nao tem as colunas necessarias).
+    """
+    if (
+        df.empty
+        or "CONSULTOR" not in df.columns
+        or "LOJA" not in df.columns
+        or "pontos" not in df.columns
+    ):
+        return pd.Series(dtype=object)
+    por_loja = (
+        df.groupby(["CONSULTOR", "LOJA"])["pontos"]
+        .sum()
+        .reset_index()
+        .sort_values(
+            ["CONSULTOR", "pontos", "LOJA"],
+            ascending=[True, False, True],
+            kind="stable",
+        )
+    )
+    return por_loja.groupby("CONSULTOR")["LOJA"].first()
+
+
+def metas_pontos_consultor(
+    df_metas: pd.DataFrame,
+    df_metas_consultor: pd.DataFrame,
+    df: pd.DataFrame,
+) -> tuple[pd.DataFrame, Optional[str]]:
+    """Metas de PONTOS (prata/ouro) de UM consultor, em UMA linha.
+
+    ``calcular_kpis_gerais`` SOMA ``META_PRATA``/``META_OURO`` do frame
+    que recebe. No escopo LOJA isso esta certo (varias lojas somam suas
+    metas), mas uma pessoa tem UMA meta: quando o recorte e um unico
+    consultor o frame precisa ter exatamente UMA linha — a da loja dele,
+    resolvida por ``resolver_loja_principal`` sobre a producao ja
+    recortada. Sem isso o consultor compara os proprios pontos contra a
+    meta da LOJA INTEIRA (atingimento subestimado ~2x).
+
+    Args:
+        df_metas: metas escopo LOJA — fonte das demais colunas
+            (``REGIAO``, ``REGIAO_ATUAL``) que outros consumidores
+            esperam encontrar no frame.
+        df_metas_consultor: pivot de ``carregar_metas_produto_consultor``
+            (alvo INDIVIDUAL de cada consultor da loja, em pontos).
+        df: producao do periodo ja pos-RLS e pos-filtros de UI.
+
+    Returns:
+        ``(frame, loja)``. ``loja`` e ``None`` quando nao da para
+        resolver uma unica loja (consultor sem producao no periodo, ou
+        frame com mais de um consultor) — nesse caso o frame volta VAZIO
+        (meta 0), nunca com a meta da loja como fallback silencioso. O
+        chamador avisa na tela.
+    """
+    vazio = df_metas.iloc[0:0].copy()
+    lojas = resolver_loja_principal(df)
+    if len(lojas) != 1:
+        return vazio, None
+
+    loja = lojas.iloc[0]
+    if pd.isna(loja) or not str(loja).strip():
+        return vazio, None
+    loja = str(loja)
+
+    prata = 0.0
+    ouro = 0.0
+    if (
+        not df_metas_consultor.empty
+        and "LOJA" in df_metas_consultor.columns
+    ):
+        alvo = df_metas_consultor[df_metas_consultor["LOJA"] == loja]
+        if not alvo.empty:
+            for col, nome in (("META_PRATA", "prata"), ("META_OURO", "ouro")):
+                if col in alvo.columns:
+                    valor = float(
+                        pd.to_numeric(alvo[col], errors="coerce")
+                        .fillna(0.0)
+                        .iloc[0]
+                    )
+                    if nome == "prata":
+                        prata = valor
+                    else:
+                        ouro = valor
+
+    base = (
+        df_metas[df_metas["LOJA"] == loja]
+        if "LOJA" in df_metas.columns
+        else df_metas.iloc[0:0]
+    )
+    if base.empty:
+        linha = pd.DataFrame([{col: "" for col in df_metas.columns}])
+        linha["LOJA"] = loja
+    else:
+        linha = base.head(1).copy()
+    linha["META_PRATA"] = prata
+    linha["META_OURO"] = ouro
+    return linha.reset_index(drop=True), loja
+
+
 # Janela do pipeline: "em analise" e "cancelados" so consideram o que
 # foi cadastrado nos ultimos N dias CORRIDOS (nao uteis). Os dois
 # conjuntos vem do sistema de origem sem expurgo, entao registros
@@ -155,6 +267,19 @@ def filtrar_janela_recente(
 ACELERADORES: tuple = (
     "BMG Med", "Vida Familiar", "Emissao", "Super Conta",
 )
+
+# Rotulo do acelerador → coluna de meta na tabela `metas`. Irmao de
+# `PRODUTOS_DASHBOARD_COL_META`, e pelo mesmo motivo: casamento
+# deterministico, sem fuzzy match. O alvo de acelerador so existe no
+# escopo CONSULTOR (alvo INDIVIDUAL, em QUANTIDADE de contratos —
+# PRATA e a base, `_OURO` e o contexto); no escopo LOJA a empresa nao
+# define alvo de acelerador, e a coluna simplesmente nao vem.
+ACELERADORES_COL_META: Dict[str, str] = {
+    "BMG Med": "BMG_MED",
+    "Vida Familiar": "VIDA_FAMILIAR",
+    "Emissao": "EMISSAO",
+    "Super Conta": "SUPER_CONTA",
+}
 
 
 def mascaras_aceleradores(df: pd.DataFrame) -> Dict[str, pd.Series]:
@@ -912,6 +1037,26 @@ def calcular_kpis_qtd_produtos(
         if "LOJA" in df.columns
         else []
     )
+
+    # Meta de acelerador e alvo INDIVIDUAL (escopo CONSULTOR, chaveado
+    # por loja). Com o recorte em UMA pessoa, somar as lojas ativas
+    # DOBRA a meta de quem produziu em duas no mes (transferencia):
+    # 6 + 6 = 12 em vez de 6. A loja dela e a principal —
+    # `resolver_loja_principal`, o mesmo criterio (maior pontuacao,
+    # desempate alfabetico) que resolve a meta de pontos e a coluna
+    # `Loja` dos rankings; quem decide a loja do consultor e um lugar
+    # so no codigo.
+    #
+    # Recorte que NAO e de um unico consultor segue somando as lojas
+    # ativas: no escopo LOJA a coluna nem existe e a meta fica 0, que e
+    # o certo — a empresa nao define alvo de acelerador por loja, e
+    # extrapolar (meta individual × headcount) inventaria numero.
+    lojas_meta = lojas_ativas
+    if "CONSULTOR" in df.columns and df["CONSULTOR"].nunique() == 1:
+        _loja_cons = resolver_loja_principal(df)
+        if len(_loja_cons) == 1 and pd.notna(_loja_cons.iloc[0]):
+            lojas_meta = [_loja_cons.iloc[0]]
+
     resultados = []
 
     for prod in _PRODUTOS_QTD:
@@ -940,18 +1085,19 @@ def calcular_kpis_qtd_produtos(
                         .sum()
                     )
 
-        # Meta total (soma das lojas ativas)
+        # Meta total: soma das lojas do recorte — uma so quando o
+        # recorte e de um unico consultor (ver `lojas_meta` acima).
         meta = 0
         col_meta = prod["col_meta"]
         if (
             not df_metas_produto.empty
             and col_meta in df_metas_produto.columns
             and "LOJA" in df_metas_produto.columns
-            and len(lojas_ativas) > 0
+            and len(lojas_meta) > 0
         ):
             meta = float(
                 df_metas_produto.loc[
-                    df_metas_produto["LOJA"].isin(lojas_ativas),
+                    df_metas_produto["LOJA"].isin(lojas_meta),
                     col_meta,
                 ].sum()
             )

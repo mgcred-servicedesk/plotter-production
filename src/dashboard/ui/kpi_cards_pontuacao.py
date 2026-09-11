@@ -82,20 +82,44 @@ def render_kpis_principais_pts(kpis: Dict) -> None:
             </div>
         </div>"""
 
-    card_meta = f"""
-        <div class="mg-kpi-hero" style="flex: 1;">
-            <div class="mg-kpi-label">📊 % Meta Prata</div>
-            <div class="mg-kpi-valor" style="color: {cor_status};">
-                {formatar_percentual(perc_prata)}
-            </div>
-            <div class="mg-kpi-sub" style="font-size: 14px;">
-                Projeção: {formatar_percentual(perc_proj)} ·
-                Prata: {prata_fmt} pts<br>
-                Ouro: {ouro_fmt} pts ({formatar_percentual(perc_ouro)})
-            </div>
-        </div>"""
+    # Meta zero nao e meta batida: e meta inexistente (loja ou
+    # competencia sem cadastro). `gap_pontos` zera nos dois casos, entao
+    # a distincao tem de vir de `meta_prata` — mesmo criterio de
+    # `kpi_cards_reforma`. Regra por valor (`meta_prata <= 0`), nunca por
+    # nome de loja.
+    if meta_prata > 0:
+        card_meta = f"""
+            <div class="mg-kpi-hero" style="flex: 1;">
+                <div class="mg-kpi-label">📊 % Meta Prata</div>
+                <div class="mg-kpi-valor" style="color: {cor_status};">
+                    {formatar_percentual(perc_prata)}
+                </div>
+                <div class="mg-kpi-sub" style="font-size: 14px;">
+                    Projeção: {formatar_percentual(perc_proj)} ·
+                    Prata: {prata_fmt} pts<br>
+                    Ouro: {ouro_fmt} pts ({formatar_percentual(perc_ouro)})
+                </div>
+            </div>"""
+    else:
+        card_meta = """
+            <div class="mg-kpi-hero" style="flex: 1;">
+                <div class="mg-kpi-label">📊 % Meta Prata</div>
+                <div class="mg-kpi-valor" style="color: var(--mg-text-muted);">—</div>
+                <div class="mg-kpi-sub" style="font-size: 14px;">
+                    Sem meta definida
+                </div>
+            </div>"""
 
-    if gap_pontos > 0:
+    if meta_prata <= 0:
+        card_gap = """
+            <div class="mg-kpi-hero" style="flex: 1;">
+                <div class="mg-kpi-label">🎯 Falta para Prata</div>
+                <div class="mg-kpi-valor" style="color: var(--mg-text-muted);">—</div>
+                <div class="mg-kpi-sub" style="font-size: 14px;">
+                    Sem meta definida
+                </div>
+            </div>"""
+    elif gap_pontos > 0:
         gap_dia = gap_pontos / du_restantes
         card_gap = f"""
             <div class="mg-kpi-hero" style="flex: 1;">
@@ -363,18 +387,64 @@ def render_bloco_media_projecao_pts(kpis: Dict) -> None:
         if necess_prata > 0
         else 0.0
     )
+    # Mesma distincao dos cards principais: `necess_prata` zera tanto
+    # quando a Prata foi batida quanto quando nao ha meta cadastrada.
+    # Quem separa os dois casos e `meta_prata`, nunca o nome da loja.
+    sem_meta_prata = meta_prata <= 0
+    sem_meta_ouro = meta_ouro <= 0
+
     cor_media, _emoji_m, _status = get_ritmo_status(desvio)
-    cor_proj_prata = get_status_color(perc_proj_prata)
-    cor_proj_ouro = get_status_color(perc_proj_ouro)
+    if sem_meta_prata:
+        cor_media = "var(--mg-text-muted)"
+    cor_proj_prata = (
+        get_status_color(perc_proj_prata)
+        if not sem_meta_prata
+        else "var(--mg-text)"
+    )
+    cor_proj_ouro = (
+        get_status_color(perc_proj_ouro)
+        if not sem_meta_ouro
+        else "var(--mg-text)"
+    )
 
     perc_tempo = (du_dec / du_total * 100) if du_total > 0 else 0.0
 
-    msg_desvio = (
-        f"{abs(desvio):.0f}% {'acima' if desvio > 0 else 'abaixo'} "
-        f"do necessário p/ Prata"
-        if necess_prata > 0
-        else "Prata atingida"
+    necess_prata_txt = (
+        "—" if sem_meta_prata else f"{_fmt_pts(necess_prata)} pts/dia"
     )
+    necess_ouro_txt = (
+        "Ouro: —" if sem_meta_ouro else f"Ouro: {_fmt_pts(necess_ouro)} pts/dia"
+    )
+
+    if sem_meta_prata:
+        msg_desvio = "Sem meta definida"
+    elif total_pontos >= meta_prata:
+        msg_desvio = "Prata atingida"
+    elif du_rest <= 0:
+        msg_desvio = "Período encerrado — Prata não atingida"
+    else:
+        msg_desvio = (
+            f"{abs(desvio):.0f}% {'acima' if desvio > 0 else 'abaixo'} "
+            f"do necessário p/ Prata"
+        )
+
+    if sem_meta_prata and sem_meta_ouro:
+        linha_proj_pct = (
+            '<span style="color:var(--mg-text-muted);">Sem meta definida</span>'
+        )
+    else:
+        partes_proj = []
+        if not sem_meta_prata:
+            partes_proj.append(
+                f'<span style="color:{cor_proj_prata};">'
+                f"{formatar_percentual(perc_proj_prata)} Prata</span>"
+            )
+        if not sem_meta_ouro:
+            partes_proj.append(
+                f'<span style="color:{cor_proj_ouro};">'
+                f"{formatar_percentual(perc_proj_ouro)} Ouro</span>"
+            )
+        linha_proj_pct = " · ".join(partes_proj)
     msg_prata = (
         f"Projeção fecha {formatar_percentual(perc_proj_prata)} da Prata"
         if meta_prata > 0
@@ -413,10 +483,10 @@ def render_bloco_media_projecao_pts(kpis: Dict) -> None:
                         Necessário p/ Prata
                     </div>
                     <div style="font-size: 24px; font-weight: 700; color: var(--mg-text);">
-                        {_fmt_pts(necess_prata)} pts/dia
+                        {necess_prata_txt}
                     </div>
                     <div style="font-size: 12px; color: var(--mg-text-muted);">
-                        Ouro: {_fmt_pts(necess_ouro)} pts/dia
+                        {necess_ouro_txt}
                     </div>
                 </div>
                 <div style="font-size: 24px; color: var(--mg-text-subtle); margin: 0 12px;">→</div>
@@ -430,13 +500,7 @@ def render_bloco_media_projecao_pts(kpis: Dict) -> None:
                         {_fmt_pts(projecao_pts)} pts
                     </div>
                     <div style="font-size: 12px; color: var(--mg-text-muted);">
-                        <span style="color:{cor_proj_prata};">
-                            {formatar_percentual(perc_proj_prata)} Prata
-                        </span>
-                        ·
-                        <span style="color:{cor_proj_ouro};">
-                            {formatar_percentual(perc_proj_ouro)} Ouro
-                        </span>
+                        {linha_proj_pct}
                     </div>
                 </div>
             </div>

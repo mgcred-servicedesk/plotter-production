@@ -11,6 +11,7 @@ import pytest
 from src.dashboard.kpis.gerais import ACELERADORES
 from src.dashboard.kpis.gestao import (
     COL_DIAS,
+    COL_TOTAL,
     METRICA_PROD_DIA,
     METRICA_VALOR,
     ROTULOS_ACELERADORES,
@@ -753,6 +754,50 @@ def test_meta_nao_se_aplica_a_acelerador(df_aceleradores):
     assert len(filtrar_por_criterios(tabela, criterios, metas=metas)) == len(
         tabela
     )
+
+
+def test_matriz_metas_anexa_os_quatro_aceleradores_no_nivel_prata(
+    df_gestao, df_sup
+):
+    tabela = construir_tabela(df_gestao, df_sup)
+    df_metas = pd.DataFrame({
+        "LOJA": ["A", "B", "C"],
+        "CNC": [20000.0] * 3,
+        "BMG_MED": [6.0] * 3,
+        "EMISSAO": [6.0] * 3,
+        "SUPER_CONTA": [6.0] * 3,
+        "VIDA_FAMILIAR": [6.0] * 3,
+    })
+    metas = matriz_metas(tabela, df_metas)
+    for rotulo in ROTULOS_ACELERADORES:
+        assert rotulo in metas.columns
+        assert (metas[rotulo] == 6.0).all()
+
+
+def test_matriz_metas_col_total_soma_apenas_produtos_monetarios(
+    df_gestao, df_sup
+):
+    """Invariante mais importante: ``COL_TOTAL`` nunca inclui
+    acelerador — unidade diferente (contagem de contratos x R$).
+    Aceleradores com valores absurdos não podem mudar o Total."""
+    tabela = construir_tabela(df_gestao, df_sup)
+    df_metas_sem_acel = pd.DataFrame(
+        {"LOJA": ["A", "B", "C"], "CNC": [20000.0] * 3}
+    )
+    df_metas_com_acel = pd.DataFrame({
+        "LOJA": ["A", "B", "C"],
+        "CNC": [20000.0] * 3,
+        "BMG_MED": [999.0] * 3,
+        "EMISSAO": [999.0] * 3,
+        "SUPER_CONTA": [999.0] * 3,
+        "VIDA_FAMILIAR": [999.0] * 3,
+    })
+    metas_sem = matriz_metas(tabela, df_metas_sem_acel)
+    metas_com = matriz_metas(tabela, df_metas_com_acel)
+    assert metas_com[COL_TOTAL].equals(metas_sem[COL_TOTAL])
+    assert metas_com[COL_TOTAL].tolist() == metas_com["CNC"].tolist()
+    for rotulo in ROTULOS_ACELERADORES:
+        assert (metas_com[rotulo] == 999.0).all()
 
 
 def test_rotulos_de_acelerador_batem_com_a_fonte_unica():

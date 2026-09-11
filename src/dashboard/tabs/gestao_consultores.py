@@ -519,18 +519,16 @@ def _coletar_criterios(produtos: List[str], metrica: str) -> _Criterios:
             criterios[rotulo] = {"modo": modo}
             continue
 
-        # Acelerador nao tem meta individual: oferecer a base seria
-        # oferecer um caminho que o filtro depois ignora.
-        bases = (
-            {k: v for k, v in _BASES.items() if v != BASE_META}
-            if acelerador
-            else _BASES
-        )
+        # Acelerador TEM alvo individual: a meta dele e gravada no
+        # escopo CONSULTOR, em QUANTIDADE de contratos (o nome nu e o
+        # nivel PRATA). Por isso a base '% da meta' vale para ele como
+        # vale para produto — o que muda e a unidade do limiar, nunca
+        # a disponibilidade da base.
         with col_base:
-            base = bases[
+            base = _BASES[
                 st.selectbox(
                     "Comparar com",
-                    list(bases),
+                    list(_BASES),
                     key=f"gestao_base_{rotulo}",
                     help="Bases relativas usam PERCENTUAL: 50% da media "
                          "do grupo, 80% da meta, percentil 20.",
@@ -538,6 +536,16 @@ def _coletar_criterios(produtos: List[str], metrica: str) -> _Criterios:
             ]
 
         relativo = base != BASE_ABSOLUTA
+        # A meta do acelerador e uma CONTAGEM (PRATA = 6 contratos por
+        # consultor), nao um valor em R$. O numero digitado continua
+        # sendo percentual, como em qualquer base relativa — o que a
+        # legenda evita e ler o limiar resultante como dinheiro.
+        if acelerador and base == BASE_META:
+            st.caption(
+                "100% = a meta de contratos do consultor na loja "
+                "(nivel PRATA). O limiar sai em QUANTIDADE de "
+                "contratos, nunca em R$."
+            )
         # Acelerador conta contratos: passo 1 e teto na casa das
         # unidades. Um step de 1.000 aqui seria inutilizavel.
         if acelerador and not relativo:
@@ -678,14 +686,30 @@ def _motivo_meta_indisponivel(
     Sem isso o aviso dava sempre a mesma razao (pack/nivel) mesmo
     quando o motivo real era outro — mandar o gestor investigar a
     coisa errada e pior do que nao avisar.
+
+    O acelerador deixou de ser um motivo ESTRUTURAL: a meta dele
+    existe no escopo CONSULTOR, em quantidade de contratos. Por isso
+    o ramo dele desceu para depois dos bloqueios que derrubam a base
+    inteira (metrica por dia, periodo livre, nivel acima de consultor)
+    e passou a dizer a razao que sobra — nenhuma meta de acelerador
+    gravada para as lojas do recorte. Os tres rotulos do pack (FGTS /
+    ANT. DE BENEF. / CNC 13º) seguem sem alvo por categoria: a meta
+    ``FGTS_ANT_BENEF_13`` e conjunta.
     """
-    if ignorados and all(_eh_acelerador(r) for r in ignorados):
-        return (
-            "Acelerador nao tem meta individual: a base '% da meta' "
-            "nao se aplica a ele. Use valor absoluto, media do grupo "
-            "ou percentil."
-        )
+    so_aceleradores = bool(ignorados) and all(
+        _eh_acelerador(r) for r in ignorados
+    )
     if metrica == METRICA_PROD_DIA:
+        if so_aceleradores:
+            # A meta do acelerador nao e R$, entao a frase do limiar
+            # "dezenas de vezes maior" seria falsa aqui: o que derruba
+            # a base e a aba desligar a meta nesta metrica.
+            return (
+                "Nesta metrica a aba desliga a base '% da meta' (a meta "
+                "e MENSAL e o numero na tela e por DIA) — inclusive "
+                "para os aceleradores. Use valor absoluto, media do "
+                "grupo ou percentil."
+            )
         return (
             "A meta e MENSAL em R$ e a metrica aqui e por DIA: comparar "
             "as duas daria um limiar dezenas de vezes maior que a "
@@ -702,6 +726,14 @@ def _motivo_meta_indisponivel(
         return (
             "A base '% da meta' e o alvo individual do consultor "
             f"(gravado por loja) — nao existe no nivel {nivel}."
+        )
+    if so_aceleradores:
+        return (
+            "O acelerador TEM alvo individual (quantidade de contratos "
+            "por consultor, nivel PRATA na base), mas nenhuma meta dele "
+            "foi encontrada para as lojas deste recorte no mes. Confira "
+            "as metas de escopo CONSULTOR do mes ou use valor absoluto, "
+            "media do grupo ou percentil."
         )
     return (
         "A base '% da meta' cobre apenas produtos com alvo individual: "
@@ -1006,8 +1038,13 @@ def _render_criterios(
         lacuna = calcular_lacuna(
             resultado, criterios, metas_res, apenas=rotulos_produto
         )
+        # Mesma matriz de metas dos produtos: o acelerador tambem tem
+        # alvo individual (em contratos). Passar None aqui faria um
+        # criterio de acelerador na base '% da meta' contribuir 0 para
+        # a coluna "Falta acelerador (qtd)": sem a meta, o teto fica
+        # irresoluvel e a linha sai sem o numero acionavel.
         lacuna_acel = calcular_lacuna(
-            resultado, criterios, None, apenas=acels_sel
+            resultado, criterios, metas_res, apenas=acels_sel
         )
         # Na produtividade, a lacuna por linha e R$/dia: multiplicada
         # pelos dias de cada um, vira o dinheiro que faltou no periodo.

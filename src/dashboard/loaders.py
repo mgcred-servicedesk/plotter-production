@@ -1247,78 +1247,195 @@ def _metas_produto_historico(mes: int, ano: int) -> pd.DataFrame:
 # ══════════════════════════════════════════════════════
 
 
+# Aceleradores do escopo CONSULTOR: metas em QUANTIDADE de contratos,
+# nao em R$ (ao contrario dos produtos monetarios, que vem com
+# ``nivel`` NULL). Explicitos aqui para que o pivot devolva a coluna
+# mesmo quando o periodo nao tiver a linha correspondente no banco —
+# consumidor le ``df[col]`` sem precisar checar existencia.
+_ACELERADORES_META_CONSULTOR = (
+    "BMG_MED",
+    "EMISSAO",
+    "SUPER_CONTA",
+    "VIDA_FAMILIAR",
+)
+
+# Colunas por nivel garantidas no retorno (0.0 quando ausentes).
+# Convencao: PRATA e a BASE (coluna com o nome nu do produto) e OURO e
+# CONTEXTO (sufixo ``_OURO``) — a leitura mais comum e a meta de
+# entrada, entao ela fica sem sufixo. BRONZE nao vira coluna: e sempre
+# 0 no banco e nao alimenta criterio nenhum.
+_COLUNAS_NIVEL_META_CONSULTOR = (
+    ("META_PRATA", "META_OURO")
+    + _ACELERADORES_META_CONSULTOR
+    + tuple(f"{p}_OURO" for p in _ACELERADORES_META_CONSULTOR)
+)
+
+
+def _coluna_meta_consultor(produto: str, nivel) -> Optional[str]:
+    """Nome da coluna do pivot para o par (produto, nivel).
+
+    O par inteiro define a coluna — nunca so o produto. Sem isso,
+    BRONZE/PRATA/OURO do mesmo produto colapsariam numa coluna unica e
+    seriam SOMADOS pelo pivot (ex.: 0+6+12=18 contratos de acelerador),
+    bug silencioso que nenhum consumidor teria como detectar.
+
+    - ``nivel`` NULL: meta monetaria (R$) — coluna e o proprio produto.
+    - ``GERAL``: meta de pontos — ``META_PRATA`` / ``META_OURO``.
+    - demais produtos: acelerador em qtd de contratos — ``PRODUTO``
+      (PRATA) e ``PRODUTO_OURO`` (OURO).
+    - ``BRONZE``: devolve ``None`` (linha descartada).
+    """
+    if not nivel:
+        return produto
+    if nivel == "PRATA":
+        return "META_PRATA" if produto == "GERAL" else produto
+    if nivel == "OURO":
+        return "META_OURO" if produto == "GERAL" else f"{produto}_OURO"
+    return None
+
+
 def carregar_metas_produto_consultor(
     mes: int,
     ano: int,
 ) -> pd.DataFrame:
     """Carrega metas por produto com escopo CONSULTOR.
 
-    Retorna o mesmo formato pivotado de carregar_metas_produto
-    (LOJA | MIX | CNC | ...), mas com os valores por consultor
-    em vez de por loja. Usado quando o perfil logado é consultor.
+    Escopo CONSULTOR e chaveado por ``loja_id`` (a tabela ``metas`` nao
+    tem ``consultor_id``): cada linha e o alvo INDIVIDUAL de cada
+    consultor daquela loja. Usado quando o perfil logado e consultor ou
+    quando outro perfil filtrou ate um consultor especifico.
+
+    Retorna pivot indexado por loja com tres familias de coluna, em
+    tres unidades diferentes — nunca some colunas de familias
+    distintas:
+
+    - ``LOJA``;
+    - ``CLT``, ``CNC``, ``CONSIGNADO``, ``FGTS``,
+      ``FGTS_ANT_BENEF_13``, ``SAQUE`` — R$ (linhas de ``nivel`` NULL);
+    - ``META_PRATA`` / ``META_OURO`` — pontos (produto ``GERAL``);
+    - ``BMG_MED``, ``EMISSAO``, ``SUPER_CONTA``, ``VIDA_FAMILIAR`` e os
+      pares ``*_OURO`` — quantidade de contratos (aceleradores).
+
+    ``MIX`` nao existe neste escopo (so no escopo LOJA); quem precisa
+    do alvo de mix soma os produtos componentes (ver
+    ``PRODUTOS_DASHBOARD_COL_META`` em ``kpis/gerais.py``).
 
     TTL real: 6h para mes corrente, 24h para historico.
     """
     if _eh_mes_atual(mes, ano):
-        return _metas_produto_consultor_atual(mes, ano)
-    return _metas_produto_consultor_historico(mes, ano)
+        return _metas_produto_consultor_atual(mes, ano, _cache_version=1)
+    return _metas_produto_consultor_historico(mes, ano, _cache_version=1)
 
 
 def _fetch_metas_produto_consultor(mes: int, ano: int) -> pd.DataFrame:
-    """Executa a query de metas por produto (escopo CONSULTOR) sem cache."""
+    """Executa a query de metas por produto (CONSULTOR) sem cache.
+
+    Traz TODOS os niveis (NULL, PRATA, OURO; BRONZE e descartado no
+    mapeamento de coluna). O filtro ``is_("nivel", "null")`` que existia
+    aqui escondia do dashboard inteiro as metas de ponto (``GERAL``) e
+    as de acelerador.
+
+    Paginado por keyset em ``id`` (PK): sem o filtro de nivel sao ~940
+    linhas por periodo (09/2026, 47 lojas) contra o teto default de
+    1000 do PostgREST — a proxima leva de lojas truncaria o resultado
+    em silencio.
+    """
     periodo = carregar_periodo(mes, ano)
     if not periodo:
         return pd.DataFrame()
 
-    resp = (
-        _sb()
-        .table("metas")
-        .select("produto, escopo, nivel, valor, lojas(nome)")
-        .eq("periodo_id", periodo["id"])
-        .eq("escopo", "CONSULTOR")
-        .is_("nivel", "null")
-        .execute()
+    all_data = _paginar_keyset(
+        lambda limite: (
+            _sb()
+            .table("metas")
+            .select("id, produto, escopo, nivel, valor, lojas(nome)")
+            .eq("periodo_id", periodo["id"])
+            .eq("escopo", "CONSULTOR")
+            .order("id")
+            .limit(limite)
+        ),
+        "id",
     )
 
-    if not resp.data:
+    if not all_data:
         return pd.DataFrame()
 
     rows = []
-    for m in resp.data:
+    for m in all_data:
+        coluna = _coluna_meta_consultor(m["produto"], m.get("nivel"))
+        if coluna is None:
+            continue
         loja = m.get("lojas") or {}
         rows.append(
             {
                 "LOJA": loja.get("nome", ""),
-                "produto_meta": m["produto"],
-                "valor": float(m.get("valor", 0)),
+                "coluna_meta": coluna,
+                "valor": float(m.get("valor", 0) or 0),
             }
         )
 
     df = pd.DataFrame(rows)
-    df = df.drop_duplicates(subset=["LOJA", "produto_meta"], keep="first")
+
+    # Deduplicar por (LOJA, coluna_meta) — a constraint UNIQUE nao
+    # impede duplicatas quando ``nivel`` e NULL no PG. A chave inclui o
+    # nivel porque ``coluna_meta`` ja o codifica: assim cada celula do
+    # pivot vem de UMA linha do banco e o aggfunc nunca mistura niveis.
+    if not df.empty:
+        df = df.drop_duplicates(
+            subset=["LOJA", "coluna_meta"], keep="first"
+        )
 
     if not df.empty:
         df_pivot = df.pivot_table(
             index="LOJA",
-            columns="produto_meta",
+            columns="coluna_meta",
             values="valor",
-            aggfunc="sum",
+            aggfunc="first",
             fill_value=0,
         ).reset_index()
+        # Colunas de nivel sempre presentes (mesmo periodo sem a linha),
+        # no mesmo espirito de _fetch_metas. As monetarias ficam como
+        # estao: forcar 0 onde antes a coluna faltava trocaria "criterio
+        # ignorado" por "meta zero" no consumidor.
+        for col in _COLUNAS_NIVEL_META_CONSULTOR:
+            if col not in df_pivot.columns:
+                df_pivot[col] = 0.0
         return df_pivot
 
     return pd.DataFrame(columns=["LOJA"])
 
 
 @st.cache_data(ttl=21600)
-def _metas_produto_consultor_atual(mes: int, ano: int) -> pd.DataFrame:
-    """Metas por produto (CONSULTOR) — mes corrente. TTL 6h."""
+def _metas_produto_consultor_atual(
+    mes: int,
+    ano: int,
+    _cache_version: int = 1,  # bump v1: colunas de nivel (META_PRATA...)
+) -> pd.DataFrame:
+    """Metas por produto (CONSULTOR) — mes corrente. TTL 6h.
+
+    ``_cache_version`` entra na chave do cache porque o corpo DESTA
+    funcao e uma delegacao de uma linha: o ``st.cache_data`` versiona a
+    funcao decorada, nao as que ela chama. Mudar
+    ``_fetch_metas_produto_consultor`` (formato do pivot, colunas novas)
+    nao invalida nada — a sessao aberta segue servindo o DataFrame do
+    formato antigo ate o TTL vencer. Mesmo padrao de ``_consolidar_*``.
+    Bump obrigatorio a cada mudanca de formato do fetch.
+    """
     return _fetch_metas_produto_consultor(mes, ano)
 
 
 @st.cache_data(ttl=86400)
-def _metas_produto_consultor_historico(mes: int, ano: int) -> pd.DataFrame:
-    """Metas por produto (CONSULTOR) — historico. TTL 24h."""
+def _metas_produto_consultor_historico(
+    mes: int,
+    ano: int,
+    _cache_version: int = 1,  # bump v1: colunas de nivel (META_PRATA...)
+) -> pd.DataFrame:
+    """Metas por produto (CONSULTOR) — historico. TTL 24h.
+
+    Ver ``_metas_produto_consultor_atual`` para o porque do
+    ``_cache_version`` (TTL de 24h aqui torna a versao ainda mais
+    critica: sem bump, o formato antigo sobrevive um dia inteiro).
+    """
     return _fetch_metas_produto_consultor(mes, ano)
 
 

@@ -97,11 +97,25 @@ def calcular_heatmap_regiao_produto(
 ) -> Tuple[pd.DataFrame, pd.DataFrame]:
     """Calcula matriz de ranking por regiao x produto.
 
-    Cada celula contem a posicao da regiao naquele produto,
-    baseada no % de atingimento (valor realizado / meta).
+    Cada celula contem a posicao da regiao naquele produto. O
+    criterio depende da meta CADASTRADA (nao do realizado):
+
+    - produto com meta em ao menos uma regiao: ranking por %
+      atingimento. Regiao sem meta desse produto fica **fora do
+      ranking** (``NaN``) em vez de herdar 0% e o ultimo lugar;
+    - produto sem meta em nenhuma regiao: ranking por volume de
+      producao. Regiao sem producao fica fora do ranking;
+    - sem base para comparar (ninguem produziu, seja no criterio
+      de meta ou no de volume): coluna inteira ``NaN``.
+
+    ``NaN`` significa "sem posicao" e e o que a UI pinta como
+    ``—``; sem isso, ``rank`` devolvia 1o lugar para todo mundo
+    numa coluna zerada (ver ``criar_heatmap_regiao_produto``).
 
     Returns:
-        (df_ranking, df_atingimento): ranking e % atingimento.
+        (df_ranking, df_atingimento): ranking (float, ``NaN`` =
+        sem posicao) e % atingimento (``NaN`` = sem meta
+        cadastrada — distinto de 0%, que e meta sem realizado).
     """
     if "REGIAO" not in df.columns or "grupo_dashboard" not in df.columns:
         return pd.DataFrame(), pd.DataFrame()
@@ -124,15 +138,17 @@ def calcular_heatmap_regiao_produto(
 
     regioes = sorted(df["REGIAO"].unique())
 
-    # Calcular % atingimento e volume bruto por regiao x produto
+    # Calcular % atingimento, volume bruto e meta por regiao x produto
     dados_ating = []
     dados_valor = []
+    dados_meta = []
     for regiao in regioes:
         df_r = df[df["REGIAO"] == regiao]
         lojas_r = df_r["LOJA"].unique()
         metas_prod_r = _metas_da_regiao(df_metas_produto, regiao, lojas_r)
         row_ating = {"Região": regiao}
         row_valor = {"Região": regiao}
+        row_meta = {"Região": regiao}
 
         for grupo in grupos:
             valor = df_r[df_r["grupo_dashboard"] == grupo][
@@ -154,27 +170,45 @@ def calcular_heatmap_regiao_produto(
                     .sum()
                 )
 
-            perc = (valor / meta * 100) if meta > 0 else 0
+            # Sem meta cadastrada e diferente de 0% atingido: o
+            # primeiro nao tem alvo, o segundo tem alvo e nao
+            # produziu. Guardar os dois como 0 apagava a distincao
+            # e jogava quem nao tem meta para o ultimo lugar.
+            perc = (valor / meta * 100) if meta > 0 else float("nan")
             row_ating[grupo] = perc
             row_valor[grupo] = valor
+            row_meta[grupo] = meta
 
         dados_ating.append(row_ating)
         dados_valor.append(row_valor)
+        dados_meta.append(row_meta)
 
     df_ating = pd.DataFrame(dados_ating).set_index("Região")
     df_valor = pd.DataFrame(dados_valor).set_index("Região")
+    df_meta = pd.DataFrame(dados_meta).set_index("Região")
 
-    # Ranking por % atingimento; produtos com meta zerada para todas
-    # as regioes usam volume de producao como criterio de desempate
-    # (maior volume = melhor posicao).
-    df_ranking = df_ating.rank(ascending=False, method="min").astype(int)
+    # Criterio por produto: meta cadastrada manda no ranking; sem
+    # meta em nenhuma regiao, o volume de producao decide. Quem fica
+    # sem base de comparacao (sem meta na coluna com meta, ou sem
+    # producao na coluna por volume) sai do ranking como NaN —
+    # ``rank`` mantem NaN por padrao (``na_option="keep"``).
+    df_ranking = pd.DataFrame(
+        index=df_ating.index, columns=df_ating.columns, dtype=float
+    )
     for col in df_ating.columns:
-        if df_ating[col].sum() == 0:
-            df_ranking[col] = (
-                df_valor[col]
-                .rank(ascending=False, method="min")
-                .astype(int)
-            )
+        if df_meta[col].sum() > 0:
+            serie = df_ating[col]
+            # Meta cadastrada mas ninguem produziu (inicio de mes,
+            # produto parado): nao ha ranking a exibir — empate em
+            # 0% pintava todas as regioes como 1o lugar.
+            if serie.fillna(0).sum() <= 0:
+                continue
+        else:
+            serie = df_valor[col].where(df_valor[col] > 0)
+            if serie.notna().sum() == 0:
+                continue
+
+        df_ranking[col] = serie.rank(ascending=False, method="min")
 
     return df_ranking, df_ating
 

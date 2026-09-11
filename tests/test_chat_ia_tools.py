@@ -160,7 +160,20 @@ class TestToolRankingPeriodo:
         assert primeiro["atingimento_pct"] == pytest.approx(40.0)
         assert primeiro["ticket_medio"] == pytest.approx(750.0)
 
-    def test_consultor_atingimento(self, df_rank, df_metas_lojas):
+    def test_consultor_atingimento(self, monkeypatch, df_rank, df_metas_lojas):
+        # Meta do consultor = META_PRATA de escopo CONSULTOR da loja
+        # dele (mesmos valores de
+        # TestCalcularRankingConsultores.test_meta_individual_escopo_consultor
+        # em test_kpis_rankings.py). carregar_metas_produto_consultor
+        # é isolada da rede via monkeypatch no módulo consumidor.
+        metas_consultor = pd.DataFrame(
+            {"LOJA": ["A", "B"], "META_PRATA": [500.0, 1500.0]}
+        )
+        monkeypatch.setattr(
+            tools_mod,
+            "carregar_metas_produto_consultor",
+            lambda mes, ano: metas_consultor,
+        )
         contexto = _contexto(df=df_rank, df_metas=df_metas_lojas)
 
         resultado = tool_ranking_periodo(
@@ -168,10 +181,9 @@ class TestToolRankingPeriodo:
         )
 
         por_nome = {linha["nome"]: linha for linha in resultado["resultados"]}
-        # B tem 2 consultores → meta rateada 1000 cada (mesmos valores
-        # de TestCalcularRankingConsultores.test_meta_rateada_...)
-        assert por_nome["Pedro"]["atingimento_pct"] == pytest.approx(6.0)
-        assert por_nome["João"]["atingimento_pct"] == pytest.approx(40.0)
+        # João (loja A): 400 / 500 = 80%; Pedro (loja B): 60 / 1500 = 4%
+        assert por_nome["João"]["atingimento_pct"] == pytest.approx(80.0)
+        assert por_nome["Pedro"]["atingimento_pct"] == pytest.approx(4.0)
 
     def test_loja_pontos(self, df_rank):
         contexto = _contexto(df=df_rank)

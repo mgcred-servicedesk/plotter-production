@@ -11,6 +11,7 @@ from src.dashboard.kpis.gerais import (
     excluir_lojas_backoffice,
     excluir_supervisores,
     mascaras_aceleradores,
+    resolver_loja_principal,
 )
 from src.dashboard.kpis.produtos import (
     COL_PRODUTO_DETALHADO,
@@ -39,7 +40,11 @@ def _preparar(
 def _agrupar(df_v: pd.DataFrame, tipo: str) -> pd.DataFrame:
     """Agrega Qtd/Valor/Pontos por loja/consultor.
 
-    No escopo consultor inclui a coluna ``Loja`` (primeira ocorrencia).
+    No escopo consultor inclui a coluna ``Loja``, resolvida por
+    ``resolver_loja_principal`` (loja de maior pontuacao no periodo,
+    desempate alfabetico) — e nao mais a primeira ocorrencia na ordem
+    das linhas: a loja virou a CHAVE da meta individual, entao precisa
+    ser deterministica para quem produziu em duas lojas no mes.
     """
     coluna = "LOJA" if tipo == "loja" else "CONSULTOR"
     label = "Loja" if tipo == "loja" else "Consultor"
@@ -48,14 +53,15 @@ def _agrupar(df_v: pd.DataFrame, tipo: str) -> pd.DataFrame:
         "Valor": ("VALOR", "sum"),
         "Pontos": ("pontos", "sum"),
     }
-    if tipo == "consultor":
-        agg_dict["Loja"] = ("LOJA", "first")
-    return (
+    rk = (
         df_v.groupby(coluna)
         .agg(**agg_dict)
         .reset_index()
         .rename(columns={coluna: label})
     )
+    if tipo == "consultor":
+        rk["Loja"] = rk[label].map(resolver_loja_principal(df_v))
+    return rk
 
 
 def _anexar_regiao(rk: pd.DataFrame, df: pd.DataFrame) -> pd.DataFrame:
@@ -74,6 +80,40 @@ def _ticket(rk: pd.DataFrame) -> pd.Series:
 def _atingimento(pontos: pd.Series, meta: pd.Series) -> pd.Series:
     """% atingimento vetorizado: pontos / meta * 100 (0 quando meta <= 0)."""
     return (pontos / meta.where(meta > 0) * 100).fillna(0)
+
+
+def meta_individual_por_loja(
+    lojas: Optional[pd.Series],
+    df_metas_consultor: Optional[pd.DataFrame],
+) -> pd.Series:
+    """Meta PRATA individual (escopo CONSULTOR) de cada loja da serie.
+
+    Lookup puro, reusado pela aba de Rankings para avisar quais lojas
+    exibidas estao sem meta individual. Sem fallback: loja ausente do
+    frame, meta nula ou <= 0 devolvem 0.0 — e ``_atingimento`` converte
+    isso em 0%.
+    """
+    if lojas is None:
+        return pd.Series(dtype=float)
+    zeros = pd.Series(0.0, index=lojas.index)
+    if (
+        df_metas_consultor is None
+        or df_metas_consultor.empty
+        or "LOJA" not in df_metas_consultor.columns
+        or "META_PRATA" not in df_metas_consultor.columns
+    ):
+        return zeros
+    metas = (
+        df_metas_consultor.dropna(subset=["LOJA"])
+        .drop_duplicates(subset=["LOJA"], keep="first")
+        .set_index("LOJA")["META_PRATA"]
+    )
+    metas = pd.to_numeric(metas, errors="coerce")
+    resolvidas = lojas.map(metas).astype(float).fillna(0.0)
+    # Meta negativa (erro de digitacao na planilha de origem) e
+    # "sem meta", nao meta: sem o clip ela vazaria como valor valido
+    # para quem testa o retorno por `== 0`.
+    return resolvidas.clip(lower=0.0)
 
 
 def _rankear(rk: pd.DataFrame, sort_col: str, top_n: int) -> pd.DataFrame:
@@ -246,12 +286,32 @@ def calcular_ranking_consultores(
     top_n: int = 10,
     df_supervisores: Optional[pd.DataFrame] = None,
     df_universo: Optional[pd.DataFrame] = None,
+    df_metas_consultor: Optional[pd.DataFrame] = None,
 ) -> pd.DataFrame:
-    """Ranking de consultores por atingimento.
+    """Ranking de consultores por atingimento da meta INDIVIDUAL.
 
-    ``df_universo`` ([CONSULTOR, LOJA]): se fornecido, consultores do
-    universo sem produção entram zerados no fim do ranking (visão de
-    controle). Supervisores são excluídos do universo.
+    A meta de cada consultor e o ``META_PRATA`` de escopo CONSULTOR da
+    loja dele (``carregar_metas_produto_consultor``) — o alvo individual
+    de quem trabalha naquela loja. O rateio anterior
+    (``META_PRATA`` da loja / nº de consultores que produziram) foi
+    REMOVIDO, sem fallback: ele subestimava a meta real em 33% a 60% em
+    43 das 47 lojas (a meta da loja e deliberadamente menor que meta
+    individual × headcount) e premiava quem estava em loja com equipe
+    desfalcada, onde o divisor era pequeno.
+
+    Args:
+        df_metas: metas de escopo LOJA. **Nao participa mais do calculo**
+            da meta do consultor; mantido na assinatura pelos call sites
+            (o ranking de LOJAS, ``calcular_ranking_lojas``, segue
+            usando meta de loja, que ali e o alvo correto).
+        df_metas_consultor: pivot de ``carregar_metas_produto_consultor``
+            — so ``LOJA`` e ``META_PRATA`` sao usados aqui. Ausente,
+            loja fora do frame ou ``META_PRATA`` nulo/<= 0 ⇒ meta 0 ⇒
+            ``Atingimento %`` 0; avisar na tela e responsabilidade da
+            aba (nunca falhar em silencio).
+        df_universo ([CONSULTOR, LOJA]): se fornecido, consultores do
+            universo sem produção entram zerados no fim do ranking
+            (visão de controle). Supervisores são excluídos do universo.
     """
     df_v = _preparar(df, "consultor", df_supervisores)
     if "CONSULTOR" not in df_v.columns:
@@ -265,19 +325,10 @@ def calcular_ranking_consultores(
         )
         ranking = _completar_universo(ranking, universo, "consultor")
 
-    if "LOJA" in df_metas.columns and "META_PRATA" in df_metas.columns:
-        metas_loja = df_metas.set_index("LOJA")["META_PRATA"]
-        num_cons_loja = df_v.groupby("LOJA")["CONSULTOR"].nunique()
-
-        ranking["Meta Prata"] = ranking["Loja"].map(
-            lambda x: (
-                metas_loja.get(x, 0) / num_cons_loja.get(x, 1)
-                if x in num_cons_loja.index
-                else 0
-            )
-        )
-    else:
-        ranking["Meta Prata"] = 0
+    ranking["Meta Prata"] = meta_individual_por_loja(
+        ranking["Loja"] if "Loja" in ranking.columns else None,
+        df_metas_consultor,
+    )
 
     ranking["Atingimento %"] = _atingimento(
         ranking["Pontos"], ranking["Meta Prata"]

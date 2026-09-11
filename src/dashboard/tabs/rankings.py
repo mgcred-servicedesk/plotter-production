@@ -38,6 +38,7 @@ from src.dashboard.kpis.rankings import (
     calcular_ranking_por_acelerador,
     calcular_ranking_por_produto,
     listar_sem_producao,
+    meta_individual_por_loja,
 )
 
 # Perfis com visao de controle: enxergam lojas/consultores ativos
@@ -45,6 +46,10 @@ from src.dashboard.kpis.rankings import (
 _PERFIS_CONTROLE = ("admin", "gestor", "gerente_comercial")
 
 _HighlightFn = Callable[[pd.DataFrame], pd.Series]
+
+# Teto de lojas nomeadas no aviso de "sem meta individual" — a caption
+# fica curta e o resto vira contagem.
+_MAX_LOJAS_AVISO = 8
 
 # top_n "infinito": obtem o ranking completo para que a fixacao do
 # escopo do usuario abaixo do Top N (ver _exibir_ranking_pinned)
@@ -163,6 +168,38 @@ def _exibir_ranking_pinned(
     _exibir_ranking(top, highlight_fn, nome=nome, key=key)
 
 
+def _avisar_lojas_sem_meta(
+    rk: pd.DataFrame,
+    df_metas_cons: Optional[pd.DataFrame],
+) -> None:
+    """Aviso quando alguma loja do ranking exibido nao tem meta individual.
+
+    A meta do consultor e o ``META_PRATA`` de escopo CONSULTOR da loja
+    dele; sem essa linha o atingimento sai 0% — e a decisao do projeto e
+    falhar VISIVEL, nunca em silencio. Em operacao normal (as 47 lojas
+    tem meta) este aviso nao aparece.
+    """
+    if rk.empty or "Loja" not in rk.columns:
+        return
+    metas = meta_individual_por_loja(rk["Loja"], df_metas_cons)
+    sem_meta = rk.loc[metas <= 0, "Loja"]
+    if sem_meta.empty:
+        return
+    nomes = sorted({
+        (str(x).strip() or "(sem loja)")
+        if not pd.isna(x)
+        else "(sem loja)"
+        for x in sem_meta
+    })
+    exibidos = ", ".join(nomes[:_MAX_LOJAS_AVISO])
+    if len(nomes) > _MAX_LOJAS_AVISO:
+        exibidos += f" e mais {len(nomes) - _MAX_LOJAS_AVISO}"
+    st.caption(
+        f"⚠ Sem meta individual (escopo CONSULTOR) — atingimento 0% "
+        f"para consultores de: {exibidos}"
+    )
+
+
 def _render_par(
     df: pd.DataFrame,
     df_metas: pd.DataFrame,
@@ -174,6 +211,7 @@ def _render_par(
     highlight_fn: Optional[_HighlightFn] = None,
     export_prefix: str = "",
     df_universo: Optional[pd.DataFrame] = None,
+    df_metas_cons: Optional[pd.DataFrame] = None,
 ) -> None:
     """Renderiza par de colunas: Atingimento | Pontos para loja ou consultor.
 
@@ -184,6 +222,9 @@ def _render_par(
     df_universo: universo de lojas/consultores ativos — entidades sem
     producao entram zeradas no fim (usar so em visoes de lista completa,
     senao o corte do Top N as esconde).
+    df_metas_cons: metas de escopo CONSULTOR (pivot por loja) — alvo
+    INDIVIDUAL de cada consultor daquela loja, base do atingimento no
+    ranking de consultores. Ignorado no ranking de lojas.
     """
     label = "Loja" if tipo == "loja" else "Consultor"
     prefix = f"Top {top_n} " if top_label else ""
@@ -207,9 +248,12 @@ def _render_par(
             rk = calcular_ranking_consultores(
                 df, df_metas, top_n=top_n, df_supervisores=df_sup,
                 df_universo=df_universo,
+                df_metas_consultor=df_metas_cons,
             )
         if not rk.empty:
             _exibir_ranking(rk, highlight_fn, **_export_args("atingimento"))
+            if tipo == "consultor":
+                _avisar_lojas_sem_meta(rk, df_metas_cons)
         else:
             st.info("Sem dados")
 
@@ -324,6 +368,7 @@ def _render_secao_regiao(
     key_prefix: str,
     highlight_fn: Optional[_HighlightFn] = None,
     df_universo: Optional[pd.DataFrame] = None,
+    df_metas_cons: Optional[pd.DataFrame] = None,
 ) -> None:
     """Seção 'por região' abaixo dos rankings globais.
 
@@ -374,6 +419,7 @@ def _render_secao_regiao(
         highlight_fn=highlight_fn,
         export_prefix=f"{base}_{_slug(regiao)}",
         df_universo=_filtrar_universo_regiao(df_universo, regiao),
+        df_metas_cons=df_metas_cons,
     )
 
 
@@ -401,10 +447,12 @@ def _render_consultores(
     highlight_fn: Optional[_HighlightFn] = None,
     com_secao_regiao: bool = True,
     df_universo: Optional[pd.DataFrame] = None,
+    df_metas_cons: Optional[pd.DataFrame] = None,
 ) -> None:
     _render_par(
         df, df_metas, df_sup, tipo="consultor", top_n=top_n,
         highlight_fn=highlight_fn, export_prefix="consultores",
+        df_metas_cons=df_metas_cons,
     )
     _render_sem_producao(
         df, df_universo, tipo="consultor", df_sup=df_sup, key_suffix="_cons",
@@ -414,6 +462,7 @@ def _render_consultores(
             df_scope, df, df_metas, df_sup,
             tipo="consultor", key_prefix="cons", highlight_fn=highlight_fn,
             df_universo=df_universo,
+            df_metas_cons=df_metas_cons,
         )
 
 
@@ -422,6 +471,7 @@ def _render_regioes(
     highlight_fn: Optional[_HighlightFn] = None,
     df_lojas_univ: Optional[pd.DataFrame] = None,
     df_cons_univ: Optional[pd.DataFrame] = None,
+    df_metas_cons: Optional[pd.DataFrame] = None,
 ) -> None:
     """Rankings intra-regiao com expander por regiao.
 
@@ -459,6 +509,7 @@ def _render_regioes(
                 top_label=False, highlight_fn=highlight_fn,
                 export_prefix=f"regiao_{_slug(regiao)}_consultores",
                 df_universo=_filtrar_universo_regiao(df_cons_univ, regiao),
+                df_metas_cons=df_metas_cons,
             )
 
 
@@ -513,6 +564,7 @@ def render_tab_rankings(
     perfil: Optional[str] = None,
     df_lojas_univ: Optional[pd.DataFrame] = None,
     df_cons_univ: Optional[pd.DataFrame] = None,
+    df_metas_cons: Optional[pd.DataFrame] = None,
 ) -> None:
     """Renderiza aba de Rankings.
 
@@ -525,6 +577,11 @@ def render_tab_rankings(
             Habilita a visao de controle (sem producao) para
             _PERFIS_CONTROLE; ignorado para os demais perfis.
         df_cons_univ: idem para consultores [CONSULTOR, LOJA, REGIAO].
+        df_metas_cons: metas de escopo CONSULTOR (pivot por loja, de
+            `carregar_metas_produto_consultor`) — alvo INDIVIDUAL que
+            sustenta o atingimento do ranking de consultores. Org-wide
+            (pre-RLS), como `df_metas`, porque os rankings comparam
+            todo mundo; sem ele o atingimento sai 0% com aviso na tela.
     """
     sac.divider(
         label="Rankings de Performance",
@@ -615,12 +672,14 @@ def render_tab_rankings(
             highlight_fn=highlight_fn,
             com_secao_regiao=not somente_regiao,
             df_universo=df_cons_univ,
+            df_metas_cons=df_metas_cons,
         )
 
     elif menu == "Regioes":
         _render_regioes(
             df, df_metas, df_sup, top_n=top_n, highlight_fn=highlight_fn,
             df_lojas_univ=df_lojas_univ, df_cons_univ=df_cons_univ,
+            df_metas_cons=df_metas_cons,
         )
 
     elif menu == "Por Produto":

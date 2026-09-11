@@ -608,7 +608,12 @@ def criar_heatmap_regiao_produto(
 ):
     """Mapa de calor: ranking de regioes por produto.
 
-    Celulas mostram a posicao; hover exibe o % atingimento.
+    Celulas mostram a posicao; o hover explicita o criterio, que
+    nem sempre e o atingimento: produto sem meta cadastrada e
+    ranqueado por volume de producao (ver
+    ``calcular_heatmap_regiao_produto``). Celula sem posicao
+    (``NaN`` no ranking) vira ``—`` em fundo neutro, em vez de
+    receber um lugar que nao foi disputado.
     Escala: 1o lugar (verde) → ultimo (vermelho).
     regioes_destaque: lista de regioes para destacar com
     marcador visual (ex: regiao do gerente comercial).
@@ -619,7 +624,7 @@ def criar_heatmap_regiao_produto(
     regioes = df_ranking.index.tolist()
     produtos = df_ranking.columns.tolist()
 
-    z = df_ranking.values
+    z = df_ranking.astype(float).values
     n_regioes = len(regioes)
 
     destaque = set(regioes_destaque or [])
@@ -627,30 +632,61 @@ def criar_heatmap_regiao_produto(
     # Labels do eixo Y com marcador para regioes destacadas
     y_labels = [f"★ {r}" if r in destaque else r for r in regioes]
 
-    # Texto de hover com % atingimento
+    # Coluna sem atingimento em nenhuma regiao = produto sem meta
+    # cadastrada: a posicao veio do volume, entao o hover nao pode
+    # falar em atingimento.
+    col_por_volume = [
+        bool(df_ating.iloc[:, j].isna().all())
+        for j in range(len(produtos))
+    ]
+
+    # Hover com o criterio de cada celula e texto com a posicao
     hover = []
+    text = []
+    sem_posicao = []
     for i, reg in enumerate(regioes):
-        row = []
+        row_hover = []
+        row_text = []
         for j, prod in enumerate(produtos):
             ating = df_ating.iloc[i, j]
-            pos = int(z[i][j])
+            pos = z[i][j]
             marca = " (sua regiao)" if reg in destaque else ""
-            row.append(
-                f"<b>{reg}{marca}</b><br>"
-                f"Produto: {prod}<br>"
-                f"Posicao: {pos}º<br>"
-                f"Atingimento: {ating:.1f}%"
-            )
-        hover.append(row)
+            cabecalho = f"<b>{reg}{marca}</b><br>Produto: {prod}<br>"
 
-    # Texto exibido nas celulas: apenas posicao em negrito/branco
-    text = []
-    for i in range(len(regioes)):
-        row = []
-        for j in range(len(produtos)):
-            pos = int(z[i][j])
-            row.append(f"<b>{pos}º</b>")
-        text.append(row)
+            if pd.isna(pos):
+                sem_posicao.append((i, j))
+                row_text.append("")
+                if col_por_volume[j]:
+                    motivo = (
+                        "Produto sem meta cadastrada — ranking por"
+                        " volume<br>Sem producao no periodo"
+                    )
+                elif pd.isna(ating):
+                    motivo = (
+                        "Sem meta cadastrada para este produto<br>"
+                        "Fora do ranking"
+                    )
+                else:
+                    motivo = (
+                        "Nenhuma regiao produziu no periodo<br>"
+                        "Sem ranking"
+                    )
+                row_hover.append(f"{cabecalho}{motivo}")
+                continue
+
+            row_text.append(f"<b>{int(pos)}º</b>")
+            if pd.isna(ating):
+                detalhe = (
+                    "Ranking por volume de producao<br>"
+                    "(produto sem meta cadastrada)"
+                )
+            else:
+                detalhe = f"Atingimento: {ating:.1f}%"
+            row_hover.append(
+                f"{cabecalho}Posicao: {int(pos)}º<br>{detalhe}"
+            )
+        hover.append(row_hover)
+        text.append(row_text)
 
     # Escala invertida: 1 (melhor) = verde, max = vermelho
     colorscale = [
@@ -683,6 +719,27 @@ def criar_heatmap_regiao_produto(
             ygap=3,
         )
     )
+
+    # Celula sem posicao: NaN nao pinta nada no heatmap, entao o
+    # "fora do ranking" ganha fundo neutro + "—" no lugar do numero.
+    for i, j in sem_posicao:
+        fig.add_shape(
+            type="rect",
+            x0=j - 0.5,
+            x1=j + 0.5,
+            y0=i - 0.5,
+            y1=i + 0.5,
+            fillcolor=ct["grid_zero"],
+            line=dict(width=0),
+            layer="below",
+        )
+        fig.add_annotation(
+            x=j,
+            y=i,
+            text="—",
+            showarrow=False,
+            font=dict(size=13, color=ct["text_secondary"]),
+        )
 
     # Bordas de destaque nas linhas do usuario
     if destaque:

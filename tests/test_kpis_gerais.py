@@ -41,6 +41,7 @@ from src.dashboard.kpis.gerais import (
     excluir_supervisores,
     filtrar_janela_recente,
     limpar_cache_kpis,
+    metas_pontos_consultor,
     obter_kpis_gerais_periodo,
     obter_kpis_pipeline_periodo,
     obter_kpis_qtd_periodo,
@@ -48,6 +49,7 @@ from src.dashboard.kpis.gerais import (
     obter_medias_periodo,
     obter_metas_prod_diarias_periodo,
     peso_headcount_escopo,
+    resolver_loja_principal,
     separar_cancelados_liquidos,
 )
 from src.shared.dias_uteis import calcular_dias_uteis
@@ -77,6 +79,156 @@ class TestHelpers:
 
     def test_contar_consultores_sem_coluna(self):
         assert contar_consultores(pd.DataFrame({"VALOR": [1]}), None) == 0
+
+
+@pytest.mark.unit
+class TestResolverLojaPrincipal:
+    """A loja do consultor virou a CHAVE da meta individual: precisa
+    ser a de MAIOR pontuação no período, com desempate alfabético — e
+    não mais a primeira linha na ordem de chegada."""
+
+    def test_uma_loja_por_consultor(self):
+        df = pd.DataFrame({
+            "CONSULTOR": ["João", "Maria"],
+            "LOJA": ["A", "B"],
+            "pontos": [100.0, 50.0],
+        })
+        out = resolver_loja_principal(df)
+        assert out["João"] == "A"
+        assert out["Maria"] == "B"
+
+    def test_loja_de_maior_pontuacao_vence_independente_da_ordem(self):
+        # Linhas em ordem "errada": a loja Z aparece primeiro mas soma
+        # MENOS pontos (10) do que a loja A (5 + 40 = 45).
+        df = pd.DataFrame({
+            "CONSULTOR": ["Ana", "Ana", "Ana"],
+            "LOJA":      ["Z", "A", "A"],
+            "pontos":    [10.0, 5.0, 40.0],
+        })
+        out = resolver_loja_principal(df)
+        assert out["Ana"] == "A"
+
+    def test_empate_exato_resolve_por_ordem_alfabetica(self):
+        df = pd.DataFrame({
+            "CONSULTOR": ["Ana", "Ana"],
+            "LOJA":      ["Z", "A"],
+            "pontos":    [30.0, 30.0],
+        })
+        out = resolver_loja_principal(df)
+        assert out["Ana"] == "A"
+
+    def test_df_vazio_devolve_series_vazia(self):
+        out = resolver_loja_principal(pd.DataFrame())
+        assert out.empty
+
+    def test_sem_coluna_consultor_devolve_series_vazia(self):
+        df = pd.DataFrame({"LOJA": ["A"], "pontos": [10.0]})
+        assert resolver_loja_principal(df).empty
+
+    def test_sem_coluna_loja_devolve_series_vazia(self):
+        df = pd.DataFrame({"CONSULTOR": ["Ana"], "pontos": [10.0]})
+        assert resolver_loja_principal(df).empty
+
+    def test_sem_coluna_pontos_devolve_series_vazia(self):
+        df = pd.DataFrame({"CONSULTOR": ["Ana"], "LOJA": ["A"]})
+        assert resolver_loja_principal(df).empty
+
+
+@pytest.mark.unit
+class TestMetasPontosConsultor:
+    """``calcular_kpis_gerais`` SOMA ``META_PRATA``/``META_OURO`` do
+    frame recebido — uma pessoa tem UMA meta, então o recorte de um
+    único consultor precisa virar exatamente UMA linha (a da loja
+    dele), sem somar a meta de duas lojas quando ele produziu em
+    ambas."""
+
+    @pytest.fixture
+    def df_metas_loja(self):
+        """Escopo LOJA — inclui REGIAO/REGIAO_ATUAL, que
+        ``metas_pontos_consultor`` precisa preservar."""
+        return pd.DataFrame({
+            "LOJA": ["A", "B"],
+            "REGIAO": ["R1", "R2"],
+            "REGIAO_ATUAL": ["R1", "R2"],
+            "META_PRATA": [10000.0, 20000.0],
+            "META_OURO": [15000.0, 25000.0],
+        })
+
+    @pytest.fixture
+    def df_metas_consultor(self):
+        return pd.DataFrame({
+            "LOJA": ["A", "B"],
+            "META_PRATA": [500.0, 1500.0],
+            "META_OURO": [800.0, 2500.0],
+        })
+
+    def test_uma_linha_com_meta_individual_e_colunas_preservadas(
+        self, df_metas_loja, df_metas_consultor
+    ):
+        df = pd.DataFrame({
+            "CONSULTOR": ["João"], "LOJA": ["A"], "pontos": [100.0],
+        })
+        linha, loja = metas_pontos_consultor(df_metas_loja, df_metas_consultor, df)
+        assert loja == "A"
+        assert len(linha) == 1
+        assert linha["META_PRATA"].iloc[0] == pytest.approx(500.0)
+        assert linha["META_OURO"].iloc[0] == pytest.approx(800.0)
+        # Colunas do escopo LOJA (REGIAO/REGIAO_ATUAL) preservadas
+        assert linha["REGIAO"].iloc[0] == "R1"
+        assert linha["REGIAO_ATUAL"].iloc[0] == "R1"
+
+    def test_consultor_com_producao_em_duas_lojas_usa_a_principal(
+        self, df_metas_loja, df_metas_consultor
+    ):
+        # Loja B tem mais pontos (50) que a loja A (10) -> meta de B.
+        df = pd.DataFrame({
+            "CONSULTOR": ["Ana", "Ana"],
+            "LOJA": ["A", "B"],
+            "pontos": [10.0, 50.0],
+        })
+        linha, loja = metas_pontos_consultor(df_metas_loja, df_metas_consultor, df)
+        assert loja == "B"
+        assert len(linha) == 1
+        assert linha["META_PRATA"].iloc[0] == pytest.approx(1500.0)
+
+    def test_recorte_com_mais_de_um_consultor_devolve_vazio(
+        self, df_metas_loja, df_metas_consultor
+    ):
+        df = pd.DataFrame({
+            "CONSULTOR": ["João", "Maria"],
+            "LOJA": ["A", "B"],
+            "pontos": [100.0, 50.0],
+        })
+        linha, loja = metas_pontos_consultor(df_metas_loja, df_metas_consultor, df)
+        assert loja is None
+        # Nunca soma metas de pessoas diferentes: frame vazio (meta 0),
+        # nunca uma linha com META_PRATA somando as duas.
+        assert linha.empty
+
+    def test_consultor_sem_producao_devolve_loja_none(
+        self, df_metas_loja, df_metas_consultor
+    ):
+        df = pd.DataFrame(columns=["CONSULTOR", "LOJA", "pontos"])
+        linha, loja = metas_pontos_consultor(df_metas_loja, df_metas_consultor, df)
+        assert loja is None
+        assert linha.empty
+
+    def test_loja_ausente_do_metas_consultor_zera_prata_e_ouro(
+        self, df_metas_loja
+    ):
+        df = pd.DataFrame({
+            "CONSULTOR": ["João"], "LOJA": ["A"], "pontos": [100.0],
+        })
+        metas_consultor_incompleto = pd.DataFrame(
+            {"LOJA": ["B"], "META_PRATA": [1500.0]}
+        )  # loja A ausente
+        linha, loja = metas_pontos_consultor(
+            df_metas_loja, metas_consultor_incompleto, df
+        )
+        assert loja == "A"
+        assert len(linha) == 1
+        assert linha["META_PRATA"].iloc[0] == 0.0
+        assert linha["META_OURO"].iloc[0] == 0.0
 
 
 @pytest.mark.unit
@@ -546,6 +698,57 @@ class TestCalcularKpisQtdProdutos:
         emissao = next(r for r in res if r["produto"] == "EMISSAO")
         # qtd_org = 3, normalizado por 3 → media_ref = 1.0
         assert emissao["media_ref"] == pytest.approx(1.0)
+
+    def test_consultor_com_producao_em_duas_lojas_usa_meta_da_principal(self):
+        """Meta de acelerador é alvo INDIVIDUAL (6 em PRATA) — somar as
+        lojas ativas dobraria a meta de quem produziu nas duas no mês
+        (transferência): 6 + 6 = 12 em vez de 6. Com um único
+        consultor no recorte, a meta vem só da loja principal dele
+        (maior pontuação — mesmo critério de ``resolver_loja_principal``)."""
+        df = pd.DataFrame({
+            "LOJA": ["A", "B"],
+            "CONSULTOR": ["Ana", "Ana"],
+            "pontos": [10.0, 50.0],  # loja B tem mais pontos → principal
+            "is_emissao_cartao": [True, True],
+            "is_super_conta": [False, False],
+            "is_bmg_med": [False, False],
+            "is_seguro_vida": [False, False],
+        })
+        df_metas_produto = pd.DataFrame({
+            "LOJA": ["A", "B"],
+            "EMISSAO": [6.0, 6.0],
+            "SUPER_CONTA": [6.0, 6.0],
+            "BMG_MED": [6.0, 6.0],
+            "VIDA_FAMILIAR": [6.0, 6.0],
+        })
+        res = calcular_kpis_qtd_produtos(
+            df, pd.DataFrame(), df_metas_produto, du_total=20, du_decorridos=10,
+        )
+        emissao = next(r for r in res if r["produto"] == "EMISSAO")
+        assert emissao["meta"] == pytest.approx(6.0)  # não 12
+
+    def test_org_wide_com_metas_escopo_loja_nao_define_meta_de_acelerador(self):
+        """A empresa não define alvo de acelerador por loja — o alvo
+        só existe no escopo CONSULTOR. Um recorte que NÃO é de um
+        único consultor (várias pessoas) usa a meta de escopo LOJA
+        passada pelo chamador, que estruturalmente não tem as colunas
+        de acelerador — a meta fica 0 para todos os quatro, nunca
+        extrapolada (meta individual × headcount)."""
+        df = pd.DataFrame({
+            "LOJA": ["A", "B"],
+            "CONSULTOR": ["Ana", "Bruno"],
+            "is_emissao_cartao": [True, True],
+            "is_super_conta": [False, False],
+            "is_bmg_med": [False, False],
+            "is_seguro_vida": [False, False],
+        })
+        df_metas_produto = pd.DataFrame(  # escopo LOJA: sem colunas de acelerador
+            {"LOJA": ["A", "B"], "CNC": [20000.0, 20000.0]}
+        )
+        res = calcular_kpis_qtd_produtos(
+            df, pd.DataFrame(), df_metas_produto, du_total=20, du_decorridos=10,
+        )
+        assert all(r["meta"] == 0 for r in res)
 
 
 # ══════════════════════════════════════════════════════════════════

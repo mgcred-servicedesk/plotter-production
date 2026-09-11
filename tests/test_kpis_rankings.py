@@ -18,7 +18,18 @@ from src.dashboard.kpis.rankings import (
     calcular_ranking_por_produto,
     calcular_ranking_ticket_medio,
     listar_sem_producao,
+    meta_individual_por_loja,
 )
+
+
+@pytest.fixture
+def df_metas_consultor():
+    """Meta Prata individual por loja (escopo CONSULTOR, chaveado por
+    loja — cada linha e o alvo INDIVIDUAL de cada consultor daquela
+    loja). Valores deliberadamente diferentes do rateio antigo
+    (``META_PRATA`` da loja / nº de consultores) para que qualquer
+    resquicio de rateio quebre os testes."""
+    return pd.DataFrame({"LOJA": ["A", "B"], "META_PRATA": [500.0, 1500.0]})
 
 
 @pytest.fixture
@@ -65,14 +76,92 @@ class TestCalcularRankingLojas:
 
 @pytest.mark.unit
 class TestCalcularRankingConsultores:
-    def test_meta_rateada_por_consultores_da_loja(self, df_rank, df_metas_lojas):
-        rk = calcular_ranking_consultores(df_rank, df_metas_lojas)
+    def test_meta_individual_escopo_consultor(
+        self, df_rank, df_metas_lojas, df_metas_consultor
+    ):
+        """Meta do consultor = META_PRATA de escopo CONSULTOR da loja
+        dele — nunca mais o rateio da meta de loja pelo nº de
+        consultores que produziram (regra removida sem fallback)."""
+        rk = calcular_ranking_consultores(
+            df_rank, df_metas_lojas, df_metas_consultor=df_metas_consultor,
+        )
         by = {r["Consultor"]: r for _, r in rk.iterrows()}
-        # B tem 2 consultores → meta rateada = 2000/2 = 1000 cada
-        # Pedro: pontos 60 / 1000 = 6%
-        assert by["Pedro"]["Atingimento %"] == pytest.approx(6.0)
-        # João (loja A, 1 consultor): 400 / 1000 = 40%
-        assert by["João"]["Atingimento %"] == pytest.approx(40.0)
+        # João (loja A): 400 pontos / meta individual 500 = 80%
+        assert by["João"]["Atingimento %"] == pytest.approx(80.0)
+        # Pedro (loja B): 60 / meta individual 1500 = 4%
+        assert by["Pedro"]["Atingimento %"] == pytest.approx(4.0)
+        # Maria (loja B): 400 / 1500 = 26,67% — MESMA meta de Pedro (é
+        # da loja, não rateada por quem produziu nela)
+        assert by["Maria"]["Atingimento %"] == pytest.approx(400 / 1500 * 100)
+
+    def test_meta_de_loja_nao_influencia_atingimento_do_consultor(
+        self, df_rank, df_metas_consultor
+    ):
+        """``df_metas`` (escopo LOJA) fica na assinatura só pelos call
+        sites — não participa mais do cálculo do consultor. Prova
+        forte: metas de loja absurdas não mudam nada."""
+        df_metas_absurdas = pd.DataFrame(
+            {"LOJA": ["A", "B"], "META_PRATA": [1.0, 999_999.0]}
+        )
+        rk_absurda = calcular_ranking_consultores(
+            df_rank, df_metas_absurdas, df_metas_consultor=df_metas_consultor,
+        )
+        rk_sem_metas_loja = calcular_ranking_consultores(
+            df_rank, pd.DataFrame(), df_metas_consultor=df_metas_consultor,
+        )
+        by_absurda = {
+            r["Consultor"]: r["Atingimento %"] for _, r in rk_absurda.iterrows()
+        }
+        by_sem = {
+            r["Consultor"]: r["Atingimento %"]
+            for _, r in rk_sem_metas_loja.iterrows()
+        }
+        assert by_absurda == by_sem
+
+    def test_sem_metas_consultor_atingimento_zero(self, df_rank, df_metas_lojas):
+        """Sem ``df_metas_consultor`` (parâmetro ausente) — sem
+        fallback para o rateio antigo, tudo fica 0%."""
+        rk = calcular_ranking_consultores(df_rank, df_metas_lojas)
+        assert (rk["Atingimento %"] == 0).all()
+
+    def test_loja_ausente_da_meta_individual_zera_so_ela(self, df_rank):
+        """Loja fora do frame de metas individuais ⇒ meta 0 ⇒
+        atingimento 0% só para quem está nela — sem fallback
+        silencioso para a meta de loja."""
+        metas_incompletas = pd.DataFrame(
+            {"LOJA": ["A"], "META_PRATA": [500.0]}
+        )  # loja B ausente
+        rk = calcular_ranking_consultores(
+            df_rank, pd.DataFrame(), df_metas_consultor=metas_incompletas,
+        )
+        by = {r["Consultor"]: r for _, r in rk.iterrows()}
+        assert by["João"]["Atingimento %"] == pytest.approx(80.0)
+        assert by["Maria"]["Atingimento %"] == 0.0
+        assert by["Pedro"]["Atingimento %"] == 0.0
+
+    def test_universo_zerado_recebe_meta_real_da_loja_de_cadastro(
+        self, df_rank, univ_consultores, df_metas_consultor
+    ):
+        """Consultor do universo sem produção entra zerado, mas com a
+        loja de cadastro (usada para buscar a meta individual dela —
+        nunca a loja 0/ausente)."""
+        metas = pd.concat(
+            [df_metas_consultor, pd.DataFrame({"LOJA": ["C"], "META_PRATA": [800.0]})],
+            ignore_index=True,
+        )
+        rk = calcular_ranking_consultores(
+            df_rank, pd.DataFrame(), df_universo=univ_consultores,
+            df_metas_consultor=metas,
+        )
+        by = {r["Consultor"]: r for _, r in rk.iterrows()}
+        assert by["Ana"]["Pontos"] == 0
+        assert by["Ana"]["Loja"] == "C"  # loja de cadastro, não vazia
+        # meta_individual_por_loja confirma que "C" mapeia para a meta
+        # real (800), não para 0 por ausência de loja:
+        assert meta_individual_por_loja(
+            pd.Series(["C"]), metas
+        ).iloc[0] == pytest.approx(800.0)
+        assert by["Ana"]["Atingimento %"] == 0.0  # 0 pontos / 800 = 0%
 
     def test_exclui_supervisores(self, df_rank):
         sup = pd.DataFrame({"SUPERVISOR": ["Pedro"]})
@@ -143,6 +232,98 @@ class TestCalcularRankingPontos:
         # B 460 > A 400
         assert rk.iloc[0]["Loja"] == "B"
         assert rk.iloc[0]["Pontos"] == pytest.approx(460.0)
+
+
+@pytest.mark.unit
+class TestAgruparLojaDoConsultor:
+    """A coluna ``Loja`` (escopo consultor) virou a CHAVE da meta
+    individual — precisa ser a de MAIOR pontuação no período, com
+    desempate alfabético, e não mais a primeira linha na ordem de
+    chegada. Exercitada via ``calcular_ranking_pontos`` (expõe a
+    coluna ``Loja`` sem precisar de metas)."""
+
+    def test_loja_e_a_de_maior_pontuacao_independente_da_ordem(self):
+        # Loja Z vem PRIMEIRO nas linhas e tem MENOS pontos isolada,
+        # mas a soma dela (10 + 40 = 50) supera a loja A (5) — as
+        # linhas estão em ordem "errada" de propósito.
+        df = pd.DataFrame({
+            "LOJA":      ["Z", "A", "Z"],
+            "CONSULTOR": ["Ana", "Ana", "Ana"],
+            "VALOR":     [100.0, 50.0, 200.0],
+            "pontos":    [10.0, 5.0, 40.0],
+        })
+        rk = calcular_ranking_pontos(df, tipo="consultor")
+        assert rk.iloc[0]["Loja"] == "Z"
+
+    def test_empate_exato_resolve_por_ordem_alfabetica(self):
+        df = pd.DataFrame({
+            "LOJA":      ["Z", "A"],
+            "CONSULTOR": ["Ana", "Ana"],
+            "VALOR":     [100.0, 100.0],
+            "pontos":    [30.0, 30.0],
+        })
+        rk = calcular_ranking_pontos(df, tipo="consultor")
+        assert rk.iloc[0]["Loja"] == "A"
+
+    def test_ordem_das_linhas_trocada_nao_muda_o_resultado(self):
+        # Mesmos dados do teste acima, linhas em ordem inversa.
+        df = pd.DataFrame({
+            "LOJA":      ["A", "Z"],
+            "CONSULTOR": ["Ana", "Ana"],
+            "VALOR":     [100.0, 100.0],
+            "pontos":    [30.0, 30.0],
+        })
+        rk = calcular_ranking_pontos(df, tipo="consultor")
+        assert rk.iloc[0]["Loja"] == "A"
+
+
+@pytest.mark.unit
+class TestMetaIndividualPorLoja:
+    """``meta_individual_por_loja`` — lookup puro, sem fallback."""
+
+    def test_lookup_simples(self):
+        lojas = pd.Series(["A", "B", "A"])
+        metas = pd.DataFrame({"LOJA": ["A", "B"], "META_PRATA": [500.0, 1500.0]})
+        out = meta_individual_por_loja(lojas, metas)
+        assert out.tolist() == [500.0, 1500.0, 500.0]
+
+    def test_lojas_none_devolve_series_vazia(self):
+        metas = pd.DataFrame({"LOJA": ["A"], "META_PRATA": [1.0]})
+        out = meta_individual_por_loja(None, metas)
+        assert out.empty
+
+    def test_frame_de_metas_none_devolve_zeros(self):
+        out = meta_individual_por_loja(pd.Series(["A", "B"]), None)
+        assert out.tolist() == [0.0, 0.0]
+
+    def test_frame_de_metas_vazio_devolve_zeros(self):
+        out = meta_individual_por_loja(pd.Series(["A"]), pd.DataFrame())
+        assert out.tolist() == [0.0]
+
+    def test_coluna_loja_ausente_devolve_zeros(self):
+        metas = pd.DataFrame({"META_PRATA": [500.0]})
+        out = meta_individual_por_loja(pd.Series(["A"]), metas)
+        assert out.tolist() == [0.0]
+
+    def test_coluna_meta_prata_ausente_devolve_zeros(self):
+        metas = pd.DataFrame({"LOJA": ["A"]})
+        out = meta_individual_por_loja(pd.Series(["A"]), metas)
+        assert out.tolist() == [0.0]
+
+    def test_loja_ausente_do_frame_devolve_zero_so_para_ela(self):
+        metas = pd.DataFrame({"LOJA": ["A"], "META_PRATA": [500.0]})
+        out = meta_individual_por_loja(pd.Series(["A", "X"]), metas)
+        assert out.tolist() == [500.0, 0.0]
+
+    def test_meta_nula_vira_zero(self):
+        metas = pd.DataFrame({"LOJA": ["A"], "META_PRATA": [None]})
+        out = meta_individual_por_loja(pd.Series(["A"]), metas)
+        assert out.tolist() == [0.0]
+
+    def test_meta_zero_permanece_zero(self):
+        metas = pd.DataFrame({"LOJA": ["A"], "META_PRATA": [0.0]})
+        out = meta_individual_por_loja(pd.Series(["A"]), metas)
+        assert out.tolist() == [0.0]
 
 
 @pytest.mark.unit
