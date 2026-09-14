@@ -18,10 +18,12 @@ from src.config.settings import (  # noqa: F401  (PACK_SPLIT_LABELS reexportado)
     PRODUTOS_EMISSAO,
 )
 from src.dashboard.kpis.gerais import (
+    mascaras_aceleradores,
     contar_consultores,
     excluir_supervisores,
 )
 from src.shared.dias_uteis import calcular_dias_uteis
+from src.shared.texto import normalizar_rotulo
 
 # Nome da coluna derivada que substitui ``grupo_dashboard`` nas visoes
 # sem meta (listagens, rankings, distribuicao, detalhe dos cards).
@@ -239,24 +241,28 @@ def _mascaras_aceleradores(
     de fora por nao ser Novo nem Refin).
     """
 
-    def _flag(col: str) -> pd.Series:
-        return df.get(col, pd.Series(False, index=df.index)).fillna(False).astype(bool)
-
     def _norm(col: str) -> pd.Series:
-        return df[col].astype(str).str.strip().str.upper()
+        return normalizar_rotulo(df[col])
 
-    mask_bmg = _flag("is_bmg_med")
-    mask_seg = _flag("is_seguro_vida")
-    mask_em = (
-        df["TIPO_PRODUTO"].str.upper().isin({p.upper() for p in PRODUTOS_EMISSAO})
-        if "TIPO_PRODUTO" in df.columns
-        else pd.Series(False, index=df.index)
-    )
-    mask_sc = (
-        df["SUBTIPO"].str.strip().str.upper() == "SUPER CONTA"
-        if "SUBTIPO" in df.columns
-        else pd.Series(False, index=df.index)
-    )
+    # Os quatro primeiros vem de `mascaras_aceleradores` (kpis/gerais),
+    # a fonte unica da definicao. Ate 09/2026 eram reimplementados aqui
+    # com o mesmo texto: as duas superficies concordavam por
+    # coincidencia, e uma mudanca de regra num lado deixaria a outra
+    # para tras (ver docs/agents/business-rules.md).
+    #
+    # Uma diferenca desaparece nessa juncao, na direcao certa: para
+    # Super Conta, aquela funcao prefere a flag canonica
+    # `is_super_conta` (derivada em `kpis/consolidacao.py`) e so cai
+    # para o SUBTIPO quando o frame nao a traz. Aqui o SUBTIPO era a
+    # UNICA fonte — o que dava o mesmo resultado hoje, porque a
+    # derivacao e identica, mas deixaria de dar no dia em que a regra
+    # de Super Conta mudar na consolidacao.
+    aceleradores = mascaras_aceleradores(df)
+    mask_bmg = aceleradores["BMG Med"]
+    mask_seg = aceleradores["Vida Familiar"]
+    mask_em = aceleradores["Emissao"]
+    mask_sc = aceleradores["Super Conta"]
+
     mask_clt = (
         (df["categoria_codigo"] == "CONSIG_PRIV")
         & (_norm("TIPO OPER.") != "SEGURO PRESTAMISTA")
