@@ -101,7 +101,18 @@ configuracao/                  ← planilhas auxiliares (HC, lojas, supervisores
    `obter_kpis_periodo` foi decomposta em **seis** funções `obter_*_periodo`
    independentes, cada uma com o seu par `_<grupo>_cache` / `_<grupo>_chave`
    em `st.session_state`, todas invalidadas pela mesma `_chave_kpis`
-   `(mes, ano, role, escopo, filtros de UI)`. `app.py` as chama assim:
+   `(mes, ano, role, escopo, filtros de UI, revisão dos dados)`.
+
+   Os componentes de perfil/escopo/filtro são a fronteira de
+   **segurança**; o 7º — `revisao`, uma impressão digital barata das
+   entradas de cada função (`_revisao_entradas`) — é a de
+   **atualidade**. Sem ele a chave só mudava quando o *usuário* mexia em
+   algo, e dado novo chegando sozinho (fim do TTL de `consolidar_dados`,
+   30 min no mês corrente) não invalidava nada: a tela seguia no número
+   da carga anterior até alguém tocar num filtro. Ver
+   [progress/2026-09-14-etapa1-rls-e-caches.md](progress/2026-09-14-etapa1-rls-e-caches.md).
+
+   `app.py` as chama assim:
 
    6a. **Logo após o RLS** — só `obter_kpis_gerais_periodo(...)` → `kpis`.
        É o único grupo de que os dois early-returns seguintes precisam.

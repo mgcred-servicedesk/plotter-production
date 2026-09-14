@@ -13,10 +13,59 @@ Perfis:
     consultor         → filtra por CONSULTOR (escopo = nomes)
 """
 
-from typing import Optional
+from typing import Mapping, NamedTuple, Optional
 
 import pandas as pd
 import streamlit as st
+
+
+class DecisaoRls(NamedTuple):
+    """Decisao de autorizacao, SEM o DataFrame na jogada.
+
+    Tres estados possiveis, e so tres:
+
+    - ``global_=True`` — admin/gestor, sem recorte;
+    - ``coluna`` preenchida — recortar por ``coluna in escopo``;
+    - ambos vazios — **negar**: perfil ausente, escopo vazio ou role
+      desconhecido.
+
+    Existe porque a decisao de QUEM ve o que estava escrita duas vezes,
+    e as duas divergiram: ``aplicar_rls`` negava acesso sem escopo,
+    enquanto o recorte de Reconquista (``loaders._filtro_rls_reconquista``)
+    devolvia a base inteira no mesmo caso. Com a decisao em um lugar so,
+    cada adaptador de dataset fica responsavel apenas pela parte que e
+    dele: se a coluna de escopo nao existe NAQUELE frame, ele nega.
+    """
+
+    global_: bool
+    coluna: Optional[str]
+    escopo: tuple
+
+
+def decidir_rls(colunas_por_perfil: Mapping[str, str]) -> DecisaoRls:
+    """Resolve o recorte do perfil efetivo, dado o mapa role -> coluna.
+
+    ``colunas_por_perfil`` e do CHAMADOR porque o nome da coluna muda
+    com o dataset (``REGIAO``/``LOJA``/``CONSULTOR`` nos frames do
+    dashboard; ``regiao``/``loja``/``consultor`` minusculos na view de
+    Reconquista). A regra de autorizacao, essa, e a mesma para todos.
+
+    Fail-closed em toda ausencia de informacao — ver ``DecisaoRls``.
+    """
+    perfil = _obter_perfil_efetivo()
+    if not perfil:
+        return DecisaoRls(False, None, ())
+
+    role = perfil.get("perfil")
+    if role in ("admin", "gestor"):
+        return DecisaoRls(True, None, ())
+
+    escopo = perfil.get("escopo") or []
+    coluna = colunas_por_perfil.get(role)
+    if not escopo or coluna is None:
+        return DecisaoRls(False, None, ())
+
+    return DecisaoRls(False, coluna, tuple(escopo))
 
 
 def _obter_perfil_efetivo() -> Optional[dict]:
@@ -29,7 +78,7 @@ def _obter_perfil_efetivo() -> Optional[dict]:
         return None
 
     visualizar_como = st.session_state.get("visualizar_como")
-    if visualizar_como and usuario["perfil"] in ("admin", "gestor"):
+    if visualizar_como and usuario.get("perfil") in ("admin", "gestor"):
         return visualizar_como
 
     return usuario
@@ -54,17 +103,6 @@ def aplicar_rls(
     Returns:
         DataFrame filtrado conforme o perfil do usuário.
     """
-    perfil = _obter_perfil_efetivo()
-    if not perfil:
-        return df
-
-    role = perfil["perfil"]
-    escopo = perfil.get("escopo", [])
-
-    # Admin e gestao: visao global (sem filtro).
-    if role in ("admin", "gestor"):
-        return df
-
     # Demais perfis SEMPRE exigem escopo. Fail-closed: sem escopo,
     # coluna de escopo ausente ou perfil desconhecido => nao expoe
     # nada (DataFrame vazio), nunca a base inteira. A obrigatoriedade
@@ -81,16 +119,20 @@ def aplicar_rls(
         if coluna_regiao_atual in df.columns
         else coluna_regiao
     )
-    coluna_por_perfil = {
+    decisao = decidir_rls({
         "gerente_comercial": col_gerente,
         "supervisor": coluna_loja,
         "consultor": coluna_consultor,
-    }
-    coluna = coluna_por_perfil.get(role)
-    if not escopo or coluna is None or coluna not in df.columns:
+    })
+
+    # Admin e gestao: visao global (sem filtro).
+    if decisao.global_:
+        return df
+
+    if decisao.coluna is None or decisao.coluna not in df.columns:
         return df.iloc[0:0].copy()
 
-    return df[df[coluna].isin(escopo)].copy()
+    return df[df[decisao.coluna].isin(decisao.escopo)].copy()
 
 
 def aplicar_rls_metas(
@@ -111,9 +153,9 @@ def aplicar_rls_metas(
     """
     perfil = _obter_perfil_efetivo()
     if not perfil:
-        return df_metas
+        return df_metas.iloc[0:0].copy()
 
-    role = perfil["perfil"]
+    role = perfil.get("perfil")
     escopo = perfil.get("escopo", [])
 
     if role in ("admin", "gestor"):
@@ -129,12 +171,12 @@ def aplicar_rls_metas(
         )
         if col in df_metas.columns:
             return df_metas[df_metas[col].isin(escopo)].copy()
-        return df_metas
+        return df_metas.iloc[0:0].copy()
 
     if role == "supervisor" and escopo:
         if coluna_loja in df_metas.columns:
             return df_metas[df_metas[coluna_loja].isin(escopo)].copy()
-        return df_metas
+        return df_metas.iloc[0:0].copy()
 
     if role == "consultor" and escopo:
         # Escopo do consultor é por nome; aproxima o escopo de loja
@@ -148,7 +190,7 @@ def aplicar_rls_metas(
             return df_metas[
                 df_metas[coluna_loja].isin(lojas_permitidas)
             ].copy()
-        return df_metas
+        return df_metas.iloc[0:0].copy()
 
     # Fail-closed: perfil sem escopo (ou desconhecido) nao ve metas.
     return df_metas.iloc[0:0].copy()
@@ -165,9 +207,9 @@ def aplicar_rls_supervisores(
     """
     perfil = _obter_perfil_efetivo()
     if not perfil:
-        return df_supervisores
+        return df_supervisores.iloc[0:0].copy()
 
-    role = perfil["perfil"]
+    role = perfil.get("perfil")
     escopo = perfil.get("escopo", [])
 
     if role in ("admin", "gestor"):
@@ -178,7 +220,10 @@ def aplicar_rls_supervisores(
             return df_supervisores[df_supervisores[coluna_regiao].isin(escopo)].copy()
 
     if role == "supervisor" and escopo:
-        if coluna_loja in df_supervisores.columns:
+        if (
+            coluna_loja in df_supervisores.columns
+            and coluna_loja in df_dados.columns
+        ):
             lojas_permitidas = df_dados[coluna_loja].unique()
             return df_supervisores[
                 df_supervisores[coluna_loja].isin(lojas_permitidas)
@@ -209,9 +254,13 @@ def obter_regioes_permitidas(
     """
     perfil = _obter_perfil_efetivo()
     if not perfil:
-        return regioes_disponiveis
+        # Fail-closed como as `aplicar_rls_*`: sem perfil nao se
+        # monta o seletor. `[]` ja e o valor de "nao exibe filtro de
+        # regiao" (mesmo retorno de supervisor/consultor); antes daqui
+        # saia a lista completa de regioes da empresa.
+        return []
 
-    role = perfil["perfil"]
+    role = perfil.get("perfil")
     escopo = perfil.get("escopo", [])
 
     if role in ("admin", "gestor"):

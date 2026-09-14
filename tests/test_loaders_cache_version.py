@@ -2,7 +2,7 @@
 Catraca estrutural: todo wrapper ``@st.cache_data`` de
 ``src/dashboard/loaders.py`` que DELEGA por uma linha
 (``return _fetch_algo(...)`` / ``return _executar_algo(...)``) precisa
-aceitar ``_cache_version``.
+aceitar ``cache_version``.
 
 ## Por que isso existe
 
@@ -24,17 +24,20 @@ DataFrame do formato ANTIGO (7 colunas, sem ``META_PRATA``) por até 6h
 (24h no histórico). Todo consumidor lia "sem meta" e caía no caminho de
 meta 0. A suíte de testes (que chama o código puro, sem
 ``st.cache_data`` no meio) nunca teria pego isso — daí o teste-catraca
-aqui: ele audita a ASSINATURA dos wrappers, não o resultado.
+aqui: ele audita a ASSINATURA dos wrappers. Os testes comportamentais
+também verificam que a mudança de versão realmente executa novo fetch.
 
 A correção pontual (`_metas_produto_consultor_atual`/`_historico` com
-`_cache_version: int = 1`) já foi aplicada em ``src/`` fora desta
+`cache_version: int = 1`) já foi aplicada em ``src/`` fora desta
 tarefa — mesmo padrão que ``_consolidar_atual``/``_historico`` já
-usavam (``_cache_version=4``).
+usavam (``cache_version=4``). O argumento deve ser ``cache_version``,
+sem underscore inicial: a Streamlit exclui argumentos prefixados por
+underscore do hash, mesmo quando passados explicitamente pelo chamador.
 
 ## O tamanho real do problema — e por que a maioria fica de fora
 
 Auditoria via AST (2026-09-11): dos wrappers cacheados que delegam por
-uma linha, **25** ainda NÃO têm ``_cache_version`` — a mesma bomba-relógio
+uma linha, **25** ainda NÃO têm ``cache_version`` — a mesma bomba-relógio
 esperando o próximo `_fetch_*` mudar de formato. Corrigi-los AGORA
 invalidaria o cache de produção para todo mundo de uma vez (o mesmo
 efeito colateral, só que espalhado por 25 fontes de dado ao mesmo
@@ -42,7 +45,7 @@ tempo) — fora do escopo desta tarefa, que é fechar a lacuna de
 cobertura, não pagar a dívida. Por isso ``ALLOWLIST_DIVIDA_CONHECIDA``
 existe: um wrapper nela é dívida DOCUMENTADA e aceita; um wrapper NOVO
 fora dela quebra o teste. A lista só pode ENCOLHER — quando alguém
-adiciona ``_cache_version`` de verdade a um desses (pagando a dívida),
+adiciona ``cache_version`` de verdade a um desses (pagando a dívida),
 ``test_allowlist_fica_honesta_quando_a_divida_e_paga`` força a remoção
 do nome da lista, para ela nunca virar papel.
 """
@@ -50,13 +53,14 @@ import ast
 import inspect
 import pathlib
 
+import pandas as pd
 import pytest
 
 from src.dashboard import loaders
 
 # Divida PRE-EXISTENTE (auditoria de 2026-09-11, ver docstring do
 # módulo): wrappers @st.cache_data de uma linha que delegam para um
-# `_fetch_*`/executor sem `_cache_version`. NAO adicionar nomes aqui
+# `_fetch_*`/executor sem `cache_version`. NAO adicionar nomes aqui
 # para "abafar" um wrapper novo que devia ter sido versionado desde o
 # início — isso é o próprio bug do incidente se repetindo. Só encolhe.
 ALLOWLIST_DIVIDA_CONHECIDA = frozenset({
@@ -101,7 +105,7 @@ def _e_delegacao_de_uma_linha(corpo: list[ast.stmt]) -> bool:
 
 
 def _wrappers_cache_data_que_delegam() -> dict[str, bool]:
-    """Nome -> True se a assinatura tem ``_cache_version``, para toda
+    """Nome -> True se a assinatura tem ``cache_version``, para toda
     função de ``loaders.py`` decorada com ``@st.cache_data`` cujo corpo
     é uma delegação de uma linha (ver ``_e_delegacao_de_uma_linha``).
 
@@ -136,7 +140,7 @@ def _wrappers_cache_data_que_delegam() -> dict[str, bool]:
         nomes_arg = {a.arg for a in node.args.args} | {
             a.arg for a in node.args.kwonlyargs
         }
-        resultado[node.name] = "_cache_version" in nomes_arg
+        resultado[node.name] = "cache_version" in nomes_arg
 
     return resultado
 
@@ -152,10 +156,10 @@ class TestCatracaCacheVersionEmWrappersQueDelegam:
         assert not novos, (
             f"Wrapper(s) {sorted(novos)} decorado(s) com @st.cache_data "
             "delegam por uma linha para um _fetch_*/executor SEM "
-            "`_cache_version` — mesmo bug do incidente de 09/2026 (ranking "
+            "`cache_version` — mesmo bug do incidente de 09/2026 (ranking "
             "de consultores 0% para todo mundo; HELP PENHA com meta "
             "individual real de 360.000 mas o app lendo formato antigo "
-            "do cache por até 6h). Adicione `_cache_version: int = 1` à "
+            "do cache por até 6h). Adicione `cache_version: int = 1` à "
             "assinatura (ver `_metas_produto_consultor_atual` como "
             "referência) e passe-o explicitamente no dispatcher "
             "`carregar_*`. Se for dívida conhecida e deliberada (não "
@@ -165,7 +169,7 @@ class TestCatracaCacheVersionEmWrappersQueDelegam:
         )
 
     def test_allowlist_fica_honesta_quando_a_divida_e_paga(self):
-        """Nome na allowlist que já tem `_cache_version` (ou deixou de
+        """Nome na allowlist que já tem `cache_version` (ou deixou de
         delegar por uma linha) precisa SAIR da lista — senão ela vira
         papel e ninguém percebe quando a dívida real encolheu."""
         wrappers = _wrappers_cache_data_que_delegam()
@@ -173,14 +177,14 @@ class TestCatracaCacheVersionEmWrappersQueDelegam:
         resolvidos = ALLOWLIST_DIVIDA_CONHECIDA - sem_versao
         assert not resolvidos, (
             f"{sorted(resolvidos)} não está mais na situação de risco "
-            "(já tem `_cache_version` ou não delega mais por uma linha) "
+            "(já tem `cache_version` ou não delega mais por uma linha) "
             "mas ainda consta em ALLOWLIST_DIVIDA_CONHECIDA — remova o(s) "
             "nome(s) da lista."
         )
 
     def test_wrappers_ja_protegidos_nao_regridem(self):
         """Os 4 wrappers corrigidos no incidente de 09/2026 continuam
-        com `_cache_version` — trava contra alguém remover o parâmetro
+        com `cache_version` — trava contra alguém remover o parâmetro
         num refactor futuro sem perceber o motivo dele existir."""
         wrappers = _wrappers_cache_data_que_delegam()
         protegidos = {
@@ -191,15 +195,31 @@ class TestCatracaCacheVersionEmWrappersQueDelegam:
         }
         for nome in protegidos:
             assert wrappers.get(nome) is True, (
-                f"{nome} deveria ter `_cache_version` na assinatura"
+                f"{nome} deveria ter `cache_version` na assinatura"
             )
 
-    def test_dispatcher_de_metas_consultor_passa_a_versao_explicitamente(self):
-        """`_cache_version` só protege se o CHAMADOR passar o valor —
+    @pytest.mark.parametrize(
+        "nome_dispatcher,nomes_wrappers",
+        [
+            (
+                "carregar_metas_produto_consultor",
+                ("_metas_produto_consultor_atual",
+                 "_metas_produto_consultor_historico"),
+            ),
+            (
+                "consolidar_dados",
+                ("_consolidar_atual", "_consolidar_historico"),
+            ),
+        ],
+    )
+    def test_dispatcher_passa_a_versao_explicitamente(
+        self, nome_dispatcher, nomes_wrappers,
+    ):
+        """`cache_version` só protege se o CHAMADOR passar o valor —
         um default sozinho na assinatura do wrapper não muda a chave do
         cache dele até alguém de fato invocar com outro valor. O
-        dispatcher (`carregar_metas_produto_consultor`) precisa passar
-        `_cache_version=` explicitamente nas duas chamadas."""
+        dispatcher precisa passar
+        `cache_version=` explicitamente nas duas chamadas."""
         caminho = inspect.getsourcefile(loaders)
         arvore = ast.parse(pathlib.Path(caminho).read_text(encoding="utf-8"))
 
@@ -207,17 +227,56 @@ class TestCatracaCacheVersionEmWrappersQueDelegam:
             node
             for node in ast.walk(arvore)
             if isinstance(node, ast.FunctionDef)
-            and node.name == "carregar_metas_produto_consultor"
+            and node.name == nome_dispatcher
         )
         chamadas_versionadas = [
             call
             for call in ast.walk(dispatcher)
             if isinstance(call, ast.Call)
             and isinstance(call.func, ast.Name)
-            and call.func.id in (
-                "_metas_produto_consultor_atual",
-                "_metas_produto_consultor_historico",
-            )
-            and any(kw.arg == "_cache_version" for kw in call.keywords)
+            and call.func.id in nomes_wrappers
+            and any(kw.arg == "cache_version" for kw in call.keywords)
         ]
         assert len(chamadas_versionadas) == 2
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "nome_wrapper,nome_fetch,versao",
+    [
+        ("_metas_produto_consultor_atual", "_fetch_metas_produto_consultor", 1),
+        ("_metas_produto_consultor_historico", "_fetch_metas_produto_consultor", 1),
+        ("_consolidar_atual", "_executar_consolidacao", 4),
+        ("_consolidar_historico", "_executar_consolidacao", 4),
+    ],
+)
+def test_versao_invalida_cache_real(
+    monkeypatch, nome_wrapper, nome_fetch, versao,
+):
+    """Mesma versao reutiliza o fetch; outra versao recalcula o frame."""
+    chamadas = []
+
+    def fetch_fake(mes, ano):
+        chamadas.append((mes, ano))
+        frame = pd.DataFrame({"VALOR": [len(chamadas)]})
+        if nome_fetch == "_executar_consolidacao":
+            return frame, pd.DataFrame(), pd.DataFrame(), None
+        return frame
+
+    monkeypatch.setattr(loaders, nome_fetch, fetch_fake)
+    wrapper = getattr(loaders, nome_wrapper)
+    wrapper.clear()
+    try:
+        primeiro = wrapper(9, 2026, versao)
+        repetido = wrapper(9, 2026, versao)
+        assert chamadas == [(9, 2026)]
+        atualizado = wrapper(9, 2026, versao + 1)
+        assert chamadas == [(9, 2026), (9, 2026)]
+        if nome_fetch == "_executar_consolidacao":
+            primeiro, repetido, atualizado = (
+                primeiro[0], repetido[0], atualizado[0]
+            )
+        pd.testing.assert_frame_equal(primeiro, repetido)
+        assert atualizado["VALOR"].tolist() == [2]
+    finally:
+        wrapper.clear()

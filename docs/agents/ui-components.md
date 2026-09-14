@@ -236,9 +236,9 @@ por uma única aba, ele é carregado *dentro* dela (lazy), não em
 Nesse caso a aba executa a cadeia inteira — `consolidar_dados` →
 `aplicar_nomes_display_produto` → `aplicar_rls` → `aplicar_filtros_ui` —
 e memoiza o resultado em `st.session_state` sob uma chave que **precisa**
-carregar os mesmos seis componentes de `_chave_kpis` (período, perfil
-efetivo, escopo, filtro de lojas ordenado, filtro de consultor): a chave
-é a fronteira entre perfis. Único caso hoje:
+carregar os mesmos componentes de segurança de `_chave_kpis` (período,
+perfil efetivo, escopo, filtro de lojas ordenado, filtro de consultor):
+a chave é a fronteira entre perfis. Único caso hoje:
 `tabs/produtos.py::_carregar_mes_comparativo` (mês anterior e mesmo mês
 do ano anterior, para as curvas do gráfico acumulado e do heatmap).
 

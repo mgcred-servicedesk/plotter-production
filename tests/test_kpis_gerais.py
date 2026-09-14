@@ -28,6 +28,7 @@ from src.dashboard.kpis.gerais import (
     PRODUTOS_DASHBOARD,
     KpisPipeline,
     _chave_kpis,
+    _revisao_entradas,
     calcular_assertividade_consultores,
     calcular_kpis_analise,
     calcular_kpis_cancelados,
@@ -941,6 +942,45 @@ def _kwargs_kpis_qtd(
     )
 
 
+# Entradas que compoem a REVISAO (7o componente de `_chave_kpis`) de
+# cada `obter_*_periodo` — espelha, por nome de parametro, o que a
+# funcao passa a `_revisao_entradas`. Fica aqui, e nao inline em cada
+# teste, para que uma entrada nova esquecida em `gerais.py` apareca
+# como chave divergente num unico lugar.
+_ENTRADAS_REVISAO = {
+    "_kpis_gerais_chave": (
+        "df", "df_metas", "df_metas_produto", "df_sup", "dia_atual",
+    ),
+    "_kpis_pipeline_chave": (
+        "df", "df_analise", "df_cancelados", "du_decorridos",
+    ),
+    "_medias_chave": ("df", "df_sup", "du_decorridos", "peso_headcount"),
+    "_medias_organizacao_chave": ("df_full", "df_sup_full", "du_decorridos"),
+    "_metas_prod_diarias_chave": (
+        "df", "df_metas", "df_metas_produto", "df_sup", "dia_atual",
+        "du_decorridos",
+    ),
+    "_kpis_qtd_chave": (
+        "df", "df_metas", "df_metas_produto", "df_sup", "df_analise",
+        "df_full", "df_sup_full", "dia_atual", "du_decorridos",
+    ),
+}
+
+
+def _chave_esperada(nome_chave: str, kwargs: dict, ss) -> tuple:
+    """Reconstroi a chave que a `obter_*_periodo` deve ter gravado."""
+    return _chave_kpis(
+        kwargs["mes"],
+        kwargs["ano"],
+        kwargs["role"],
+        kwargs["perfil_efetivo"],
+        ss,
+        _revisao_entradas(
+            *(kwargs.get(n) for n in _ENTRADAS_REVISAO[nome_chave])
+        ),
+    )
+
+
 @pytest.mark.unit
 class TestObterKpisGeraisPeriodo:
     """``obter_kpis_gerais_periodo`` — KPIs gerais do período + o trio
@@ -951,11 +991,12 @@ class TestObterKpisGeraisPeriodo:
         self, df_escopo_a, df_metas_produto_periodo, sem_feriados
     ):
         ss = {}
-        resultado = obter_kpis_gerais_periodo(
-            **_kwargs_gerais(ss, df_escopo_a, _PERFIL_A, df_metas_produto_periodo)
+        kwargs = _kwargs_gerais(
+            ss, df_escopo_a, _PERFIL_A, df_metas_produto_periodo
         )
+        resultado = obter_kpis_gerais_periodo(**kwargs)
 
-        chave_esperada = _chave_kpis(_MES, _ANO, "gerente_comercial", _PERFIL_A, ss)
+        chave_esperada = _chave_esperada("_kpis_gerais_chave", kwargs, ss)
         assert ss.get("_kpis_gerais_chave") == chave_esperada
         assert resultado["total_vendas"] == pytest.approx(1800.0)
         assert ss["_kpis_gerais_cache"]["total_vendas"] == pytest.approx(1800.0)
@@ -1061,11 +1102,10 @@ class TestObterKpisPipelinePeriodo:
 
     def test_cache_miss_dispara_calculo_e_grava_estado(self, df_escopo_a):
         ss = {}
-        resultado = obter_kpis_pipeline_periodo(
-            **_kwargs_pipeline(ss, df_escopo_a, _PERFIL_A)
-        )
+        kwargs = _kwargs_pipeline(ss, df_escopo_a, _PERFIL_A)
+        resultado = obter_kpis_pipeline_periodo(**kwargs)
 
-        chave_esperada = _chave_kpis(_MES, _ANO, "gerente_comercial", _PERFIL_A, ss)
+        chave_esperada = _chave_esperada("_kpis_pipeline_chave", kwargs, ss)
         assert ss.get("_kpis_pipeline_chave") == chave_esperada
         esperado_analise = calcular_kpis_analise(
             _df_analise_periodo(), df_escopo_a, _DU_DECORRIDOS
@@ -1161,9 +1201,10 @@ class TestObterMediasPeriodo:
 
     def test_cache_miss_dispara_calculo_e_grava_estado(self, df_escopo_a):
         ss = {}
-        resultado = obter_medias_periodo(**_kwargs_medias(ss, df_escopo_a, _PERFIL_A))
+        kwargs = _kwargs_medias(ss, df_escopo_a, _PERFIL_A)
+        resultado = obter_medias_periodo(**kwargs)
 
-        chave_esperada = _chave_kpis(_MES, _ANO, "gerente_comercial", _PERFIL_A, ss)
+        chave_esperada = _chave_esperada("_medias_chave", kwargs, ss)
         assert ss.get("_medias_chave") == chave_esperada
         esperado = calcular_medias_du_por_nivel(
             df_escopo_a, _DU_DECORRIDOS, _df_sup_vazio()
@@ -1405,11 +1446,12 @@ class TestObterMediasOrganizacaoPeriodo:
 
     def test_cache_miss_dispara_calculo_e_grava_estado(self, df_escopo_a):
         ss = {}
-        resultado = obter_medias_organizacao_periodo(
-            **_kwargs_medias_organizacao(ss, df_escopo_a, _PERFIL_A)
-        )
+        kwargs = _kwargs_medias_organizacao(ss, df_escopo_a, _PERFIL_A)
+        resultado = obter_medias_organizacao_periodo(**kwargs)
 
-        chave_esperada = _chave_kpis(_MES, _ANO, "gerente_comercial", _PERFIL_A, ss)
+        chave_esperada = _chave_esperada(
+            "_medias_organizacao_chave", kwargs, ss
+        )
         assert ss.get("_medias_organizacao_chave") == chave_esperada
         esperado = calcular_medias_organizacao(
             df_escopo_a, du_decorridos=_DU_DECORRIDOS,
@@ -1543,13 +1585,14 @@ class TestObterMetasProdDiariasPeriodo:
         self, df_escopo_a, df_metas_produto_periodo, sem_feriados
     ):
         ss = {}
-        resultado = obter_metas_prod_diarias_periodo(
-            **_kwargs_metas_prod_diarias(
-                ss, df_escopo_a, _PERFIL_A, df_metas_produto_periodo
-            )
+        kwargs = _kwargs_metas_prod_diarias(
+            ss, df_escopo_a, _PERFIL_A, df_metas_produto_periodo
         )
+        resultado = obter_metas_prod_diarias_periodo(**kwargs)
 
-        chave_esperada = _chave_kpis(_MES, _ANO, "gerente_comercial", _PERFIL_A, ss)
+        chave_esperada = _chave_esperada(
+            "_metas_prod_diarias_chave", kwargs, ss
+        )
         assert ss.get("_metas_prod_diarias_chave") == chave_esperada
         kpis_gerais = calcular_kpis_gerais(
             df_escopo_a, _df_metas(), df_metas_produto_periodo,
@@ -1685,13 +1728,12 @@ class TestObterKpisQtdPeriodo:
         self, df_escopo_a, df_metas_produto_periodo, sem_feriados
     ):
         ss = {}
-        resultado = obter_kpis_qtd_periodo(
-            **_kwargs_kpis_qtd(
-                ss, df_escopo_a, _PERFIL_A, df_metas_produto_periodo, df_escopo_a
-            )
+        kwargs = _kwargs_kpis_qtd(
+            ss, df_escopo_a, _PERFIL_A, df_metas_produto_periodo, df_escopo_a
         )
+        resultado = obter_kpis_qtd_periodo(**kwargs)
 
-        chave_esperada = _chave_kpis(_MES, _ANO, "gerente_comercial", _PERFIL_A, ss)
+        chave_esperada = _chave_esperada("_kpis_qtd_chave", kwargs, ss)
         assert ss.get("_kpis_qtd_chave") == chave_esperada
         kpis_gerais = calcular_kpis_gerais(
             df_escopo_a, _df_metas(), df_metas_produto_periodo,
@@ -1920,3 +1962,182 @@ class TestLimparCacheKpis:
         ss = {}
         limpar_cache_kpis(ss)
         assert ss == {}
+
+
+@pytest.mark.unit
+class TestRevisaoDosDadosNasSeisFuncoes:
+    """O 7º componente da chave, exercitado ponta a ponta.
+
+    O bug que estes testes travam: a chave só tinha período, perfil,
+    escopo e filtros de UI — todos componentes que **o usuário** muda.
+    Dado novo chegando sozinho (fim do TTL de ``consolidar_dados``, 30
+    min no mês corrente; upload do angry-man; correção do ETL) não
+    mexia em nenhum deles, então as seis ``obter_*_periodo`` seguiam
+    devolvendo o número da carga anterior até alguém tocar num filtro.
+
+    Reprodução original, antes da correção: ``obter_kpis_gerais_periodo``
+    com 1 linha de R$ 100 devolvia ``total_vendas == 100``; a chamada
+    seguinte, com 2 linhas somando R$ 200, devolvia 100 de novo.
+
+    Cada teste chama DUAS vezes com o MESMO ``session_state``, o MESMO
+    perfil e a MESMA sidebar — só o dado muda.
+    """
+
+    def _df_com_linha_extra(self, df):
+        """Mesmo escopo (loja A, região R1), um contrato a mais — é o
+        que uma recarga no meio do mês traz."""
+        extra = df.iloc[[0]].copy()
+        extra["CONSULTOR"] = ["Carlos"]
+        extra["VALOR"] = [700.0]
+        extra["pontos"] = [70.0]
+        return pd.concat([df, extra], ignore_index=True)
+
+    def test_gerais_reflete_contrato_novo(
+        self, df_escopo_a, df_metas_produto_periodo, sem_feriados
+    ):
+        ss = {}
+        antes = obter_kpis_gerais_periodo(
+            **_kwargs_gerais(
+                ss, df_escopo_a, _PERFIL_A, df_metas_produto_periodo
+            )
+        )
+        assert antes["total_vendas"] == pytest.approx(1800.0)
+
+        depois = obter_kpis_gerais_periodo(
+            **_kwargs_gerais(
+                ss,
+                self._df_com_linha_extra(df_escopo_a),
+                _PERFIL_A,
+                df_metas_produto_periodo,
+            )
+        )
+        assert depois["total_vendas"] == pytest.approx(2500.0)
+
+    def test_gerais_reflete_meta_corrigida(
+        self, df_escopo_a, df_metas_produto_periodo, sem_feriados
+    ):
+        """Mesmo contrato, meta de produto corrigida no Supabase — o
+        frame de metas muda sem o ``df`` mudar."""
+        ss = {}
+        obter_kpis_gerais_periodo(
+            **_kwargs_gerais(
+                ss, df_escopo_a, _PERFIL_A, df_metas_produto_periodo
+            )
+        )
+
+        metas_dobradas = df_metas_produto_periodo.copy()
+        metas_dobradas["CNC"] = metas_dobradas["CNC"] * 2
+        depois = obter_kpis_gerais_periodo(
+            **_kwargs_gerais(ss, df_escopo_a, _PERFIL_A, metas_dobradas)
+        )
+        # meta_mix = CNC 6000 + SAQUE 2000
+        assert depois["meta_global_valor"] == pytest.approx(8000.0)
+
+    def test_gerais_reflete_nova_data_de_referencia(
+        self, df_escopo_a, df_metas_produto_periodo, sem_feriados
+    ):
+        """``dia_atual`` é a data de referência da apuração: avança
+        sozinho com o dado (é o último dia com produção), sem o usuário
+        mexer em nada. Fora da chave, a projeção ficava no dia anterior."""
+        ss = {}
+        kwargs = _kwargs_gerais(
+            ss, df_escopo_a, _PERFIL_A, df_metas_produto_periodo
+        )
+        obter_kpis_gerais_periodo(**kwargs)
+        chave_dia_15 = ss["_kpis_gerais_chave"]
+
+        obter_kpis_gerais_periodo(**{**kwargs, "dia_atual": _DIA_ATUAL + 1})
+        assert ss["_kpis_gerais_chave"] != chave_dia_15
+
+    def test_pipeline_reflete_cancelamento_novo(self, df_escopo_a):
+        ss = {}
+        kwargs = _kwargs_pipeline(ss, df_escopo_a, _PERFIL_A)
+        antes = obter_kpis_pipeline_periodo(**kwargs)
+        assert antes.kpis_cancel["valor_cancelados"] == pytest.approx(100.0)
+
+        cancelados_novos = pd.DataFrame({
+            "VALOR": [100.0, 400.0],
+            "CLASSIFICACAO": ["liquido", "liquido"],
+        })
+        depois = obter_kpis_pipeline_periodo(
+            **{**kwargs, "df_cancelados": cancelados_novos}
+        )
+        assert depois.kpis_cancel["valor_cancelados"] == pytest.approx(500.0)
+
+    def test_medias_refletem_producao_nova(self, df_escopo_a):
+        ss = {}
+        kwargs = _kwargs_medias(ss, df_escopo_a, _PERFIL_A)
+        antes = obter_medias_periodo(**kwargs)
+        depois = obter_medias_periodo(
+            **{**kwargs, "df": self._df_com_linha_extra(df_escopo_a)}
+        )
+        assert depois != antes
+
+    def test_medias_organizacao_refletem_producao_nova(self, df_escopo_a):
+        ss = {}
+        kwargs = _kwargs_medias_organizacao(ss, df_escopo_a, _PERFIL_A)
+        antes = obter_medias_organizacao_periodo(**kwargs)
+        depois = obter_medias_organizacao_periodo(
+            **{**kwargs, "df_full": self._df_com_linha_extra(df_escopo_a)}
+        )
+        assert depois != antes
+
+    def test_metas_prod_diarias_refletem_producao_nova(
+        self, df_escopo_a, df_metas_produto_periodo, sem_feriados
+    ):
+        ss = {}
+        kwargs = _kwargs_metas_prod_diarias(
+            ss, df_escopo_a, _PERFIL_A, df_metas_produto_periodo
+        )
+        obter_metas_prod_diarias_periodo(**kwargs)
+        chave_antes = ss["_metas_prod_diarias_chave"]
+
+        obter_metas_prod_diarias_periodo(
+            **{**kwargs, "df": self._df_com_linha_extra(df_escopo_a)}
+        )
+        assert ss["_metas_prod_diarias_chave"] != chave_antes
+
+    def test_kpis_qtd_refletem_producao_nova(
+        self, df_escopo_a, df_metas_produto_periodo, sem_feriados
+    ):
+        ss = {}
+        kwargs = _kwargs_kpis_qtd(
+            ss, df_escopo_a, _PERFIL_A, df_metas_produto_periodo, df_escopo_a
+        )
+        obter_kpis_qtd_periodo(**kwargs)
+        chave_antes = ss["_kpis_qtd_chave"]
+
+        obter_kpis_qtd_periodo(
+            **{**kwargs, "df": self._df_com_linha_extra(df_escopo_a)}
+        )
+        assert ss["_kpis_qtd_chave"] != chave_antes
+
+    def test_dado_identico_ainda_e_cache_hit(
+        self, monkeypatch, df_escopo_a, df_metas_produto_periodo, sem_feriados
+    ):
+        """A contrapartida: a revisão não pode transformar todo rerun em
+        cache miss. Frames com o MESMO conteúdo (objetos diferentes, que
+        é o que ``st.cache_data`` devolve a cada acesso) têm a mesma
+        revisão."""
+        original = kpis_gerais_module.calcular_kpis_gerais
+        chamadas = []
+
+        def _espiao(*args, **kwargs):
+            chamadas.append(1)
+            return original(*args, **kwargs)
+
+        monkeypatch.setattr(
+            kpis_gerais_module, "calcular_kpis_gerais", _espiao
+        )
+
+        ss = {}
+        for _ in range(3):
+            obter_kpis_gerais_periodo(
+                **_kwargs_gerais(
+                    ss,
+                    df_escopo_a.copy(),
+                    _PERFIL_A,
+                    df_metas_produto_periodo.copy(),
+                )
+            )
+        assert len(chamadas) == 1

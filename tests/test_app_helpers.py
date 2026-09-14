@@ -13,9 +13,17 @@ import pytest
 
 from src.dashboard.kpis.gerais import (
     _chave_kpis,
+    _revisao_entradas,
+    _revisao_frame,
     _ritmo_organizacao,
     serie_diaria_pago,
 )
+
+# Revisao fixa para os testes de chave: eles isolam os componentes 1-6,
+# entao o 7o precisa ficar constante entre as chamadas comparadas.
+_DF_BASE = pd.DataFrame({"VALOR": [1.0], "LOJA": ["A"]})
+_DF_MAIOR = pd.DataFrame({"VALOR": [1.0, 2.0], "LOJA": ["A", "B"]})
+_REV = _revisao_entradas(_DF_BASE, 10)
 
 
 @pytest.mark.unit
@@ -101,43 +109,117 @@ class TestChaveKpis:
             "gerente_comercial",
             {"perfil": "gerente_comercial", "escopo": ["R1", "R2"]},
             self._ss(lojas=["B", "A"], consultor="FULANO"),
+            _REV,
         )
         assert chave == (
             6, 2026, "gerente_comercial", ("R1", "R2"), ("A", "B"), "FULANO",
+            _REV,
         )
 
     def test_escopos_distintos_nao_colidem(self):
         """Dois gerentes tem o mesmo role — so o escopo os separa."""
         base = self._ss()
         chave_a = _chave_kpis(
-            6, 2026, "gerente_comercial", {"escopo": ["REGIAO_A"]}, base
+            6, 2026, "gerente_comercial", {"escopo": ["REGIAO_A"]}, base, _REV
         )
         chave_b = _chave_kpis(
-            6, 2026, "gerente_comercial", {"escopo": ["REGIAO_B"]}, base
+            6, 2026, "gerente_comercial", {"escopo": ["REGIAO_B"]}, base, _REV
         )
         assert chave_a != chave_b
 
     def test_role_periodo_e_filtros_invalidam(self):
         args = (6, 2026, "supervisor", {"escopo": ["L1"]})
-        base = _chave_kpis(*args, self._ss())
-        assert base != _chave_kpis(7, 2026, *args[2:], self._ss())
-        assert base != _chave_kpis(6, 2025, *args[2:], self._ss())
-        assert base != _chave_kpis(*args[:2], "consultor", args[3], self._ss())
-        assert base != _chave_kpis(*args, self._ss(lojas=["L1"]))
-        assert base != _chave_kpis(*args, self._ss(consultor="FULANO"))
+        base = _chave_kpis(*args, self._ss(), _REV)
+        assert base != _chave_kpis(7, 2026, *args[2:], self._ss(), _REV)
+        assert base != _chave_kpis(6, 2025, *args[2:], self._ss(), _REV)
+        assert base != _chave_kpis(
+            *args[:2], "consultor", args[3], self._ss(), _REV
+        )
+        assert base != _chave_kpis(*args, self._ss(lojas=["L1"]), _REV)
+        assert base != _chave_kpis(*args, self._ss(consultor="FULANO"), _REV)
+
+    def test_revisao_dos_dados_invalida(self):
+        """O 7o componente: dado novo com a MESMA selecao de UI e
+        perfil precisa mudar a chave — senao a tela segue no numero da
+        carga anterior ate alguem mexer num filtro."""
+        args = (6, 2026, "supervisor", {"escopo": ["L1"]})
+        base = _chave_kpis(*args, self._ss(), _REV)
+        outra = _chave_kpis(
+            *args, self._ss(), _revisao_entradas(_DF_MAIOR, 10),
+        )
+        assert base != outra
 
     def test_lojas_independem_da_ordem_de_selecao(self):
         args = (6, 2026, "gerente_comercial", {"escopo": ["R1"]})
-        assert _chave_kpis(*args, self._ss(lojas=["A", "B"])) == _chave_kpis(
-            *args, self._ss(lojas=["B", "A"])
-        )
+        assert _chave_kpis(
+            *args, self._ss(lojas=["A", "B"]), _REV
+        ) == _chave_kpis(*args, self._ss(lojas=["B", "A"]), _REV)
 
     def test_ausencias_normalizam_sem_colidir_com_valor_real(self):
         """None/ausente vira ()/"" — e nunca igual a um filtro de fato."""
-        vazio = _chave_kpis(6, 2026, None, None, {})
-        assert vazio == (6, 2026, None, (), (), "")
-        assert vazio == _chave_kpis(6, 2026, None, None, self._ss())
+        vazio = _chave_kpis(6, 2026, None, None, {}, _REV)
+        assert vazio == (6, 2026, None, (), (), "", _REV)
+        assert vazio == _chave_kpis(6, 2026, None, None, self._ss(), _REV)
         # perfil sem chave 'escopo' cai no default [] (nao KeyError)
-        assert _chave_kpis(6, 2026, "admin", {"perfil": "admin"}, {}) == (
-            6, 2026, "admin", (), (), "",
+        assert _chave_kpis(6, 2026, "admin", {"perfil": "admin"}, {}, _REV) == (
+            6, 2026, "admin", (), (), "", _REV,
         )
+
+
+@pytest.mark.unit
+class TestRevisaoDosDados:
+    """``_revisao_frame`` / ``_revisao_entradas`` — o 7o componente da
+    chave. Nao e fronteira de seguranca (isso sao os componentes 3-6);
+    e a de ATUALIDADE: sem ela, uma recarga dos loaders no fim do TTL
+    nao invalidava nada e o KPI ficava preso na carga anterior."""
+
+    def test_mesmo_frame_mesma_revisao(self):
+        df = pd.DataFrame({"VALOR": [1.0, 2.0], "LOJA": ["A", "B"]})
+        assert _revisao_frame(df) == _revisao_frame(df.copy())
+
+    def test_linha_a_mais_muda_a_revisao(self):
+        df = pd.DataFrame({"VALOR": [1.0], "LOJA": ["A"]})
+        maior = pd.DataFrame({"VALOR": [1.0, 2.0], "LOJA": ["A", "B"]})
+        assert _revisao_frame(df) != _revisao_frame(maior)
+
+    def test_valor_corrigido_muda_a_revisao(self):
+        """Mesma contagem de linhas, valor diferente — o caso do ETL
+        corrigindo um contrato ja existente."""
+        antes = pd.DataFrame({"VALOR": [100.0], "LOJA": ["A"]})
+        depois = pd.DataFrame({"VALOR": [150.0], "LOJA": ["A"]})
+        assert _revisao_frame(antes) != _revisao_frame(depois)
+
+    def test_coluna_nova_muda_a_revisao(self):
+        """O incidente das metas de nivel (META_PRATA...): o frame
+        ganhou colunas e o consumidor seguia lendo o formato antigo."""
+        antes = pd.DataFrame({"LOJA": ["A"]})
+        depois = pd.DataFrame({"LOJA": ["A"], "META_PRATA": [1.0]})
+        assert _revisao_frame(antes) != _revisao_frame(depois)
+
+    def test_nan_nao_impede_cache_hit(self):
+        """``float('nan') != float('nan')`` — deixado cru, faria a
+        chave nunca mais bater e o cache nunca mais acertar."""
+        df = pd.DataFrame({"VALOR": [float("nan")], "LOJA": ["A"]})
+        assert _revisao_frame(df) == _revisao_frame(df.copy())
+
+    def test_frame_vazio_e_none(self):
+        assert _revisao_frame(None) == ()
+        assert _revisao_frame(pd.DataFrame()) == (0, (), ())
+        # vazio COM schema nao colide com vazio sem schema
+        assert _revisao_frame(
+            pd.DataFrame({"VALOR": []})
+        ) != _revisao_frame(pd.DataFrame())
+
+    def test_escalares_entram_como_estao(self):
+        """``dia_atual`` / ``du_decorridos`` / ``peso_headcount`` sao a
+        "data de referencia" da revisao: mudam o resultado sem mudar
+        nenhum frame."""
+        df = pd.DataFrame({"VALOR": [1.0]})
+        assert _revisao_entradas(df, 10) != _revisao_entradas(df, 11)
+        assert _revisao_entradas(df, None) != _revisao_entradas(df, 0)
+
+    def test_revisao_e_hashavel(self):
+        """A chave inteira vai para comparacao (==) hoje, mas precisa
+        seguir hashavel para nao travar um cache por dict amanha."""
+        df = pd.DataFrame({"VALOR": [1.0], "LOJA": ["A"]})
+        assert hash(_revisao_entradas(df, 10, None)) is not None

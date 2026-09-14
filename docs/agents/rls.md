@@ -65,9 +65,38 @@ exigem escopo (garantido no cadastro — `auth.criar_usuario` /
 `auth.editar_usuario`). Em defesa em profundidade, `aplicar_rls` (e
 `aplicar_rls_metas` / `aplicar_rls_supervisores`) retornam **DataFrame vazio**
 quando o perfil não-global está com escopo vazio, com a coluna de escopo
-ausente, ou com perfil desconhecido — nunca a base completa. Só `admin` e
+ausente, ou com perfil desconhecido — nunca a base completa. A ausência
+de perfil autenticado também retorna vazio, e `obter_regioes_permitidas`
+devolve `[]` (antes devolvia a lista completa de regiões). Só `admin` e
 `gestor` veem tudo sem escopo. Para o `consultor`, o escopo (o próprio nome) é
 exatamente o que o restringe; sem ele, não veria nada (não a base inteira).
+
+### Onde a decisão de autorização mora (`decidir_rls`)
+
+`rls.decidir_rls(colunas_por_perfil)` é o **único** lugar que decide
+quem vê o que. Devolve uma `DecisaoRls` com três estados, e só três:
+
+| Estado | Quando | O adaptador faz |
+|---|---|---|
+| `global_=True` | `admin` / `gestor` | entrega o frame sem recorte |
+| `coluna` preenchida | perfil não-global **com** escopo | `df[df[coluna].isin(escopo)]` |
+| ambos vazios | sem perfil, sem escopo, ou role desconhecido | **nega** (frame vazio, schema preservado) |
+
+O mapa `role → coluna` vem do **chamador** porque o nome da coluna muda
+com o dataset: `REGIAO`/`LOJA`/`CONSULTOR` nos frames do dashboard,
+`regiao`/`loja`/`consultor` minúsculos na view de Reconquista. A regra
+de autorização, essa, é a mesma para todos.
+
+**Responsabilidade do adaptador:** negar quando a coluna de escopo não
+existe *naquele frame* — a decisão central não tem como saber isso por
+ele.
+
+Existe porque a decisão estava escrita duas vezes e as duas
+divergiram: `aplicar_rls` negava sem escopo enquanto
+`loaders._filtro_rls_reconquista` devolvia a base inteira (perfil
+ausente, escopo vazio, role desconhecido **e** coluna ausente no
+frame). Cobertura em `tests/test_rls_reconquista.py`. Contexto:
+[progress/2026-09-14-etapa1-rls-e-caches.md](progress/2026-09-14-etapa1-rls-e-caches.md).
 
 ## "Visualizar Como"
 

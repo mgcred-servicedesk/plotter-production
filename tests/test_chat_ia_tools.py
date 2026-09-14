@@ -174,6 +174,15 @@ class TestToolRankingPeriodo:
             "carregar_metas_produto_consultor",
             lambda mes, ano: metas_consultor,
         )
+        # `aplicar_rls_metas` e fail-closed: sem usuario logado no
+        # `session_state` ela devolve frame VAZIO (e o ranking voltaria
+        # 0% para todo mundo). Este teste mede o reshape do ranking, nao
+        # o RLS — que tem cobertura propria em `test_rls_cancelados.py`.
+        # Neutralizado no namespace de `tools`, como manda o docstring
+        # do modulo (nunca no modulo de origem).
+        monkeypatch.setattr(
+            tools_mod, "aplicar_rls_metas", lambda df, df_dados: df
+        )
         contexto = _contexto(df=df_rank, df_metas=df_metas_lojas)
 
         resultado = tool_ranking_periodo(
@@ -229,12 +238,15 @@ class TestToolRankingPeriodo:
 
         assert "erro" in resultado
 
-    def test_dataframe_vazio_nao_lanca(self):
+    def test_dataframe_vazio_nao_lanca(self, df_metas_lojas):
+        """Sem produção no período, MAS com metas: nada a ranquear, e
+        nenhuma exceção. (Sem metas é outro caso — ver
+        ``TestRankingAtingimentoSemMetas``.)"""
         df_vazio = pd.DataFrame({
             "VALOR": pd.Series(dtype=float),
             "pontos": pd.Series(dtype=float),
         })
-        contexto = _contexto(df=df_vazio)
+        contexto = _contexto(df=df_vazio, df_metas=df_metas_lojas)
 
         resultado = tool_ranking_periodo(
             contexto, {"entidade": "loja", "criterio": "atingimento"},
@@ -243,6 +255,69 @@ class TestToolRankingPeriodo:
         assert resultado == {
             "entidade": "loja", "criterio": "atingimento", "resultados": [],
         }
+
+
+@pytest.mark.unit
+class TestRankingAtingimentoSemMetas:
+    """Sem metas, ``calcular_ranking_*`` não levanta: devolve **0% de
+    atingimento para todo mundo**, e o modelo reportaria isso ao admin
+    como se a operação estivesse zerada.
+
+    O chat é Beta e só admin o usa (``tabs/chat_ia.py`` barra os demais
+    perfis), então a decisão é falhar alto enquanto o PO ainda desenha
+    a feature: melhor "não consegui" do que número errado com cara de
+    certo. A chave ``erro`` faz ``agent.py`` marcar o bloco com
+    ``is_error=True``.
+
+    Duas causas chegam aqui com a mesma resposta: não há metas
+    cadastradas no período, ou o RLS fail-closed esvaziou o frame.
+    """
+
+    def test_lojas_sem_metas_devolve_erro(self, df_rank):
+        resultado = tool_ranking_periodo(
+            _contexto(df=df_rank, df_metas=pd.DataFrame()),
+            {"entidade": "loja", "criterio": "atingimento"},
+        )
+        assert "erro" in resultado
+        assert "resultados" not in resultado
+
+    def test_consultores_sem_metas_devolve_erro(
+        self, monkeypatch, df_rank, df_metas_lojas
+    ):
+        """Inclui o caminho do RLS fail-closed: ``aplicar_rls_metas``
+        devolvendo vazio (perfil sem escopo) chega aqui igual a "não há
+        metas cadastradas"."""
+        monkeypatch.setattr(
+            tools_mod,
+            "carregar_metas_produto_consultor",
+            lambda mes, ano: pd.DataFrame(
+                {"LOJA": ["A"], "META_PRATA": [500.0]}
+            ),
+        )
+        monkeypatch.setattr(
+            tools_mod,
+            "aplicar_rls_metas",
+            lambda df, df_dados: df.iloc[0:0],
+        )
+        resultado = tool_ranking_periodo(
+            _contexto(df=df_rank, df_metas=df_metas_lojas),
+            {"entidade": "consultor", "criterio": "atingimento"},
+        )
+        assert "erro" in resultado
+        assert "resultados" not in resultado
+
+    @pytest.mark.parametrize(
+        "criterio", ["pontos", "ticket_medio", "media_du"]
+    )
+    def test_outros_criterios_seguem_sem_metas(self, df_rank, criterio):
+        """A trava é só do atingimento — os outros critérios não
+        dependem de meta e continuam respondendo."""
+        resultado = tool_ranking_periodo(
+            _contexto(df=df_rank, df_metas=pd.DataFrame()),
+            {"entidade": "loja", "criterio": criterio},
+        )
+        assert "erro" not in resultado
+        assert resultado["resultados"]
 
 
 @pytest.mark.unit

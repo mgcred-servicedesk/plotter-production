@@ -220,23 +220,26 @@ def _contratos_pagos_historico(mes: int, ano: int) -> pd.DataFrame:
 
 Config estática sem `mes`/`ano` pode usar um único `@st.cache_data(ttl=86400)`.
 
-### Invalidar cache quando a **semântica** muda (`_cache_version`)
+### Invalidar cache quando a **semântica** muda (`cache_version`)
 
 TTL resolve dado velho, não **definição** velha. Quando o significado de
 uma coluna muda (ex: `VALOR` passando de `VLR BASE` para
 `valor_consolidado` na migration 067), o cache de 24 h do histórico
 continuaria servindo o número calculado pela regra antiga.
 
-O mecanismo canônico do projeto é um parâmetro `_cache_version: int` na
-assinatura da função cacheada: ele entra na chave do `@st.cache_data`, e
-incrementá-lo invalida todas as entradas de uma vez.
+O mecanismo canônico do projeto é um parâmetro `cache_version: int` na
+assinatura da função cacheada, passado explicitamente pelo dispatcher.
+Incrementá-lo faz as próximas chamadas usarem outra chave de cache.
+O nome **não pode começar com `_`**: o Streamlit exclui esses argumentos
+do hash. O antigo `_cache_version` não versionava os argumentos; editar
+o código do próprio wrapper podia invalidar o cache incidentalmente.
 
 ```python
 def consolidar_dados(mes, ano):
     if _eh_mes_atual(mes, ano):
-        resultado = _consolidar_atual(mes, ano, _cache_version=4)
+        resultado = _consolidar_atual(mes, ano, cache_version=4)
     else:
-        resultado = _consolidar_historico(mes, ano, _cache_version=4)
+        resultado = _consolidar_historico(mes, ano, cache_version=4)
 ```
 
 Bumpar ao mudar a semântica de um frame, **sempre com comentário dizendo
@@ -244,6 +247,12 @@ o porquê** (o histórico de bumps é a única trilha do que mudou). Cobre o
 deploy de *código*; mudança de *dado* com o app no ar (ex: o ETL passando
 a popular uma coluna) é resolvida pelo botão de refresh do seletor de
 período (`_limpar_caches_periodo` → `st.cache_data.clear()`).
+
+Validar o versionamento com o wrapper decorado e um fetch falso: chamadas
+com a mesma versão reutilizam o resultado; outra versão executa o fetch
+novamente. Inspecionar apenas a assinatura não comprova invalidação.
+Cada cache interno continua com TTL e versão próprios: versionar uma
+consolidação não invalida automaticamente os loaders que ela chama.
 
 ## Colunas padronizadas após `_fetch_*`
 

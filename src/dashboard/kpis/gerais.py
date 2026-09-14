@@ -1192,12 +1192,60 @@ def serie_diaria_pago(df_f: pd.DataFrame) -> list | None:
     return serie.tolist() if len(serie) >= 2 else None
 
 
+def _revisao_frame(df: Optional[pd.DataFrame]) -> tuple:
+    """Impressao digital barata de UM DataFrame, para a chave de cache.
+
+    Tres componentes: numero de linhas, nomes das colunas e a soma de
+    cada coluna numerica. Qualquer recarga que traga contrato novo,
+    valor corrigido ou coluna nova muda pelo menos um deles.
+
+    **Por que nao ``hash_pandas_object``.** Hash por linha e exato, mas
+    custa ~7,8 ms por frame a 20 mil linhas — as seis ``obter_*_periodo``
+    juntas pagariam ~230 ms por rerun, mais caro que o proprio calculo
+    que o cache existe para evitar. Esta versao custa ~0,4 ms no mesmo
+    frame. O preco e uma colisao teorica: uma recarga que preserve
+    contagem de linhas, colunas E todas as somas passa despercebida.
+
+    ``NaN`` vira a string ``"nan"`` de proposito: ``float('nan') !=
+    float('nan')``, entao deixa-lo cru faria a chave nunca mais bater e
+    o cache nunca mais acertar.
+    """
+    if df is None:
+        return ()
+    try:
+        somas = tuple(
+            (round(float(v), 6) if v == v else "nan")
+            for v in df.sum(numeric_only=True).tolist()
+        )
+    except (TypeError, ValueError):
+        # Coluna numerica com conteudo que nao soma (ex: object com
+        # mistura de tipos): cai para contagem + colunas, que ja
+        # detectam a maioria das recargas.
+        somas = ()
+    return (len(df), tuple(str(c) for c in df.columns), somas)
+
+
+def _revisao_entradas(*entradas: Any) -> tuple:
+    """Revisao das entradas de uma ``obter_*_periodo``.
+
+    DataFrame vira ``_revisao_frame``; escalar (``dia_atual``,
+    ``du_decorridos``, ``peso_headcount``) entra como esta. Cada funcao
+    passa as SUAS entradas — nao as de todas —, entao a chave de uma nao
+    invalida o cache da outra a toa.
+    """
+    return tuple(
+        _revisao_frame(e) if isinstance(e, pd.DataFrame) else e
+        for e in entradas
+    )
+
+
 def _chave_kpis(
     mes: int,
     ano: int,
     role: Optional[str],
     perfil_efetivo: Optional[dict],
     session_state: MutableMapping[str, Any],
+    revisao: tuple,
 ) -> tuple:
     """Chave de invalidacao do cache de KPIs.
 
@@ -1208,7 +1256,7 @@ def _chave_kpis(
     calculado para o escopo de outro (ex.: gerente A vendo o KPI de B
     depois de um "Visualizar como").
 
-    Os seis componentes, nesta ordem:
+    Os sete componentes, nesta ordem:
 
     1. ``mes`` / 2. ``ano`` — periodo selecionado;
     3. ``role`` — perfil EFETIVO (ja considera "Visualizar como");
@@ -1216,12 +1264,26 @@ def _chave_kpis(
        ``aplicar_rls`` usa; e o que separa dois gerentes de mesmo role;
     5. filtro granular de lojas (``ui_filtro_lojas``), ordenado para que
        a mesma selecao em ordem diferente nao invalide o cache a toa;
-    6. filtro granular de consultor (``ui_filtro_consultor``).
+    6. filtro granular de consultor (``ui_filtro_consultor``);
+    7. ``revisao`` — impressao digital das ENTRADAS de quem chama
+       (``_revisao_entradas``).
+
+    Os componentes 3–6 sao a fronteira de SEGURANCA; o 7 e a de
+    ATUALIDADE, e os dois papeis nao se substituem. Sem o componente 7,
+    a chave so mudava quando o usuario mexia em algo: dado novo chegando
+    pelo fim do TTL de um loader (``consolidar_dados`` e 30 min no mes
+    corrente) nao invalidava nada, e a tela seguia mostrando o numero da
+    carga anterior ate o proximo clique. Reproduzido: dobrar as linhas
+    do ``df`` mantinha ``total_vendas`` no valor antigo.
 
     Os dois filtros de UI sao lidos de ``session_state`` no momento da
     chamada: quem chama precisa ter renderizado a sidebar de filtros
     ANTES (em ``app.py``, ``render_sidebar_filtros_perfil``), que e o
     unico ponto do codebase que escreve nessas duas chaves.
+
+    ``revisao`` e obrigatorio de proposito (sem default): uma
+    ``obter_*_periodo`` nova que esqueca de passa-lo quebra na hora, em
+    vez de nascer com cache silenciosamente velho.
 
     Alterar esta funcao muda quem ve o que — nao e ajuste cosmetico.
     """
@@ -1232,6 +1294,7 @@ def _chave_kpis(
         tuple(perfil_efetivo.get("escopo", []) if perfil_efetivo else []),
         tuple(sorted(session_state.get("ui_filtro_lojas") or [])),
         session_state.get("ui_filtro_consultor") or "",
+        revisao,
     )
 
 
@@ -1267,7 +1330,12 @@ def obter_kpis_gerais_periodo(
     exercitada em teste com um ``dict`` comum — basta suportar
     ``.get`` / ``[]`` / ``[]=``.
     """
-    chave = _chave_kpis(mes, ano, role, perfil_efetivo, session_state)
+    chave = _chave_kpis(
+        mes, ano, role, perfil_efetivo, session_state,
+        _revisao_entradas(
+            df, df_metas, df_metas_produto, df_sup, dia_atual,
+        ),
+    )
 
     if session_state.get("_kpis_gerais_chave") != chave:
         kpis = calcular_kpis_gerais(
@@ -1343,7 +1411,10 @@ def obter_kpis_pipeline_periodo(
     saida (precedente da ST-07): cache remanescente de sessao viva com
     formato antigo falha alto em vez de virar ``AttributeError`` mudo.
     """
-    chave = _chave_kpis(mes, ano, role, perfil_efetivo, session_state)
+    chave = _chave_kpis(
+        mes, ano, role, perfil_efetivo, session_state,
+        _revisao_entradas(df, df_analise, df_cancelados, du_decorridos),
+    )
 
     if session_state.get("_kpis_pipeline_chave") != chave:
         kpis_analise = calcular_kpis_analise(
@@ -1391,7 +1462,10 @@ def obter_medias_periodo(
     Cache em ``session_state`` sob ``_medias_cache`` /
     ``_medias_chave``, invalidado por ``_chave_kpis``.
     """
-    chave = _chave_kpis(mes, ano, role, perfil_efetivo, session_state)
+    chave = _chave_kpis(
+        mes, ano, role, perfil_efetivo, session_state,
+        _revisao_entradas(df, df_sup, du_decorridos, peso_headcount),
+    )
 
     if session_state.get("_medias_chave") != chave:
         session_state["_medias_cache"] = calcular_medias_du_por_nivel(
@@ -1434,7 +1508,10 @@ def obter_medias_organizacao_periodo(
     ``_medias_organizacao_chave``, invalidado por ``_chave_kpis`` — que
     ja inclui os dois filtros de UI lidos aqui.
     """
-    chave = _chave_kpis(mes, ano, role, perfil_efetivo, session_state)
+    chave = _chave_kpis(
+        mes, ano, role, perfil_efetivo, session_state,
+        _revisao_entradas(df_full, df_sup_full, du_decorridos),
+    )
 
     if session_state.get("_medias_organizacao_chave") != chave:
         if session_state.get("ui_filtro_consultor"):
@@ -1493,7 +1570,13 @@ def obter_metas_prod_diarias_periodo(
     Cache em ``session_state`` sob ``_metas_prod_diarias_cache`` /
     ``_metas_prod_diarias_chave``, invalidado por ``_chave_kpis``.
     """
-    chave = _chave_kpis(mes, ano, role, perfil_efetivo, session_state)
+    chave = _chave_kpis(
+        mes, ano, role, perfil_efetivo, session_state,
+        _revisao_entradas(
+            df, df_metas, df_metas_produto, df_sup, dia_atual,
+            du_decorridos,
+        ),
+    )
 
     if session_state.get("_metas_prod_diarias_chave") != chave:
         kpis = obter_kpis_gerais_periodo(
@@ -1559,7 +1642,13 @@ def obter_kpis_qtd_periodo(
     Cache em ``session_state`` sob ``_kpis_qtd_cache`` /
     ``_kpis_qtd_chave``, invalidado por ``_chave_kpis``.
     """
-    chave = _chave_kpis(mes, ano, role, perfil_efetivo, session_state)
+    chave = _chave_kpis(
+        mes, ano, role, perfil_efetivo, session_state,
+        _revisao_entradas(
+            df, df_metas, df_metas_produto, df_sup, df_analise,
+            df_full, df_sup_full, dia_atual, du_decorridos,
+        ),
+    )
 
     if session_state.get("_kpis_qtd_chave") != chave:
         kpis = obter_kpis_gerais_periodo(

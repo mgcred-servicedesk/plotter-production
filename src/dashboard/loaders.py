@@ -37,7 +37,11 @@ from src.dashboard.kpis.gerais import (
     excluir_supervisores,
     filtrar_janela_recente,
 )
-from src.dashboard.rls import _obter_perfil_efetivo, aplicar_rls
+from src.dashboard.rls import (
+    _obter_perfil_efetivo,
+    aplicar_rls,
+    decidir_rls,
+)
 from src.shared.dias_uteis import carregar_feriados
 
 logger = logging.getLogger(__name__)
@@ -1323,8 +1327,8 @@ def carregar_metas_produto_consultor(
     TTL real: 6h para mes corrente, 24h para historico.
     """
     if _eh_mes_atual(mes, ano):
-        return _metas_produto_consultor_atual(mes, ano, _cache_version=1)
-    return _metas_produto_consultor_historico(mes, ano, _cache_version=1)
+        return _metas_produto_consultor_atual(mes, ano, cache_version=1)
+    return _metas_produto_consultor_historico(mes, ano, cache_version=1)
 
 
 def _fetch_metas_produto_consultor(mes: int, ano: int) -> pd.DataFrame:
@@ -1409,11 +1413,11 @@ def _fetch_metas_produto_consultor(mes: int, ano: int) -> pd.DataFrame:
 def _metas_produto_consultor_atual(
     mes: int,
     ano: int,
-    _cache_version: int = 1,  # bump v1: colunas de nivel (META_PRATA...)
+    cache_version: int = 1,  # bump v1: colunas de nivel (META_PRATA...)
 ) -> pd.DataFrame:
     """Metas por produto (CONSULTOR) — mes corrente. TTL 6h.
 
-    ``_cache_version`` entra na chave do cache porque o corpo DESTA
+    ``cache_version`` entra na chave do cache porque o corpo DESTA
     funcao e uma delegacao de uma linha: o ``st.cache_data`` versiona a
     funcao decorada, nao as que ela chama. Mudar
     ``_fetch_metas_produto_consultor`` (formato do pivot, colunas novas)
@@ -1428,12 +1432,12 @@ def _metas_produto_consultor_atual(
 def _metas_produto_consultor_historico(
     mes: int,
     ano: int,
-    _cache_version: int = 1,  # bump v1: colunas de nivel (META_PRATA...)
+    cache_version: int = 1,  # bump v1: colunas de nivel (META_PRATA...)
 ) -> pd.DataFrame:
     """Metas por produto (CONSULTOR) — historico. TTL 24h.
 
     Ver ``_metas_produto_consultor_atual`` para o porque do
-    ``_cache_version`` (TTL de 24h aqui torna a versao ainda mais
+    ``cache_version`` (TTL de 24h aqui torna a versao ainda mais
     critica: sem bump, o formato antigo sobrevive um dia inteiro).
     """
     return _fetch_metas_produto_consultor(mes, ano)
@@ -2096,9 +2100,9 @@ def consolidar_dados(
     # migration 067; os caches de 24h do historico guardariam o VLR
     # BASE antigo)
     if _eh_mes_atual(mes, ano):
-        resultado = _consolidar_atual(mes, ano, _cache_version=4)
+        resultado = _consolidar_atual(mes, ano, cache_version=4)
     else:
-        resultado = _consolidar_historico(mes, ano, _cache_version=4)
+        resultado = _consolidar_historico(mes, ano, cache_version=4)
 
     df, df_metas, df_supervisores, diag = resultado
 
@@ -2113,7 +2117,7 @@ def consolidar_dados(
 def _consolidar_atual(
     mes: int,
     ano: int,
-    _cache_version: int = 4,  # bump v4: VALOR = valor_consolidado
+    cache_version: int = 4,  # bump v4: VALOR = valor_consolidado
 ) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, Optional[dict]]:
     """Consolidacao — mes corrente. TTL 30min."""
     return _executar_consolidacao(mes, ano)
@@ -2123,7 +2127,7 @@ def _consolidar_atual(
 def _consolidar_historico(
     mes: int,
     ano: int,
-    _cache_version: int = 4,  # bump v4: VALOR = valor_consolidado
+    cache_version: int = 4,  # bump v4: VALOR = valor_consolidado
 ) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, Optional[dict]]:
     """Consolidacao — historico. TTL 24h."""
     return _executar_consolidacao(mes, ano)
@@ -2681,34 +2685,47 @@ def _reconquista_cache(mes: int, ano: int) -> dict:
 def _filtro_rls_reconquista() -> Callable | None:
     """Funcao de recorte por perfil dos detalhes de Reconquista.
 
-    A view expoe `regiao`, `loja` e `consultor` em texto.
-    Admin/gestor veem tudo; demais perfis sao restritos ao seu
-    escopo (regiao/loja/consultor). Devolve ``None`` quando nao ha
-    recorte a aplicar — o chamador entrega o frame como veio.
+    A view expoe `regiao`, `loja` e `consultor` em texto (minusculos,
+    ao contrario dos frames do dashboard) — por isso o mapa de colunas
+    vai daqui para `decidir_rls`, que so decide QUEM ve o que.
+
+    Devolve ``None`` apenas para admin/gestor, o unico caso em que nao
+    ha recorte a aplicar. Todo o resto recebe uma funcao: ou o recorte
+    por escopo, ou `_negar` (frame vazio, schema preservado).
+
+    Fail-closed em tres pontos que antes devolviam a base inteira:
+    perfil ausente, escopo vazio e role desconhecido caem em `_negar`;
+    e coluna de escopo ausente NO FRAME tambem nega, em vez de entregar
+    o frame como veio. Era a divergencia apontada na revisao — mesmo
+    perfil, `aplicar_rls` negava e a Reconquista liberava.
 
     Extraida de `_filtrar_rls_reconquista` para que a lista completa
     (`clientes_todos`) passe pelo MESMO recorte dos cortes mensais:
     RLS antes de render, sem uma segunda implementacao para divergir.
     """
-    perfil = _obter_perfil_efetivo()
-    if not perfil or perfil["perfil"] in ("admin", "gestor"):
-        return None
-
-    escopo = perfil.get("escopo") or []
-    if not escopo:
-        return None
-
-    coluna = {
+    decisao = decidir_rls({
         "gerente_comercial": "regiao",
         "supervisor": "loja",
         "consultor": "consultor",
-    }.get(perfil["perfil"])
-    if not coluna:
+    })
+    if decisao.global_:
         return None
 
-    def _filtra(df):
-        if df is None or df.empty or coluna not in df.columns:
+    def _negar(df):
+        if df is None:
             return df
+        return df.iloc[0:0].copy()
+
+    if decisao.coluna is None:
+        return _negar
+
+    coluna, escopo = decisao.coluna, decisao.escopo
+
+    def _filtra(df):
+        if df is None or df.empty:
+            return df
+        if coluna not in df.columns:
+            return _negar(df)
         return df[df[coluna].isin(escopo)].copy()
 
     return _filtra

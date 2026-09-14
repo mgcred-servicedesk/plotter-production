@@ -192,6 +192,39 @@ def tool_comparar_entidades(contexto: ChatContext, entrada: dict) -> dict:
     }
 
 
+def _sem_metas(entidade_plural: str) -> dict:
+    """Falha explicita quando o ranking de atingimento fica sem metas.
+
+    Sem o frame de metas, ``calcular_ranking_*`` nao levanta: divide por
+    zero protegido e devolve **0% de atingimento para todo mundo**. O
+    modelo leria isso como resultado legitimo e reportaria ao admin que
+    a operacao inteira esta zerada.
+
+    Como o chat e Beta e so admin o usa (`tabs/chat_ia.py` barra os
+    demais perfis), a decisao e falhar alto: melhor "nao consegui" do
+    que um numero errado com cara de certo enquanto o PO ainda desenha
+    a feature. `agent.py` marca o bloco com ``is_error=True`` a partir
+    da chave ``erro``, entao o modelo ve a falha como falha.
+
+    Duas causas conhecidas chegam aqui: nao ha metas cadastradas no
+    periodo, ou o RLS fail-closed esvaziou o frame (perfil sem escopo,
+    coluna de escopo ausente). Do ponto de vista do chat as duas tem a
+    mesma resposta — nao ha base para calcular atingimento.
+    """
+    logger.warning(
+        "Chat IA: ranking de atingimento sem metas para %s", entidade_plural
+    )
+    return {
+        "erro": (
+            f"Não há metas disponíveis para os {entidade_plural} no "
+            "período — sem elas o atingimento não pode ser calculado "
+            "(responder 0% para todos seria incorreto). Verifique as "
+            "metas do período ou use outro critério (pontos, "
+            "ticket_medio, media_du)."
+        )
+    }
+
+
 def tool_ranking_periodo(contexto: ChatContext, entrada: dict) -> dict:
     """Top N lojas/consultores no período atual, por critério."""
     entidade = str(entrada.get("entidade", "loja")).strip().lower()
@@ -207,6 +240,8 @@ def tool_ranking_periodo(contexto: ChatContext, entrada: dict) -> dict:
     try:
         if criterio == "atingimento":
             if entidade == "loja":
+                if contexto.df_metas is None or contexto.df_metas.empty:
+                    return _sem_metas("lojas")
                 ranking = calcular_ranking_lojas(
                     contexto.df, contexto.df_metas, top_n=limite
                 )
@@ -220,6 +255,8 @@ def tool_ranking_periodo(contexto: ChatContext, entrada: dict) -> dict:
                     ),
                     contexto.df,
                 )
+                if _metas_cons is None or _metas_cons.empty:
+                    return _sem_metas("consultores")
                 ranking = calcular_ranking_consultores(
                     contexto.df,
                     contexto.df_metas,
