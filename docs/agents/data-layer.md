@@ -148,13 +148,40 @@ Regras:
 - A `coluna_chave` deve ser **única** (PK ou UNIQUE) — chave repetida
   faz linhas serem puladas entre páginas. Chaves em uso:
   `v_contratos_dashboard.id` (PK), `v_pagamentos_online_efetivo.proposta`
-  (PK), `v_reconquista.co_adesao` (UNIQUE).
+  (PK), `v_reconquista.co_adesao` (UNIQUE), `consultores.id` (PK),
+  `consultor_vigencia.id` (PK), `supervisor_vigencia.id` (PK).
+- **Nunca paginar por `nome`.** `consultores` tem nomes duplicados de
+  propósito (desligamento em linha nova) — é o que
+  `_colapsar_cadastro_recente` existe para resolver. Chave repetida
+  pula linhas na virada da página.
 - A query base deve trazer `.order(coluna_chave)` e `.limit(_PAGE_SIZE)`.
 - **OFFSET é proibido em novos loaders**: cada página com OFFSET
   reordena o resultset inteiro (sort que spilla para temp files —
   dreno do Disk IO Budget, ver migration 054 e progress doc
   2026-07-08). A exigência de ordenação estável do commit `705885b`
   continua valendo — agora garantida pela chave única.
+
+### Paginar não custa request a mais enquanto couber numa página
+
+`_paginar_keyset` encerra quando a página volta **incompleta**
+(`len(batch) < limite`). Com o volume de hoje — ~112 consultores
+ativos, ~400 linhas no ledger de vínculos — é exatamente a mesma
+leitura única de antes: **uma** requisição. A segunda só aparece quando
+há mais de uma página, que é justamente o caso em que a leitura sem
+paginação perderia dado.
+
+Isso importa no plano Nano, e é por isso que
+`tests/test_loaders_paginacao_cadastro.py` **mede páginas servidas**,
+não só o resultado. O único custo extra é quando o total é múltiplo
+exato de `_PAGE_SIZE`: página cheia é indistinguível de "há mais", e
+uma requisição a mais confirma o fim.
+
+> **Ao escrever teste de loader, use `ClienteFakePaginado`**
+> (`tests/conftest.py`). Os duplos antigos ignoravam
+> `.order`/`.limit`/`.gt` e devolviam tudo num `.execute()` — com eles,
+> um loader **sem** paginação passava exatamente como um paginado. Foi
+> por isso que o truncamento silencioso do item 6 da revisão de 09/2026
+> nunca apareceu na suíte.
 
 ### Exceção deliberada: Reconquista pagina a base inteira
 
@@ -302,3 +329,30 @@ du_total, du_dec, du_rest = calcular_dias_uteis(ano, mes, dia_atual)
 O módulo carrega feriados da tabela `feriados` (cache 24h) e exclui
 sábados/domingos. CRUD de feriados vive em `src/dashboard/feriados_mgmt.py`
 (página admin).
+
+### Ausência de feriado × falha ao consultar
+
+São estados **distintos**, e confundi-los custava 24 horas de números
+errados:
+
+| Resultado | Significa | Cacheado? |
+|---|---|---|
+| `set()` | nenhum feriado no período | sim |
+| `FeriadosIndisponiveis` | a consulta falhou | **não** |
+
+Até 09/2026 a falha também devolvia `set()`, de dentro da função
+cacheada: uma indisponibilidade de 1 segundo virava "nenhum feriado
+neste mês" pelo TTL inteiro. Sem erro na tela — só `total_du` inflado,
+meta diária menor e projeção maior.
+
+`st.cache_data` **não guarda exceção** (verificado, com teste), então
+deixar o erro subir já garante que a próxima tentativa refaça a
+consulta. `carregar_feriados` segue devolvendo `set()` para não
+derrubar o dashboard, mas antes registra: log de erro e marca em
+`periodos_com_feriados_indisponiveis()`, que `app.py` lê para avisar o
+usuário de que os dias úteis daquele período estão estimados. Um
+sucesso posterior apaga a marca.
+
+**Padrão a repetir:** dentro de função cacheada, falha de I/O deve
+*levantar*, nunca devolver o valor-vazio do caminho feliz — senão o
+cache promove o erro a resposta válida.

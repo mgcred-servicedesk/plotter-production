@@ -187,7 +187,26 @@ Desde 2026-08-13 os **mesmos dois critérios** alimentam duas colunas de
 quantidade na tabela "Distribuição de Produtos"
 ([`src/dashboard/kpis/produtos.py`](../../src/dashboard/kpis/produtos.py),
 `_mascaras_aceleradores`), nas visões por consultor e por loja — ao lado
-de BMG Med, Vida Familiar, Emissão e Super Conta:
+de BMG Med, Vida Familiar, Emissão e Super Conta.
+
+> **Onde cada critério mora.** BMG Med, Vida Familiar, Emissão e Super
+> Conta têm **uma** definição: `mascaras_aceleradores`
+> ([`kpis/gerais.py`](../../src/dashboard/kpis/gerais.py)), de onde
+> `kpis/produtos.py` as importa desde 09/2026 — antes eram
+> reimplementadas lá com o mesmo texto, e concordavam por coincidência.
+> Super Conta prefere a flag canônica `is_super_conta` (derivada em
+> `kpis/consolidacao.py`) e só cai para o `SUBTIPO` quando o frame não a
+> traz. CLT e Consignado ficam só em `kpis/produtos.py`: são quantidade
+> por cima do pivot de valor, não aceleradores.
+>
+> A aba de Produtos tem uma **terceira** superfície, `_PRODUTOS_QTD` +
+> `_mask_subtab` ([`tabs/produtos.py`](../../src/dashboard/tabs/produtos.py)):
+> config declarativa com critérios mais granulares (digitação, subtipos,
+> exclusões por tipo de operação) que alimentam as sub-abas. **Não** é
+> a mesma coisa que as 4 máscaras e não foi unificada — unificar seria
+> redesenho, não consolidação.
+
+As colunas:
 
 | Coluna na tabela | Critério |
 |---|---|
