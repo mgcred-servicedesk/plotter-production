@@ -8,7 +8,7 @@
 `tests/test_rls_cancelados.py`, `tests/test_loaders_cache_version.py`,
 `tests/test_kpis_gerais.py`, `tests/test_app_helpers.py`,
 `tests/test_chat_ia_tools.py`, `docs/agents/{rls,data-layer,architecture,ui-components}.md`
-**Commit(s):** (a commitar)
+**Commit(s):** `7d01b7f`
 
 ## Objetivo
 
