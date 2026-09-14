@@ -13,7 +13,7 @@ Perfis:
     consultor         → filtra por CONSULTOR (escopo = nomes)
 """
 
-from typing import Mapping, NamedTuple, Optional
+from typing import Callable, Mapping, NamedTuple, Optional
 
 import pandas as pd
 import streamlit as st
@@ -240,6 +240,85 @@ def aplicar_rls_supervisores(
 
     # Fail-closed: perfil sem escopo (ou desconhecido) nao ve supervisores.
     return df_supervisores.iloc[0:0].copy()
+
+
+# ══════════════════════════════════════════════════════
+# Reconquista — adaptador do recorte por perfil
+#
+# Vive aqui, e nao em `loaders.py`, desde a Etapa 2 da revisao de
+# 09/2026: recorte por perfil e autorizacao, nao carga. Foi a
+# convivencia das duas implementacoes em arquivos diferentes que
+# deixou a divergencia passar (a da Reconquista liberava a base
+# inteira onde `aplicar_rls` negava — corrigido na Etapa 1). Agora as
+# duas moram lado a lado e dividem `decidir_rls`.
+#
+# O vocabulario da view e minusculo (`regiao`/`loja`/`consultor`), ao
+# contrario dos frames do dashboard — por isso o mapa de colunas e
+# explicito aqui.
+# ══════════════════════════════════════════════════════
+
+
+def _filtro_rls_reconquista() -> Callable | None:
+    """Funcao de recorte por perfil dos detalhes de Reconquista.
+
+    A view expoe `regiao`, `loja` e `consultor` em texto (minusculos,
+    ao contrario dos frames do dashboard) — por isso o mapa de colunas
+    vai daqui para `decidir_rls`, que so decide QUEM ve o que.
+
+    Devolve ``None`` apenas para admin/gestor, o unico caso em que nao
+    ha recorte a aplicar. Todo o resto recebe uma funcao: ou o recorte
+    por escopo, ou `_negar` (frame vazio, schema preservado).
+
+    Fail-closed em tres pontos que antes devolviam a base inteira:
+    perfil ausente, escopo vazio e role desconhecido caem em `_negar`;
+    e coluna de escopo ausente NO FRAME tambem nega, em vez de entregar
+    o frame como veio. Era a divergencia apontada na revisao — mesmo
+    perfil, `aplicar_rls` negava e a Reconquista liberava.
+
+    Extraida de `_filtrar_rls_reconquista` para que a lista completa
+    (`clientes_todos`) passe pelo MESMO recorte dos cortes mensais:
+    RLS antes de render, sem uma segunda implementacao para divergir.
+    """
+    decisao = decidir_rls({
+        "gerente_comercial": "regiao",
+        "supervisor": "loja",
+        "consultor": "consultor",
+    })
+    if decisao.global_:
+        return None
+
+    def _negar(df):
+        if df is None:
+            return df
+        return df.iloc[0:0].copy()
+
+    if decisao.coluna is None:
+        return _negar
+
+    coluna, escopo = decisao.coluna, decisao.escopo
+
+    def _filtra(df):
+        if df is None or df.empty:
+            return df
+        if coluna not in df.columns:
+            return _negar(df)
+        return df[df[coluna].isin(escopo)].copy()
+
+    return _filtra
+
+
+def _filtrar_rls_reconquista(dados: dict) -> dict:
+    """Aplica RLS sobre `clientes`/`clientes_ant`/`clientes_prox`."""
+    _filtra = _filtro_rls_reconquista()
+    if _filtra is None:
+        return dados
+
+    return {
+        **dados,
+        "clientes": _filtra(dados.get("clientes")),
+        "clientes_ant": _filtra(dados.get("clientes_ant")),
+        "clientes_prox": _filtra(dados.get("clientes_prox")),
+    }
 
 
 def obter_regioes_permitidas(
