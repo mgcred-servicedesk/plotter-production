@@ -1578,15 +1578,20 @@ def carregar_consultores_cadastro() -> list[str]:
     'Visualizar Como'). TTL 30min — reflete uploads do
     angry-man sem esperar um dia.
     """
-    resp = (
-        _sb()
-        .table("consultores")
-        .select("nome, status, updated_at")
-        .order("nome")
-        .execute()
-    )
+    def _pagina(limite: int):
+        return (
+            _sb()
+            .table("consultores")
+            .select("id, nome, status, updated_at")
+            .order("id")
+            .limit(limite)
+        )
+
+    # Paginado pelo mesmo motivo (e pela mesma chave) de
+    # `carregar_consultores_ativos`: e a MESMA tabela, e ela tem nomes
+    # duplicados — `nome` como chave de keyset pularia linhas.
     nomes: list[str] = []
-    for row in _colapsar_cadastro_recente(resp.data or []):
+    for row in _colapsar_cadastro_recente(_paginar_keyset(_pagina, "id")):
         if not _status_consultor_ativo(row.get("status")):
             continue
         nome = row.get("nome", "")
@@ -1610,17 +1615,27 @@ def carregar_consultores_ativos() -> pd.DataFrame:
     global; recorte por perfil client-side (aplicar_rls). TTL 24h.
     """
     cols = ["CONSULTOR", "LOJA", "REGIAO", "REGIAO_ATUAL"]
-    resp = (
-        _sb()
-        .table("consultores")
-        .select(
-            "nome, status, updated_at, lojas(nome, ativo, regioes(nome))"
+
+    def _pagina(limite: int):
+        return (
+            _sb()
+            .table("consultores")
+            .select(
+                "id, nome, status, updated_at,"
+                " lojas(nome, ativo, regioes(nome))"
+            )
+            .order("id")
+            .limit(limite)
         )
-        .order("nome")
-        .execute()
-    )
+
+    # Paginado por `id` (PK) e nao por `nome`: o proprio loader existe
+    # porque a tabela TEM nomes duplicados, e chave repetida faria
+    # linhas serem puladas entre paginas. A ordem do servidor deixou de
+    # ser por nome, o que nao muda a saida —
+    # `_colapsar_cadastro_recente` reduz por nome normalizado (max
+    # updated_at, independente de ordem) e devolve ja ordenado.
     rows = []
-    for row in _colapsar_cadastro_recente(resp.data or []):
+    for row in _colapsar_cadastro_recente(_paginar_keyset(_pagina, "id")):
         if not _status_consultor_ativo(row.get("status")):
             continue
         nome = (row.get("nome") or "").strip()
@@ -1756,8 +1771,11 @@ def carregar_vinculos_consultores(
     ate hoje nao conseguia perguntar "quanto essa pessoa produz por dia
     de casa". A fonte e a mesma — o ledger ``consultor_vigencia``
     (086/087) —, lido direto pelo PostgREST como
-    ``carregar_supervisores`` ja faz com ``supervisor_vigencia``. Sao
-    ~400 linhas no ledger inteiro: nao ha o que paginar nem RPC a criar.
+    ``carregar_supervisores`` ja faz com ``supervisor_vigencia``. Era
+    ~400 linhas no ledger inteiro quando este loader nasceu — nenhuma
+    RPC a criar —, mas a leitura e **paginada por keyset** desde
+    09/2026: o volume cresce a cada transferencia, e passar do teto da
+    API truncaria o denominador em silencio.
 
     Diferencas DELIBERADAS em relacao a 091, todas na direcao de
     "menos regra derivada, mais fato":
@@ -1855,20 +1873,30 @@ def _fetch_vinculos_consultores(
     # competencia se comecou ate o ultimo dia dela E ainda nao tinha
     # encerrado no primeiro. O filtro no servidor evita trazer o
     # historico inteiro para contar dias de um mes so.
-    resp = (
-        _sb()
-        .table("consultor_vigencia")
-        .select(
-            "nome, nome_normalizado, vigencia_inicio, vigencia_fim,"
-            " lojas(nome)"
+    def _pagina(limite: int):
+        return (
+            _sb()
+            .table("consultor_vigencia")
+            .select(
+                "id, nome, nome_normalizado, vigencia_inicio,"
+                " vigencia_fim, lojas(nome)"
+            )
+            .lte("vigencia_inicio", fim.isoformat())
+            .or_(
+                f"vigencia_fim.is.null,vigencia_fim.gt.{ini.isoformat()}"
+            )
+            .order("id")
+            .limit(limite)
         )
-        .lte("vigencia_inicio", fim.isoformat())
-        .or_(
-            f"vigencia_fim.is.null,vigencia_fim.gt.{ini.isoformat()}"
-        )
-        .execute()
-    )
-    linhas = resp.data or []
+
+    # O ledger tinha ~400 linhas quando este loader nasceu, e a
+    # docstring publica dizia "nao ha o que paginar". Era medicao, nao
+    # garantia: uma linha por (pessoa, loja, janela), que cresce a cada
+    # transferencia. Passar do teto da API truncava em silencio — o
+    # denominador de produtividade perderia pessoas sem nenhum sinal.
+    # Paginar nao custa request a mais enquanto couber numa pagina: o
+    # `_paginar_keyset` encerra quando a pagina volta incompleta.
+    linhas = _paginar_keyset(_pagina, "id")
     if not linhas:
         return pd.DataFrame(columns=_COLS_VINCULOS)
 
@@ -1988,20 +2016,28 @@ def carregar_supervisores(mes: int, ano: int) -> pd.DataFrame:
     ancora = "{:04d}-{:02d}-{:02d}".format(
         ano, mes, calendar.monthrange(ano, mes)[1]
     )
-    resp = (
-        _sb()
-        .table("supervisor_vigencia")
-        .select("nome, lojas(nome, regioes(nome))")
-        .lte("vigencia_inicio", ancora)
-        .or_(f"vigencia_fim.is.null,vigencia_fim.gt.{ancora}")
-        .execute()
-    )
+    def _pagina(limite: int):
+        return (
+            _sb()
+            .table("supervisor_vigencia")
+            .select("id, nome, lojas(nome, regioes(nome))")
+            .lte("vigencia_inicio", ancora)
+            .or_(f"vigencia_fim.is.null,vigencia_fim.gt.{ancora}")
+            .order("id")
+            .limit(limite)
+        )
 
-    if not resp.data:
+    # Mesmo formato de ledger do `consultor_vigencia`, mesma paginacao:
+    # uma linha por (pessoa, loja, janela), que cresce a cada
+    # movimentacao. Truncar aqui tiraria supervisor da lista de
+    # EXCLUSAO — ele voltaria a contar como consultor nas medias.
+    linhas = _paginar_keyset(_pagina, "id")
+
+    if not linhas:
         return pd.DataFrame(columns=["SUPERVISOR", "LOJA", "REGIAO"])
 
     rows = []
-    for s in resp.data:
+    for s in linhas:
         loja = s.get("lojas") or {}
         regiao = loja.get("regioes") or {}
         rows.append(

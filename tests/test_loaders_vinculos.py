@@ -3,9 +3,11 @@ Testes de ``carregar_vinculos_consultores``
 (``src/dashboard/loaders.py``) — o denominador individual lido do
 ledger ``consultor_vigencia``.
 
-O cliente Supabase e monkeypatchado: os testes verificam a CONTAGEM de
+O cliente Supabase e monkeypatchado por um duplo que PAGINA de verdade
+(`ClienteFakePaginado`, em conftest): os testes verificam a CONTAGEM de
 dias uteis por janela e os filtros de populacao (supervisor pela ancora,
-loja inativa, backoffice), nao a query.
+loja inativa, backoffice), nao a query — mas um loader que esqueca de
+paginar recebe so a primeira pagina e falha aqui.
 """
 from datetime import date
 
@@ -13,43 +15,19 @@ import pandas as pd
 import pytest
 
 from src.dashboard import loaders
+from tests.conftest import ClienteFakePaginado
 
 
-class _RespostaFake:
-    def __init__(self, data):
-        self.data = data
-
-
-class _QueryFake:
-    """Encadeia .select/.lte/.or_ e devolve as linhas no .execute()."""
-
-    def __init__(self, data):
-        self._data = data
-
-    def select(self, *_a, **_k):
-        return self
-
-    def lte(self, *_a, **_k):
-        return self
-
-    def or_(self, *_a, **_k):
-        return self
-
-    def execute(self):
-        return _RespostaFake(self._data)
-
-
-class _ClienteFake:
-    def __init__(self, linhas):
-        self._linhas = linhas
-
-    def table(self, nome):
-        assert nome == "consultor_vigencia"
-        return _QueryFake(self._linhas)
+_contador_id = 0
 
 
 def _linha(nome, loja, inicio, fim=None):
+    """Linha do ledger com `id` sequencial — o ledger e lido por
+    paginacao keyset, e a chave precisa existir e ser unica."""
+    global _contador_id
+    _contador_id += 1
     return {
+        "id": f"{_contador_id:08d}",
         "nome": nome,
         "nome_normalizado": " ".join(nome.upper().split()),
         "vigencia_inicio": inicio,
@@ -84,7 +62,8 @@ def julho_sem_feriados(monkeypatch):
 
 
 def _fetch(monkeypatch, linhas, ate=None):
-    monkeypatch.setattr(loaders, "_sb", lambda: _ClienteFake(linhas))
+    cliente = ClienteFakePaginado(linhas, tabela="consultor_vigencia")
+    monkeypatch.setattr(loaders, "_sb", lambda: cliente)
     return loaders._fetch_vinculos_consultores(7, 2026, ate)
 
 

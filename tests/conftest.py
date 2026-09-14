@@ -170,3 +170,89 @@ def df_metas_produto_lojas():
         "CNC": [1000.0, 1000.0],
         "SAQUE": [500.0, 500.0],
     })
+
+
+# ══════════════════════════════════════════════════════
+# Duplo de Supabase que PAGINA de verdade
+#
+# Os duplos antigos ignoravam `.order`/`.limit`/`.gt` e devolviam a
+# lista inteira em um `.execute()`. Com isso, um loader sem paginacao
+# passava nos testes exatamente como um paginado — que e a razao de o
+# truncamento silencioso do item 6 da revisao de 09/2026 nunca ter
+# aparecido na suite.
+#
+# Este duplo respeita o contrato do keyset: ordena pela chave, corta em
+# `limit` e aplica `gt` do cursor. Um loader que esqueca de paginar
+# recebe SO a primeira pagina — e o teste falha, como deve.
+# ══════════════════════════════════════════════════════
+
+
+class RespostaFakePaginada:
+    def __init__(self, data):
+        self.data = data
+
+
+class QueryFakePaginada:
+    """Query fluente que honra order/limit/gt e ignora os filtros.
+
+    Os filtros de servidor (`lte`, `or_`, `eq`, ...) sao no-ops de
+    proposito: quem monta o cenario ja passa as linhas que o filtro
+    deixaria passar. O que este duplo existe para exercitar e a
+    PAGINACAO.
+    """
+
+    def __init__(self, linhas, chave):
+        self._linhas = linhas
+        self._chave = chave
+        self._limite = None
+        self._cursor = None
+
+    def _noop(self, *_a, **_k):
+        return self
+
+    select = lte = gte = lt = or_ = eq = neq = in_ = is_ = _noop
+
+    def order(self, coluna, *_a, **_k):
+        assert coluna == self._chave, (
+            f"paginacao keyset deve ordenar por {self._chave!r}, "
+            f"nao {coluna!r} — chave repetida pula linhas entre paginas"
+        )
+        return self
+
+    def limit(self, n):
+        self._limite = n
+        return self
+
+    def gt(self, coluna, valor):
+        assert coluna == self._chave
+        self._cursor = valor
+        return self
+
+    def execute(self):
+        linhas = sorted(self._linhas, key=lambda r: r[self._chave])
+        if self._cursor is not None:
+            linhas = [r for r in linhas if r[self._chave] > self._cursor]
+        if self._limite is not None:
+            linhas = linhas[: self._limite]
+        return RespostaFakePaginada(linhas)
+
+
+class ClienteFakePaginado:
+    """Cliente Supabase falso que pagina. Conta as paginas servidas.
+
+    ``paginas`` permite afirmar o custo em requests — o que importa no
+    plano Nano: paginar NAO deve acrescentar request enquanto os dados
+    couberem em uma pagina.
+    """
+
+    def __init__(self, linhas, chave="id", tabela=None):
+        self.linhas = linhas
+        self.chave = chave
+        self.tabela = tabela
+        self.paginas = 0
+
+    def table(self, nome):
+        if self.tabela is not None:
+            assert nome == self.tabela, f"tabela inesperada: {nome}"
+        self.paginas += 1
+        return QueryFakePaginada(self.linhas, self.chave)
