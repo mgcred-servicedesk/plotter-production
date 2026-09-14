@@ -36,11 +36,17 @@ src/
     dias_uteis.py              ← calcular_dias_uteis() + carregar_feriados()
   dashboard/
     auth.py                    ← tela_login, usuario_logado, fazer_logout, PERFIS
-    rls.py                     ← aplicar_rls, aplicar_rls_metas, aplicar_rls_supervisores
+    rls.py                     ← decidir_rls (decisão central) + aplicar_rls,
+                                 aplicar_rls_metas, aplicar_rls_supervisores e o
+                                 adaptador da Reconquista (_filtro_rls_reconquista)
     permissions.py             ← pode_ver() — matriz de permissões de abas e cards
-    loaders.py                 ← carregar_* (contratos pagos/analise/cancelados, metas,
-                                 pontuação, períodos, categorias, lojas, consultores).
-                                 Implementa cache dual _atual/_historico.
+    loaders.py                 ← camada de LEITURA: carregar_* (contratos pagos/analise/
+                                 cancelados, metas, pontuação, períodos, categorias,
+                                 lojas, consultores) + cache dual _atual/_historico
+                                 + paginação. Regra de negócio vive em kpis/;
+                                 escrita, em presets_gestao.py.
+    presets_gestao.py          ← ÚNICA escrita do dashboard (gestao_presets:
+                                 insert/update/delete) + leitura e cache da feature
     formatters.py              ← formatadores específicos do dashboard
     user_mgmt.py               ← render_pagina_usuarios()
     feriados_mgmt.py           ← render_pagina_feriados()
@@ -49,6 +55,15 @@ src/
                                  _qtd_produtos, medias_du_por_nivel, metas_produto_diarias)
                                  + as 6 fachadas cacheadas obter_*_periodo consumidas por
                                  app.py, serie_diaria_pago (pura) e limpar_cache_kpis
+      consolidacao.py          ← regras sobre os contratos pagos: pontuação (com
+                                 herança de Portabilidade), fallback de categoria,
+                                 diagnóstico, regras de exclusão e classificações.
+                                 Recebe frames carregados — não toca o Supabase
+      reconquista.py           ← regras da Reconquista e do acelerador: faixas de
+                                 prêmio, base elegível, apuração mensal (VIGENCIA_*),
+                                 quebras por loja/consultor. Não toca o Supabase
+      seguros.py               ← BMG Med / Vida Familiar: união das 3 fontes, dedup
+                                 por CONTRATO_ID e classificação por SUB_STATUS
       produtos.py              ← KPIs por produto (PRODUTOS_DASHBOARD)
       regioes.py               ← evolução MoM D.U., análise por produto/região
       rankings.py              ← rankings de lojas, supervisores, consultores
