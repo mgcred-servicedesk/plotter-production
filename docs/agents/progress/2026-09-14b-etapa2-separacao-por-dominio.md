@@ -6,7 +6,8 @@
 `src/dashboard/tabs/analiticos.py`, e os novos
 `src/dashboard/kpis/{consolidacao,reconquista,seguros}.py`,
 `src/dashboard/presets_gestao.py` + 3 arquivos de teste novos
-**Commit(s):** `d890b13`, `b029ea9`, `b7db506`, `7d14754`
+**Commit(s):** `d890b13`, `b029ea9`, `b7db506`, `7d14754`, `eb2102e`
++ correções de SRP: `e3d0582` (normalização), `bb6d398` (acelerador)
 
 ## Objetivo
 
@@ -28,7 +29,8 @@ Cinco domínios, um commit cada (revisável e revertível sozinho):
 | 4 | Presets (escrita) | `loaders.py` | `presets_gestao.py` |
 | 5 | RLS da Reconquista | `loaders.py` | `rls.py` |
 
-`loaders.py`: **3.583 → 2.884 linhas** (−699). O que sobrou é o que o
+`loaders.py`: **3.583 → 2.755 linhas** (−828, já com as duas
+correções de SRP abaixo). O que sobrou é o que o
 nome promete: consultas, cache dual `_atual`/`_historico` e paginação.
 
 ## Decisões não óbvias
@@ -69,14 +71,13 @@ nome promete: consultas, cache dual `_atual`/`_historico` e paginação.
   (service_role tem BYPASSRLS, então o filtro por `usuario_id` dentro
   de cada query é o que impede mexer em preset alheio).
 
-- **O que deliberadamente NÃO saiu de `loaders.py`:**
+- **O que ficou para trás, e a correção do diagnóstico.** Classifiquei
   `_faixas_acelerador_por_qtd`, `_faixa_agregada_acelerador` e
-  `_por_consultor_acelerador` chamam loaders (faixas, cobrança
-  consignável, consultores ativos, supervisores). São **orquestração**,
-  não regra pura, e trazê-las exigiria injetar cinco loaders —
-  mudança de assinatura que contraria o critério da etapa.
-  `_acelerador_no_escopo` também ficou: depende do perfil logado e é
-  gate de produto. Registrado no topo de `kpis/reconquista.py`.
+  `_por_consultor_acelerador` como "orquestração, não regra pura" e as
+  deixei em `loaders.py`. **A classificação estava errada** — corrigida
+  no commit `bb6d398`, ver a seção de SRP abaixo. `_acelerador_no_escopo`
+  esse sim ficou: depende do perfil logado e é gate de produto, não
+  cálculo.
 
 ## O que a extração revelou
 
@@ -96,25 +97,83 @@ carga. Os testes fixam a ordem das regras (`conta_valor` zera VALOR
 por cima da categoria) e o mapa de Portabilidade, inclusive a ausência
 deliberada de `CONSIG_PRIV`.
 
-**Lacuna encontrada (não corrigida — decisão do usuário):**
-`_norm_texto` faz apenas `strip + upper`, sem dobrar acento. O merge
-de produção por nome em `_juntar_producao` portanto **não casa** `JOÃO`
-com `JOAO`: a produção da pessoa cai para zero silenciosamente (ela
-aparece zerada, não some do universo). A docstring da própria função
-sugere o contrário — "as fontes podem vir com grafia levemente
-diferente do cadastro". Os testes que fixam isso têm `_NAO_` no nome,
-para que mudar seja uma decisão consciente. Se mudar, `_norm` de
-`tabs/produtos.py` — que `_norm_texto` declara replicar — precisa da
-mesma decisão, senão as duas camadas divergem.
+**Lacuna encontrada — e corrigida em seguida (`e3d0582`):**
+`_norm_texto` fazia apenas `strip + upper`, sem dobrar acento, então o
+merge de produção por nome não casava `JOÃO` com `JOAO` e a pessoa
+aparecia zerada no acelerador. Ver a seção "Duas correções de SRP"
+abaixo.
+
+## Duas correções de SRP, depois da etapa
+
+A revisão da própria Etapa 2 (a pedido do usuário) expôs duas
+responsabilidades sem dono. As duas seguem o mesmo padrão: quando uma
+responsabilidade não tem lugar, ela é reimplementada onde faz falta —
+e os clones divergem ou carregam o mesmo bug.
+
+### 1. Normalização de texto (`e3d0582`)
+
+`JOÃO DA SILVA` e `JOAO DA SILVA` não casavam no merge de produção. A
+correção óbvia — dobrar acento no normalizador — **quebraria a aba de
+Produtos**: a config tem literais acentuados (`"CARTÃO BENEFICIO"`,
+`"Venda Pré-Adesão"`) e comparação contra constante do código só
+funciona se nenhum lado dobrar.
+
+São duas responsabilidades com a mesma implementação, e por isso foram
+confundidas. Agora têm nome e dono em `src/shared/texto.py`:
+
+| Função | Compara | Dobra acento? | Por quê |
+|---|---|---|---|
+| `normalizar_nome` | pessoas, entre fontes do banco | **sim** | os dois lados são dado digitado por gente diferente; acento é ruído |
+| `normalizar_rotulo` | rótulo de dado × constante do código | **não** | dobrar só de um lado faz a linha sumir da contagem, em silêncio |
+
+Estava reimplementada em **5 lugares**, todos com o mesmo bug. Os
+quatro primeiros passam a delegar. O inline de `_excluir_sup`
+**precisava** mudar junto: com `supervisores_norm` dobrando e a
+comparação não, supervisor acentuado deixaria de ser excluído e
+voltaria a aparecer como consultor.
+
+Detalhe que custou duas tentativas: a dobra usa NFKD + `replace` do
+bloco de diacríticos combinantes, e **não** o ida-e-volta por ASCII —
+este quebra em série toda nula (chega como `float`, e `.str` levanta
+`AttributeError`). E o regex precisa de string **não-crua**: as colunas
+são Arrow-backed e vão para o RE2 do pyarrow, que não entende escape
+`\u`. Os dois casos têm teste.
+
+### 2. Acelerador: a carga volta ao orquestrador (`bb6d398`)
+
+`aplicar_rls(carregar_cobranca_consignavel(mes, ano))` acontecia **duas
+vezes por render** — uma dentro de `_por_consultor_acelerador` e outra
+em `carregar_reconquista`, que a chama. O gate idem. Não custava query
+(o `st.cache_data` absorve), mas era duplicação que só existia porque
+as duas funções achavam que a carga era responsabilidade delas.
+
+**A pergunta que destravou:** mover as funções exigiria mudar a
+responsabilidade de quem as invoca? Não — e é o contrário.
+`carregar_reconquista` já era o orquestrador: já carregava, já aplicava
+RLS, já montava o dict. A responsabilidade dele tinha **vazado para
+baixo**, e a duplicação era o preço. Consolidar reduz de dois lugares
+que carregam para um.
+
+As três foram para `kpis/reconquista.py` recebendo frames e um
+`resolver_faixas` injetado. O gate ficou com o chamador, que é quem
+conhece o usuário logado. Call site único, então nenhuma interface
+pública mudou. Prova por AST: as duas funções de faixa com corpo
+idêntico; em `montar_acelerador_por_consultor`, o diff é exatamente
+gate + 3 cargas + RLS saindo, sem uma linha de regra tocada.
+
+**Lição para a próxima etapa:** "chama um loader" não é o mesmo que "é
+orquestração". Foi esse atalho que me fez classificar errado na
+primeira passagem.
 
 ## Pendências / follow-ups
 
-- [ ] **Decidir sobre a normalização de acento** em `_norm_texto` /
-      `_norm`. Impacto: consultor com acento divergente entre cadastro
-      e fonte de produção aparece com produção zerada no acelerador.
-- [ ] Trazer `_por_consultor_acelerador` e as duas funções de faixa
-      para `kpis/reconquista.py`, injetando os loaders. Fica para uma
-      passagem que possa mudar assinatura.
+- [x] ~~Decidir sobre a normalização de acento~~ — feito em `e3d0582`.
+- [x] ~~Trazer `_por_consultor_acelerador` e as duas funções de faixa
+      para `kpis/reconquista.py`~~ — feito em `bb6d398`.
+- [ ] Varrer o resto do codebase atrás de outras comparações de nome
+      de pessoa que ainda usem `strip + upper` inline. As 5 conhecidas
+      foram tratadas; a busca foi por `CONSULTOR`/`SUPERVISOR` e pode
+      ter deixado passar comparação com outro nome de coluna.
 - [ ] `tabs/analiticos.py` ainda tem 1.400 linhas e 19% de cobertura.
       A Etapa 2 tirou dali só o que a revisão nomeou (seguros); os
       `_render_*` restantes são UI de verdade, mas
