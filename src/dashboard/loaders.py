@@ -32,7 +32,6 @@ from src.config.supabase_client import get_supabase_client
 from src.dashboard.kpis.detalhes_cards import aplicar_conta_valor
 from src.dashboard.kpis.gerais import (
     excluir_lojas_backoffice,
-    excluir_supervisores,
     filtrar_janela_recente,
 )
 # Regras da Reconquista/acelerador — extraidas na Etapa 2 da revisao
@@ -51,6 +50,10 @@ from src.dashboard.presets_gestao import (  # noqa: F401
     salvar_preset_gestao,
 )
 from src.dashboard.kpis.reconquista import (  # noqa: F401
+    COLS_ACELERADOR,
+    faixa_agregada_acelerador,
+    faixas_acelerador_por_qtd,
+    montar_acelerador_por_consultor,
     VIGENCIA_FUTURA,
     VIGENCIA_HISTORICO,
     VIGENCIA_PROXIMA,
@@ -2407,13 +2410,6 @@ _COLS_COBRANCA_CONSIGNAVEL = {
     "data_status_pagamento": "DATA",
 }
 
-_COLS_ACELERADOR = [
-    "consultor",
-    "efetivadas",
-    "cobranca_consignavel",
-    "total_acelerador",
-    "faixa_rotulo",
-]
 
 
 def _acelerador_no_escopo(mes: int, ano: int) -> bool:
@@ -2594,163 +2590,10 @@ def _faixa_acelerador_historico(qtd: int, mes: int, ano: int) -> Dict:
     return _fetch_faixa_acelerador(qtd, mes, ano)
 
 
-def _faixas_acelerador_por_qtd(qtds, mes: int, ano: int) -> Dict[int, str]:
-    """Resolve o rotulo de cada contagem DISTINTA (1 RPC por valor unico).
-
-    Uma chamada por consultor seria O(n) RPCs para pouquissimos valores
-    distintos; o dedupe + cache mantem o custo em ~1 chamada por faixa.
-    """
-    unicos = sorted({int(q) for q in qtds})
-    return {q: carregar_faixa_acelerador(q, mes, ano)["rotulo"] for q in unicos}
 
 
-def _faixa_agregada_acelerador(
-    totais: Dict,
-    mes: int,
-    ano: int,
-) -> Optional[Dict]:
-    """Faixa do total AGREGADO do escopo: `{rotulo, is_deflator}` ou None.
-
-    Alimenta a barra-resumo, que so faz sentido para o perfil `consultor`
-    — o premio do supervisor e por consultor individual, entao a soma da
-    equipe enganaria. Quem decide exibir e a UI, por
-    `totais["acelerador_perfil"]`. None = sem faixa resolvida (fora do
-    gate ou periodo sem faixas): nao inventar faixa default.
-    """
-    if not totais.get("acelerador_no_escopo"):
-        return None
-    total = int(totais.get("efetivadas", 0) or 0) + int(
-        totais.get("cobranca_consignavel", 0) or 0
-    )
-    faixa = carregar_faixa_acelerador(total, mes, ano)
-    if not faixa.get("rotulo"):
-        return None
-    return {
-        "rotulo": faixa["rotulo"],
-        "is_deflator": bool(faixa.get("is_deflator")),
-    }
 
 
-def _por_consultor_acelerador(
-    clientes: pd.DataFrame,
-    mes: int,
-    ano: int,
-) -> pd.DataFrame:
-    """Quebra por consultor: efetivadas + cobranca consignavel -> faixa.
-
-    Fora do gate (`_acelerador_no_escopo`) devolve frame vazio — nao e
-    erro, e o recurso desligado para o perfil/periodo. O universo inclui
-    os consultores ativos do escopo (via `carregar_consultores_ativos`),
-    para que quem nao pontuou apareca com a faixa minima em vez de
-    sumir da visao do supervisor.
-
-    Supervisor nunca entra no universo/esqueleto acima (regra geral de
-    "Exclusao de supervisores", business-rules.md — o cadastro de
-    `consultores` duplica a maioria dos supervisores como consultor
-    ativo da propria loja). Isso exclui so o NOME zerado da lista, nao
-    producao real: se o supervisor tiver alguma efetivada de
-    reconquista ou contrato de Cobranca Consignavel em nome dele, essa
-    producao aparece como linha separada, rotulada
-    "<nome> (Supervisor)", sempre depois dos consultores reais (nunca
-    entra no sort por producao). Sem producao propria, o nome e
-    omitido — nao ha meta de venda pra supervisor, a funcao dele e
-    cobrar a producao da equipe. Mesmo padrao ja usado em
-    `tabs/produtos.py` (ver business-rules.md, "Produção de supervisor
-    — conta pro total, marcada, fora do ranking").
-    """
-    vazio = pd.DataFrame(columns=_COLS_ACELERADOR)
-    if not _acelerador_no_escopo(mes, ano):
-        return vazio
-
-    # RLS aqui, nunca dentro do cache: as fontes sao globais.
-    contratos = aplicar_rls(carregar_cobranca_consignavel(mes, ano))
-    cobr = _por_consultor_cobranca_consignavel(contratos)
-
-    rec = _por_consultor_reconquista(clientes)
-    rec = (
-        rec[["consultor", "efetivadas"]]
-        if not rec.empty
-        else pd.DataFrame(columns=["consultor", "efetivadas"])
-    )
-
-    df_sup = carregar_supervisores(mes, ano)
-    sup_keys = (
-        set(_norm_texto(df_sup["SUPERVISOR"]))
-        if "SUPERVISOR" in df_sup.columns
-        else set()
-    )
-
-    universo = aplicar_rls(carregar_consultores_ativos())
-    universo = excluir_supervisores(universo, df_sup)
-    universo = (
-        universo[["CONSULTOR"]].rename(columns={"CONSULTOR": "consultor"})
-        if "CONSULTOR" in universo.columns
-        else pd.DataFrame(columns=["consultor"])
-    )
-
-    # Universo = SO consultores ativos, sem supervisor. `rec`/`cobr` so
-    # enriquecem contagem de quem ja esta no universo — nunca adicionam
-    # linha nova aqui (o bloco de producao de supervisor e tratado a
-    # parte, abaixo). Sem essa restricao, um consultor desligado com
-    # cliente elegivel de reconquista no periodo (mesmo sem EFETIVADA,
-    # so aparecer no frame ja basta) ou contrato de cobranca
-    # consignavel pago no mes voltava a aparecer na tabela.
-    cols_prod = ["consultor", "efetivadas", "cobranca_consignavel"]
-    base = (
-        _juntar_producao(universo, rec, cobr)
-        if not universo.empty
-        else pd.DataFrame(columns=cols_prod)
-    )
-
-    # Producao do proprio supervisor: so vira linha (marcada) se rec/cobr
-    # tiver alguma contagem em nome dele; sem producao, fica de fora.
-    bloco_sup = pd.DataFrame(columns=cols_prod)
-    if sup_keys:
-        candidatos = set()
-        for frame in (rec, cobr):
-            if not frame.empty:
-                candidatos |= set(_norm_texto(frame["consultor"])) & sup_keys
-        if candidatos:
-            nomes_sup = (
-                df_sup[["SUPERVISOR"]]
-                .rename(columns={"SUPERVISOR": "consultor"})
-                .drop_duplicates()
-            )
-            nomes_sup = nomes_sup[
-                _norm_texto(nomes_sup["consultor"]).isin(candidatos)
-            ]
-            bloco_sup = _juntar_producao(nomes_sup, rec, cobr)
-            bloco_sup = bloco_sup[
-                (bloco_sup["efetivadas"] + bloco_sup["cobranca_consignavel"])
-                > 0
-            ].copy()
-
-    if base.empty and bloco_sup.empty:
-        return vazio
-
-    for frame in (base, bloco_sup):
-        frame["total_acelerador"] = (
-            frame["efetivadas"] + frame["cobranca_consignavel"]
-        )
-
-    faixas = _faixas_acelerador_por_qtd(
-        pd.concat([base["total_acelerador"], bloco_sup["total_acelerador"]]),
-        mes,
-        ano,
-    )
-    base["faixa_rotulo"] = base["total_acelerador"].map(faixas).fillna("")
-    bloco_sup["faixa_rotulo"] = (
-        bloco_sup["total_acelerador"].map(faixas).fillna("")
-    )
-    bloco_sup["consultor"] = bloco_sup["consultor"] + " (Supervisor)"
-
-    base = base.sort_values(
-        ["total_acelerador", "consultor"], ascending=[False, True]
-    )
-    return (
-        pd.concat([base, bloco_sup], ignore_index=True)[_COLS_ACELERADOR]
-        .reset_index(drop=True)
-    )
 
 
 def carregar_reconquista(mes: int, ano: int) -> Dict:
@@ -2840,9 +2683,17 @@ def carregar_reconquista(mes: int, ano: int) -> Dict:
     # produto: premio/faixa e informacao de quem pontua, quantidade e
     # visao gerencial aberta.
     perfil = _obter_perfil_efetivo()
-    por_consultor = _por_consultor_acelerador(clientes, mes, ano)
-    totais["acelerador_no_escopo"] = _acelerador_no_escopo(mes, ano)
+    no_escopo = _acelerador_no_escopo(mes, ano)
+    totais["acelerador_no_escopo"] = no_escopo
     totais["acelerador_perfil"] = perfil.get("perfil") if perfil else None
+
+    # A carga vem ANTES da quebra por consultor (era o contrario) porque
+    # as duas usam o MESMO frame de cobranca consignavel. Ate 09/2026
+    # `_por_consultor_acelerador` carregava e aplicava RLS por conta
+    # propria, e este bloco fazia o mesmo logo depois: a carga acontecia
+    # duas vezes por render. `_acelerador_no_escopo` implica
+    # `_acelerador_vigente`, entao sempre que a quebra e montada o frame
+    # ja existe aqui.
     if _acelerador_vigente(mes, ano):
         contratos_consignavel = aplicar_rls(
             carregar_cobranca_consignavel(mes, ano)
@@ -2855,9 +2706,29 @@ def carregar_reconquista(mes: int, ano: int) -> Dict:
     else:
         contratos_consignavel = pd.DataFrame()
         totais["cobranca_consignavel"] = 0
+
+    # Fora do gate a quebra nao e montada — e o recurso desligado para o
+    # perfil/periodo, nao erro. O gate mora aqui porque depende do
+    # usuario logado; a regra, em kpis/reconquista.py, so recebe frames.
+    por_consultor = (
+        montar_acelerador_por_consultor(
+            clientes,
+            contratos_consignavel,
+            carregar_supervisores(mes, ano),
+            aplicar_rls(carregar_consultores_ativos()),
+            lambda qtds: faixas_acelerador_por_qtd(
+                qtds, mes, ano, carregar_faixa_acelerador
+            ),
+        )
+        if no_escopo
+        else pd.DataFrame(columns=COLS_ACELERADOR)
+    )
+
     # Faixa do total agregado (barra-resumo). Depende das duas chaves
     # acima, entao vem depois delas.
-    totais["faixa_agregada"] = _faixa_agregada_acelerador(totais, mes, ano)
+    totais["faixa_agregada"] = faixa_agregada_acelerador(
+        totais, mes, ano, carregar_faixa_acelerador
+    )
 
     # Lista completa para o analitico: mesma base e MESMO recorte de RLS
     # dos cortes mensais, so que sem o filtro de mes e ja marcada com a

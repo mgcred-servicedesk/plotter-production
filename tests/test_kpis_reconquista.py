@@ -15,6 +15,7 @@ import pandas as pd
 import pytest
 
 from src.dashboard.kpis.reconquista import (
+    COLS_ACELERADOR,
     _faixa_premio_conversao,
     _juntar_producao,
     _mask_elegivel,
@@ -24,6 +25,9 @@ from src.dashboard.kpis.reconquista import (
     _por_consultor_reconquista,
     _por_loja_reconquista,
     _totais_reconquista,
+    faixa_agregada_acelerador,
+    faixas_acelerador_por_qtd,
+    montar_acelerador_por_consultor,
 )
 
 
@@ -367,3 +371,240 @@ class TestNormTexto:
         nem como o literal "NONE" — então nunca casa com nome nenhum
         no merge, que é o comportamento desejável aqui."""
         assert _norm_texto(pd.Series([None])).isna().all()
+
+
+@pytest.mark.unit
+class TestFaixasAcelerador:
+    """As duas resolvem rótulo de faixa a partir de contagem. O loader
+    chega injetado — é o único ponto que ainda toca o banco, e é o que
+    as torna testáveis sem rede."""
+
+    def test_uma_chamada_por_contagem_DISTINTA(self):
+        """Uma chamada por consultor seria O(n) RPCs para pouquíssimos
+        valores distintos. O dedupe é o que segura o custo."""
+        chamadas = []
+
+        def _loader(qtd, mes, ano):
+            chamadas.append(qtd)
+            return {"rotulo": f"faixa-{qtd}"}
+
+        faixas = faixas_acelerador_por_qtd(
+            pd.Series([3, 3, 3, 5, 5, 3]), 9, 2026, _loader,
+        )
+        assert sorted(chamadas) == [3, 5]
+        assert faixas == {3: "faixa-3", 5: "faixa-5"}
+
+    def test_contagens_vazias_nao_chamam_o_loader(self):
+        def _explode(*_):
+            raise AssertionError("não deveria consultar faixas")
+
+        assert faixas_acelerador_por_qtd(
+            pd.Series([], dtype=float), 9, 2026, _explode,
+        ) == {}
+
+    def test_agregada_fora_do_gate_nao_consulta(self):
+        """`None` = sem faixa resolvida; nunca inventar faixa default."""
+        def _explode(*_):
+            raise AssertionError("não deveria consultar faixas")
+
+        assert faixa_agregada_acelerador(
+            {"acelerador_no_escopo": False}, 9, 2026, _explode,
+        ) is None
+
+    def test_agregada_soma_reconquista_e_cobranca(self):
+        vistos = []
+
+        def _loader(qtd, mes, ano):
+            vistos.append(qtd)
+            return {"rotulo": "OURO", "is_deflator": False}
+
+        out = faixa_agregada_acelerador(
+            {
+                "acelerador_no_escopo": True,
+                "efetivadas": 4,
+                "cobranca_consignavel": 3,
+            },
+            9, 2026, _loader,
+        )
+        assert vistos == [7]
+        assert out == {"rotulo": "OURO", "is_deflator": False}
+
+    def test_agregada_sem_rotulo_devolve_none(self):
+        assert faixa_agregada_acelerador(
+            {"acelerador_no_escopo": True, "efetivadas": 1},
+            9, 2026, lambda *_: {"rotulo": ""},
+        ) is None
+
+
+@pytest.mark.unit
+class TestMontarAceleradorPorConsultor:
+    """A quebra por consultor DEPOIS de deixar de carregar sozinha.
+
+    Até 09/2026 esta função carregava cobrança consignável, supervisores
+    e consultores ativos, e aplicava RLS — tudo que o chamador já fazia.
+    Agora recebe frames, e é isso que a torna testável sem tocar no
+    Supabase.
+    """
+
+    def _resolver(self, qtds):
+        return {int(q): f"faixa-{int(q)}" for q in qtds}
+
+    def _universo(self, *nomes):
+        return pd.DataFrame({"CONSULTOR": list(nomes)})
+
+    def _rec(self, *pares):
+        """clientes da Reconquista: (consultor, status)."""
+        return pd.DataFrame({
+            "co_adesao": range(len(pares)),
+            "consultor": [c for c, _ in pares],
+            "status": [s for _, s in pares],
+            "loja": ["L1"] * len(pares),
+            "regiao": ["R1"] * len(pares),
+            "flag_elegibilidade": ["ELEGIVEL"] * len(pares),
+            "saldo_contabil": [0.0] * len(pares),
+            "dias_atraso": [0] * len(pares),
+        })
+
+    def _cobr(self, *nomes):
+        return pd.DataFrame({"CONSULTOR": list(nomes), "VALOR": [1.0] * len(nomes)})
+
+    def test_soma_reconquista_e_cobranca_por_pessoa(self):
+        out = montar_acelerador_por_consultor(
+            self._rec(("ANA", "EFETIVADA"), ("ANA", "EFETIVADA")),
+            self._cobr("ANA"),
+            pd.DataFrame(columns=["SUPERVISOR"]),
+            self._universo("ANA"),
+            self._resolver,
+        ).set_index("consultor")
+        assert out.loc["ANA", "efetivadas"] == 2
+        assert out.loc["ANA", "cobranca_consignavel"] == 1
+        assert out.loc["ANA", "total_acelerador"] == 3
+
+    def test_quem_nao_produziu_aparece_zerado(self):
+        """O universo manda: consultor ativo sem produção fica na
+        tabela com a faixa mínima, em vez de sumir da visão do
+        supervisor."""
+        out = montar_acelerador_por_consultor(
+            self._rec(("ANA", "EFETIVADA")),
+            pd.DataFrame(),
+            pd.DataFrame(columns=["SUPERVISOR"]),
+            self._universo("ANA", "BRUNO"),
+            self._resolver,
+        ).set_index("consultor")
+        assert out.loc["BRUNO", "total_acelerador"] == 0
+
+    def test_consultor_fora_do_universo_nao_entra(self):
+        """Consultor desligado com lead elegível no período voltava a
+        aparecer antes desta restrição."""
+        out = montar_acelerador_por_consultor(
+            self._rec(("DESLIGADO", "EFETIVADA")),
+            pd.DataFrame(),
+            pd.DataFrame(columns=["SUPERVISOR"]),
+            self._universo("ANA"),
+            self._resolver,
+        )
+        assert "DESLIGADO" not in out["consultor"].tolist()
+
+    def test_supervisor_sai_do_universo(self):
+        """O cadastro de `consultores` duplica a maioria dos
+        supervisores como consultor ativo da própria loja."""
+        out = montar_acelerador_por_consultor(
+            pd.DataFrame(),
+            pd.DataFrame(),
+            pd.DataFrame({"SUPERVISOR": ["CHEFE"]}),
+            self._universo("ANA", "CHEFE"),
+            self._resolver,
+        )
+        assert out["consultor"].tolist() == ["ANA"]
+
+    def test_supervisor_com_producao_vira_linha_marcada(self):
+        out = montar_acelerador_por_consultor(
+            self._rec(("CHEFE", "EFETIVADA")),
+            pd.DataFrame(),
+            pd.DataFrame({"SUPERVISOR": ["CHEFE"]}),
+            self._universo("ANA"),
+            self._resolver,
+        )
+        assert "CHEFE (Supervisor)" in out["consultor"].tolist()
+
+    def test_supervisor_marcado_vem_sempre_depois_dos_consultores(self):
+        """Não entra no sort por produção: não há meta de venda para
+        supervisor."""
+        out = montar_acelerador_por_consultor(
+            self._rec(
+                ("CHEFE", "EFETIVADA"), ("CHEFE", "EFETIVADA"),
+                ("ANA", "EFETIVADA"),
+            ),
+            pd.DataFrame(),
+            pd.DataFrame({"SUPERVISOR": ["CHEFE"]}),
+            self._universo("ANA"),
+            self._resolver,
+        )
+        assert out["consultor"].tolist() == ["ANA", "CHEFE (Supervisor)"]
+
+    def test_supervisor_sem_producao_propria_e_omitido(self):
+        out = montar_acelerador_por_consultor(
+            self._rec(("ANA", "EFETIVADA")),
+            pd.DataFrame(),
+            pd.DataFrame({"SUPERVISOR": ["CHEFE"]}),
+            self._universo("ANA"),
+            self._resolver,
+        )
+        assert not any(
+            "Supervisor" in c for c in out["consultor"].tolist()
+        )
+
+    def test_supervisor_com_acento_divergente_e_reconhecido(self):
+        """Regressão do acento: o matching de supervisor passa por
+        `normalizar_nome`. Antes, `JOÃO` no ledger e `JOAO` na produção
+        eram pessoas diferentes."""
+        out = montar_acelerador_por_consultor(
+            self._rec(("JOAO", "EFETIVADA")),
+            pd.DataFrame(),
+            pd.DataFrame({"SUPERVISOR": ["JOÃO"]}),
+            self._universo("ANA"),
+            self._resolver,
+        )
+        assert "JOÃO (Supervisor)" in out["consultor"].tolist()
+
+    def test_ordena_por_producao_desc(self):
+        out = montar_acelerador_por_consultor(
+            self._rec(("BRUNO", "EFETIVADA"), ("BRUNO", "EFETIVADA"),
+                      ("ANA", "EFETIVADA")),
+            pd.DataFrame(),
+            pd.DataFrame(columns=["SUPERVISOR"]),
+            self._universo("ANA", "BRUNO"),
+            self._resolver,
+        )
+        assert out["consultor"].tolist() == ["BRUNO", "ANA"]
+
+    def test_anexa_o_rotulo_da_faixa(self):
+        out = montar_acelerador_por_consultor(
+            self._rec(("ANA", "EFETIVADA")),
+            pd.DataFrame(),
+            pd.DataFrame(columns=["SUPERVISOR"]),
+            self._universo("ANA"),
+            self._resolver,
+        ).set_index("consultor")
+        assert out.loc["ANA", "faixa_rotulo"] == "faixa-1"
+
+    def test_sem_universo_nem_producao_devolve_frame_com_schema(self):
+        out = montar_acelerador_por_consultor(
+            pd.DataFrame(), pd.DataFrame(),
+            pd.DataFrame(columns=["SUPERVISOR"]),
+            pd.DataFrame(columns=["CONSULTOR"]),
+            self._resolver,
+        )
+        assert out.empty
+        assert list(out.columns) == COLS_ACELERADOR
+
+    def test_nao_consulta_faixas_quando_nao_ha_ninguem(self):
+        def _explode(_):
+            raise AssertionError("não deveria resolver faixas")
+
+        assert montar_acelerador_por_consultor(
+            pd.DataFrame(), pd.DataFrame(),
+            pd.DataFrame(columns=["SUPERVISOR"]),
+            pd.DataFrame(columns=["CONSULTOR"]),
+            _explode,
+        ).empty

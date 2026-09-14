@@ -39,10 +39,11 @@ docs/agents/business-rules.md.
 """
 
 
-from typing import Dict, Tuple
+from typing import Dict, Optional, Tuple
 
 import pandas as pd
 
+from src.dashboard.kpis.gerais import excluir_supervisores
 from src.shared.texto import normalizar_nome
 
 
@@ -408,3 +409,179 @@ def _juntar_producao(
         base["cobranca_consignavel"].fillna(0).astype(int)
     )
     return base.drop(columns=["_key"]).reset_index(drop=True)
+
+
+COLS_ACELERADOR = [
+    "consultor",
+    "efetivadas",
+    "cobranca_consignavel",
+    "total_acelerador",
+    "faixa_rotulo",
+]
+
+
+def faixas_acelerador_por_qtd(
+    qtds,
+    mes: int,
+    ano: int,
+    carregar_faixa_acelerador,
+) -> Dict[int, str]:
+    """Resolve o rotulo de cada contagem DISTINTA (1 RPC por valor unico).
+
+    Uma chamada por consultor seria O(n) RPCs para pouquissimos valores
+    distintos; o dedupe + cache mantem o custo em ~1 chamada por faixa.
+    """
+    unicos = sorted({int(q) for q in qtds})
+    return {q: carregar_faixa_acelerador(q, mes, ano)["rotulo"] for q in unicos}
+
+
+def faixa_agregada_acelerador(
+    totais: Dict,
+    mes: int,
+    ano: int,
+    carregar_faixa_acelerador,
+) -> Optional[Dict]:
+    """Faixa do total AGREGADO do escopo: `{rotulo, is_deflator}` ou None.
+
+    Alimenta a barra-resumo, que so faz sentido para o perfil `consultor`
+    — o premio do supervisor e por consultor individual, entao a soma da
+    equipe enganaria. Quem decide exibir e a UI, por
+    `totais["acelerador_perfil"]`. None = sem faixa resolvida (fora do
+    gate ou periodo sem faixas): nao inventar faixa default.
+    """
+    if not totais.get("acelerador_no_escopo"):
+        return None
+    total = int(totais.get("efetivadas", 0) or 0) + int(
+        totais.get("cobranca_consignavel", 0) or 0
+    )
+    faixa = carregar_faixa_acelerador(total, mes, ano)
+    if not faixa.get("rotulo"):
+        return None
+    return {
+        "rotulo": faixa["rotulo"],
+        "is_deflator": bool(faixa.get("is_deflator")),
+    }
+
+
+def montar_acelerador_por_consultor(
+    clientes: pd.DataFrame,
+    contratos_consignavel: pd.DataFrame,
+    df_sup: pd.DataFrame,
+    universo_ativos: pd.DataFrame,
+    resolver_faixas,
+) -> pd.DataFrame:
+    """Quebra do acelerador por consultor — a regra, sem a carga.
+
+    Recebe tudo pronto e ja pos-RLS. Ate 09/2026 esta funcao carregava
+    sozinha a cobranca consignavel, os supervisores e os consultores
+    ativos, e aplicava RLS — responsabilidades que o chamador
+    (`loaders.carregar_reconquista`) JA tinha. O resultado era
+    `aplicar_rls(carregar_cobranca_consignavel(...))` acontecendo duas
+    vezes por render, uma aqui e uma la. Puxar a carga para o
+    orquestrador nao acrescentou responsabilidade a ele: consolidou uma
+    que ja era dele e havia vazado para baixo.
+
+    O GATE tambem saiu: quem decide se o acelerador detalhado se aplica
+    ao perfil/periodo e `_acelerador_no_escopo`, que depende do usuario
+    logado. O chamador so nao chama esta funcao quando esta fora do
+    gate.
+
+    Args:
+        clientes: leads da Reconquista do mes (pos-RLS).
+        contratos_consignavel: contratos de Cobranca Consignavel do mes
+            (pos-RLS).
+        df_sup: supervisores vigentes na competencia.
+        universo_ativos: consultores ativos do escopo (pos-RLS), ainda
+            COM supervisores — a exclusao acontece aqui.
+        resolver_faixas: callable que recebe as contagens e devolve
+            ``{qtd: rotulo}``; e o unico ponto que ainda toca o banco,
+            e por isso chega injetado.
+
+    Universo = SO consultores ativos, sem supervisor. Supervisor com
+    producao propria vira linha separada, marcada "(Supervisor)" e
+    sempre depois dos consultores reais.
+    """
+    vazio = pd.DataFrame(columns=COLS_ACELERADOR)
+    cobr = _por_consultor_cobranca_consignavel(contratos_consignavel)
+
+    rec = _por_consultor_reconquista(clientes)
+    rec = (
+        rec[["consultor", "efetivadas"]]
+        if not rec.empty
+        else pd.DataFrame(columns=["consultor", "efetivadas"])
+    )
+
+    sup_keys = (
+        set(_norm_texto(df_sup["SUPERVISOR"]))
+        if "SUPERVISOR" in df_sup.columns
+        else set()
+    )
+
+    universo = excluir_supervisores(universo_ativos, df_sup)
+    universo = (
+        universo[["CONSULTOR"]].rename(columns={"CONSULTOR": "consultor"})
+        if "CONSULTOR" in universo.columns
+        else pd.DataFrame(columns=["consultor"])
+    )
+
+    # Universo = SO consultores ativos, sem supervisor. `rec`/`cobr` so
+    # enriquecem contagem de quem ja esta no universo — nunca adicionam
+    # linha nova aqui (o bloco de producao de supervisor e tratado a
+    # parte, abaixo). Sem essa restricao, um consultor desligado com
+    # cliente elegivel de reconquista no periodo (mesmo sem EFETIVADA,
+    # so aparecer no frame ja basta) ou contrato de cobranca
+    # consignavel pago no mes voltava a aparecer na tabela.
+    cols_prod = ["consultor", "efetivadas", "cobranca_consignavel"]
+    base = (
+        _juntar_producao(universo, rec, cobr)
+        if not universo.empty
+        else pd.DataFrame(columns=cols_prod)
+    )
+
+    # Producao do proprio supervisor: so vira linha (marcada) se rec/cobr
+    # tiver alguma contagem em nome dele; sem producao, fica de fora.
+    bloco_sup = pd.DataFrame(columns=cols_prod)
+    if sup_keys:
+        candidatos = set()
+        for frame in (rec, cobr):
+            if not frame.empty:
+                candidatos |= set(_norm_texto(frame["consultor"])) & sup_keys
+        if candidatos:
+            nomes_sup = (
+                df_sup[["SUPERVISOR"]]
+                .rename(columns={"SUPERVISOR": "consultor"})
+                .drop_duplicates()
+            )
+            nomes_sup = nomes_sup[
+                _norm_texto(nomes_sup["consultor"]).isin(candidatos)
+            ]
+            bloco_sup = _juntar_producao(nomes_sup, rec, cobr)
+            bloco_sup = bloco_sup[
+                (bloco_sup["efetivadas"] + bloco_sup["cobranca_consignavel"])
+                > 0
+            ].copy()
+
+    if base.empty and bloco_sup.empty:
+        return vazio
+
+    for frame in (base, bloco_sup):
+        frame["total_acelerador"] = (
+            frame["efetivadas"] + frame["cobranca_consignavel"]
+        )
+
+    faixas = resolver_faixas(
+        pd.concat([base["total_acelerador"], bloco_sup["total_acelerador"]])
+    )
+    base["faixa_rotulo"] = base["total_acelerador"].map(faixas).fillna("")
+    bloco_sup["faixa_rotulo"] = (
+        bloco_sup["total_acelerador"].map(faixas).fillna("")
+    )
+    bloco_sup["consultor"] = bloco_sup["consultor"] + " (Supervisor)"
+
+    base = base.sort_values(
+        ["total_acelerador", "consultor"], ascending=[False, True]
+    )
+    return (
+        pd.concat([base, bloco_sup], ignore_index=True)[COLS_ACELERADOR]
+        .reset_index(drop=True)
+    )
