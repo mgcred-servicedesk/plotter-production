@@ -1,16 +1,109 @@
 """
 Calculo de dias uteis com suporte a feriados.
 
-Modulo compartilhado entre o dashboard (app.py) e os
-relatorios (src/reports/). Feriados sao carregados do
-Supabase e cacheados por 24h no Streamlit.
+Feriados sao carregados do Supabase e cacheados por 24h no Streamlit.
+
+## Ausencia de feriado x falha ao consultar
+
+Ate 09/2026 as duas coisas produziam o mesmo resultado: um `set()`
+vazio. Como o `set()` vinha de dentro da funcao cacheada, uma
+indisponibilidade de 1 segundo virava "nenhum feriado neste mes" por
+**24 horas** — e nao ha erro na tela, so numeros errados: sem feriados
+o `total_du` fica inflado, a meta diaria cai e a projecao sobe.
+
+Agora sao estados distintos:
+
+- ``set()`` devolvido por `carregar_feriados_supabase` significa, de
+  fato, **nenhum feriado no periodo** — e isso pode ser cacheado;
+- falha na consulta levanta `FeriadosIndisponiveis`. Excecao **nao e
+  cacheada** pelo ``st.cache_data`` (verificado), entao o proximo rerun
+  tenta de novo em vez de servir o vazio por 24h.
+
+`carregar_feriados` continua devolvendo `set()` na falha — derrubar o
+dashboard inteiro por causa do calendario seria pior —, mas antes
+**registra**: log de erro e marca em `periodos_com_feriados_indisponiveis()`,
+que a UI le para avisar que os dias uteis daquele periodo estao
+estimados sem feriados.
 """
 from __future__ import annotations
 
+import logging
 from datetime import date, datetime
 from typing import Optional
 
 import pandas as pd
+
+logger = logging.getLogger(__name__)
+
+# Periodos (mes, ano) cuja carga de feriados falhou nesta sessao. Vive
+# em `st.session_state` quando ha Streamlit (cada usuario ve o aviso do
+# proprio rerun) e num set de modulo fora dele (CLI/testes).
+_CHAVE_DEGRADACAO = "_feriados_indisponiveis"
+_degradacao_sem_streamlit: set[tuple[int, int]] = set()
+
+
+class FeriadosIndisponiveis(RuntimeError):
+    """A consulta a tabela de feriados falhou.
+
+    Distinta de "nao ha feriados no periodo", que e um ``set()`` vazio
+    devolvido normalmente. Existe para que a falha nao seja cacheada
+    como se fosse resposta valida — ver o topo do modulo.
+    """
+
+
+def _registro_degradacao() -> set[tuple[int, int]]:
+    """Set de periodos degradados, no melhor armazenamento disponivel."""
+    try:
+        import streamlit as st
+
+        if _CHAVE_DEGRADACAO not in st.session_state:
+            st.session_state[_CHAVE_DEGRADACAO] = set()
+        return st.session_state[_CHAVE_DEGRADACAO]
+    except Exception:
+        return _degradacao_sem_streamlit
+
+
+def _registrar_falha(mes: int, ano: int, exc: BaseException) -> None:
+    """Loga a falha e marca o periodo como degradado."""
+    logger.error(
+        "Falha ao carregar feriados de %02d/%d — dias uteis do periodo "
+        "seguem SEM feriados (total_du inflado, meta diaria subestimada): %s",
+        mes, ano, exc,
+    )
+    try:
+        _registro_degradacao().add((mes, ano))
+    except Exception:
+        pass
+
+
+def _registrar_sucesso(mes: int, ano: int) -> None:
+    """Apaga a marca de degradacao do periodo apos uma carga boa.
+
+    Sem isso o aviso ficaria na tela pelo resto da sessao mesmo depois
+    de o Supabase voltar — e o usuario desconfiaria de numero que ja
+    esta certo.
+    """
+    try:
+        _registro_degradacao().discard((mes, ano))
+    except Exception:
+        pass
+
+
+def periodos_com_feriados_indisponiveis() -> set[tuple[int, int]]:
+    """``{(mes, ano)}`` cuja carga de feriados falhou nesta sessao.
+
+    A UI usa para avisar que os dias uteis daquele periodo estao
+    estimados sem feriados. Vazio = nenhuma falha registrada.
+    """
+    return set(_registro_degradacao())
+
+
+def esquecer_falhas_feriados() -> None:
+    """Zera o registro de degradacao (apos recarregar com sucesso)."""
+    try:
+        _registro_degradacao().clear()
+    except Exception:
+        pass
 
 
 def carregar_feriados_supabase(
@@ -19,12 +112,14 @@ def carregar_feriados_supabase(
 ) -> set[date]:
     """Busca feriados do mes/ano no Supabase.
 
-    Usa query direta na tabela feriados filtrando
-    por intervalo de datas do mes. Retorna set vazio
-    se a tabela ainda nao existir (fallback seguro).
-
     Returns:
-        Conjunto de datas de feriados do periodo.
+        Conjunto de datas de feriados do periodo. **Vazio significa
+        "nenhum feriado"** — nao "nao consegui consultar".
+
+    Raises:
+        FeriadosIndisponiveis: a consulta falhou. Nao devolve `set()`
+            de proposito: quem chama por dentro do cache precisa que a
+            falha suba, para nao ficar 24h cacheada como sucesso.
     """
     from src.config.supabase_client import get_supabase_client
 
@@ -43,8 +138,10 @@ def carregar_feriados_supabase(
             .lt("data", ultimo.isoformat())
             .execute()
         )
-    except Exception:
-        return set()
+    except Exception as exc:
+        raise FeriadosIndisponiveis(
+            f"consulta a feriados de {mes:02d}/{ano} falhou"
+        ) from exc
 
     datas = set()
     for row in resp.data or []:
@@ -78,17 +175,34 @@ def carregar_feriados(
 ) -> set[date]:
     """Ponto de entrada unico para obter feriados.
 
-    Tenta usar cache do Streamlit; se nao estiver
-    rodando dentro do Streamlit, busca direto.
-    Retorna set vazio em caso de qualquer falha.
+    Tenta usar o cache do Streamlit; fora dele, busca direto.
+
+    Devolve `set()` na falha — derrubar o dashboard por causa do
+    calendario seria pior que estimar os dias uteis sem feriados — mas
+    **registra antes**: log de erro e marca em
+    `periodos_com_feriados_indisponiveis()`, para a UI avisar. A falha
+    em si nao fica cacheada, entao o proximo rerun tenta de novo.
     """
     try:
-        return _carregar_feriados_cached(mes, ano)
+        feriados = _carregar_feriados_cached(mes, ano)
+        _registrar_sucesso(mes, ano)
+        return feriados
+    except FeriadosIndisponiveis as exc:
+        # Supabase falhou. Nao repetir aqui: `st.cache_data` nao
+        # guardou nada, entao o proximo rerun ja e uma nova tentativa.
+        _registrar_falha(mes, ano, exc)
+        return set()
     except Exception:
-        try:
-            return carregar_feriados_supabase(mes, ano)
-        except Exception:
-            return set()
+        # Streamlit ausente (CLI/teste): cai para a busca direta.
+        pass
+
+    try:
+        feriados = carregar_feriados_supabase(mes, ano)
+        _registrar_sucesso(mes, ano)
+        return feriados
+    except FeriadosIndisponiveis as exc:
+        _registrar_falha(mes, ano, exc)
+        return set()
 
 
 def limpar_cache_feriados() -> None:

@@ -111,7 +111,10 @@ from src.dashboard.ui.theme import (
     render_overlay_fresh_login,
 )
 from src.dashboard.ui.theme_claro_avancado import aplicar_tema_claro_avancado
-from src.shared.dias_uteis import calcular_dias_uteis
+from src.shared.dias_uteis import (
+    calcular_dias_uteis,
+    periodos_com_feriados_indisponiveis,
+)
 
 warnings.filterwarnings("ignore", category=FutureWarning)
 warnings.filterwarnings("ignore", message=".*ScriptRunContext.*")
@@ -472,6 +475,20 @@ def main():
             ultima_atualizacao = None
             dia_atual = datetime.now().day
         _, du_decorridos, _ = calcular_dias_uteis(ano, mes, dia_atual)
+
+        # Feriados indisponiveis => dias uteis contados SEM eles:
+        # `total_du` infla, a meta diaria cai e a projecao sobe. Ate
+        # 09/2026 isso passava mudo (o loader devolvia vazio na falha e
+        # o cache guardava por 24h); agora a falha e registrada e o
+        # aviso aparece, porque numero errado sem sinal e pior que
+        # numero com ressalva.
+        if (mes, ano) in periodos_com_feriados_indisponiveis():
+            st.warning(
+                "Não foi possível carregar os feriados do período. Os "
+                "dias úteis estão sendo contados **sem feriados**, "
+                "então a meta diária aparece menor e a projeção, maior. "
+                "Atualize os dados para tentar de novo."
+            )
 
         # Data de referencia da apuracao: ULTIMO DIA COM DADO na
         # competencia — a mesma que resolve `du_decorridos` acima. Vai
