@@ -30,6 +30,7 @@ from src.dashboard.ui.charts import (
 from src.dashboard.ui.header import chart_card_close, chart_card_open
 from src.dashboard.ui.sidebar import aplicar_filtros_ui
 from src.dashboard.rls import _obter_perfil_efetivo, aplicar_rls
+from src.shared.texto import normalizar_nome, normalizar_rotulo
 from src.shared.dias_uteis import calcular_dias_uteis, carregar_feriados
 
 logger = logging.getLogger(__name__)
@@ -284,8 +285,13 @@ def _html_tabela_regional(
 
 
 def _norm(serie: pd.Series) -> pd.Series:
-    """Normaliza texto para comparacao: str + strip + upper."""
-    return serie.astype(str).str.strip().str.upper()
+    """Chave de comparacao de ROTULO DE DADO — ver `shared/texto.py`.
+
+    NAO dobra acento: do outro lado da comparacao ha constante escrita
+    no codigo (`"SEGURO PRESTAMISTA"`, `_BANCOS_BMG_HELP`). Para
+    comparar NOME DE PESSOA use `normalizar_nome` — e outra regra.
+    """
+    return normalizar_rotulo(serie)
 
 
 def _mask_falsa(df: pd.DataFrame) -> pd.Series:
@@ -364,12 +370,14 @@ def _mask_banco(df: pd.DataFrame, bancos) -> pd.Series:
 def _mask_supervisor(df: pd.DataFrame, supervisores_norm: set) -> pd.Series:
     """Mascara de linhas cujo ``CONSULTOR`` e um supervisor conhecido.
 
-    ``supervisores_norm`` ja vem normalizado (strip + upper) por quem
-    monta a lista a partir de ``df_sup`` — ver ``_render_produto_regional``.
+    ``supervisores_norm`` ja vem por ``normalizar_nome`` de quem monta a
+    lista a partir de ``df_sup`` — ver ``_render_produto_regional``. Os
+    dois lados PRECISAM usar a mesma funcao: dobrar acento so aqui
+    faria supervisor com acento deixar de ser reconhecido.
     """
     if not supervisores_norm or "CONSULTOR" not in df.columns:
         return _mask_falsa(df)
-    return _norm(df["CONSULTOR"]).isin(supervisores_norm)
+    return normalizar_nome(df["CONSULTOR"]).isin(supervisores_norm)
 
 
 def _render_total_produto(
@@ -548,18 +556,18 @@ def _render_produto_regional(
     ):
         supervisores_raw = set(df_sup["SUPERVISOR"].dropna().unique())
 
-    supervisores_norm = {
-        str(n).strip().upper() for n in supervisores_raw
-    } if supervisores_raw else set()
+    supervisores_norm = set(
+        normalizar_nome(pd.Series(list(supervisores_raw))).dropna()
+    ) if supervisores_raw else set()
 
     def _excluir_sup(frame: pd.DataFrame) -> pd.DataFrame:
+        # `normalizar_nome` (e nao strip+upper inline) porque
+        # `supervisores_norm` foi montado com ela: normalizar so um dos
+        # lados faria supervisor com acento deixar de ser excluido, e
+        # ele voltaria a aparecer como consultor.
         if supervisores_norm and "CONSULTOR" in frame.columns:
-            mask_nao_sup = (
-                frame["CONSULTOR"]
-                .astype(str)
-                .str.strip()
-                .str.upper()
-                .isin(supervisores_norm)
+            mask_nao_sup = normalizar_nome(frame["CONSULTOR"]).isin(
+                supervisores_norm
             )
             return frame[~mask_nao_sup]
         return frame

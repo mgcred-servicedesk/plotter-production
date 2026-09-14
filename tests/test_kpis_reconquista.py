@@ -280,19 +280,14 @@ class TestJuntarProducao:
         )
         assert out["efetivadas"].tolist() == [2]
 
-    def test_acento_divergente_NAO_casa(self):
-        """Caracterização de uma LACUNA, não de um acerto.
+    def test_acento_divergente_casa(self):
+        """A regressão que fechou a lacuna de 09/2026.
 
-        A docstring de `_juntar_producao` diz que o merge existe porque
-        "as fontes podem vir com grafia levemente diferente do
-        cadastro" — mas `_norm_texto` só faz strip+upper. `JOÃO` e
-        `JOAO` viram chaves diferentes, e a produção da pessoa cai para
-        zero silenciosamente (não some do universo, o que tornaria o
-        erro visível: ela aparece zerada).
-
-        Se a decisão for passar a dobrar acento, é este teste que muda
-        — e aí `_norm` de `tabs/produtos.py`, que ele declara replicar,
-        precisa da mesma decisão."""
+        `JOÃO DA SILVA` no cadastro e `JOAO DA SILVA` na fonte de
+        produção são a MESMA pessoa. Antes de `normalizar_nome`, o
+        merge por `strip + upper` fazia duas chaves e a produção dela
+        caía para zero em silêncio — ela não sumia da tabela (o que
+        tornaria o erro visível), aparecia zerada."""
         out = _juntar_producao(
             self._nomes("JOÃO DA SILVA"),
             pd.DataFrame({
@@ -300,7 +295,28 @@ class TestJuntarProducao:
             }),
             pd.DataFrame(),
         )
-        assert out["efetivadas"].tolist() == [0]
+        assert out["efetivadas"].tolist() == [2]
+
+    def test_acento_divergente_no_outro_sentido_tambem_casa(self):
+        """Qual lado tem o acento não pode importar."""
+        out = _juntar_producao(
+            self._nomes("JOAO DA SILVA"),
+            pd.DataFrame({
+                "consultor": ["JOÃO DA SILVA"], "efetivadas": [2],
+            }),
+            pd.DataFrame(),
+        )
+        assert out["efetivadas"].tolist() == [2]
+
+    def test_cedilha_e_til_tambem_dobram(self):
+        out = _juntar_producao(
+            self._nomes("CONCEIÇÃO"),
+            pd.DataFrame({
+                "consultor": ["conceicao"], "efetivadas": [5],
+            }),
+            pd.DataFrame(),
+        )
+        assert out["efetivadas"].tolist() == [5]
 
     def test_soma_linhas_repetidas_da_mesma_pessoa(self):
         out = _juntar_producao(
@@ -328,16 +344,20 @@ class TestJuntarProducao:
 
 @pytest.mark.unit
 class TestNormTexto:
-    """`str + strip + upper`, e só isso. Réplica declarada de `_norm`
-    de `tabs/produtos.py` (a camada de dados não importa da de UI)."""
+    """Alias de `shared/texto.py::normalizar_nome` — mantido porque é o
+    nome que `loaders.py` importa. A cobertura da função em si está em
+    `tests/test_shared_texto.py`; aqui ficam só os casos que importam
+    para a Reconquista."""
 
     def test_normaliza_caixa_e_espacos_em_volta(self):
         assert _norm_texto(pd.Series(["  ana  "])).tolist() == ["ANA"]
 
-    def test_NAO_remove_acento(self):
-        """Lacuna documentada — ver
-        `TestJuntarProducao::test_acento_divergente_NAO_casa`."""
-        assert _norm_texto(pd.Series(["João"])).tolist() == ["JOÃO"]
+    def test_remove_acento(self):
+        """É chave de comparação de NOME — acento é ruído aqui, porque
+        os dois lados vêm do banco, digitados em cadastros diferentes.
+        Para rótulo de dado contra constante do código a regra é a
+        oposta: `normalizar_rotulo` preserva (ver `shared/texto.py`)."""
+        assert _norm_texto(pd.Series(["João"])).tolist() == ["JOAO"]
 
     def test_NAO_colapsa_espaco_interno(self):
         assert _norm_texto(pd.Series(["A  B"])).tolist() == ["A  B"]

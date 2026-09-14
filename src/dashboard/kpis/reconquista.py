@@ -43,6 +43,8 @@ from typing import Dict, Tuple
 
 import pandas as pd
 
+from src.shared.texto import normalizar_nome
+
 
 # ══════════════════════════════════════════════════════
 # Reconquista MG CRED (v2)
@@ -334,12 +336,15 @@ def _por_consultor_reconquista(clientes: pd.DataFrame) -> pd.DataFrame:
 
 
 def _norm_texto(serie: pd.Series) -> pd.Series:
-    """Normaliza texto para comparacao: str + strip + upper.
+    """Chave de comparacao de NOME DE PESSOA — ver `shared/texto.py`.
 
-    Replica `_norm` de tabs/produtos.py em vez de importar: a camada de
-    dados nao depende da camada de UI (ver docs/agents/architecture.md).
+    Alias mantido porque e o nome que `loaders.py` ja importava. A
+    implementacao saiu daqui em 09/2026: era `strip + upper` replicado
+    do `_norm` de `tabs/produtos.py`, e NAO dobrava acento — entao o
+    merge de producao nao casava `JOÃO DA SILVA` com `JOAO DA SILVA` e
+    a pessoa aparecia zerada no acelerador.
     """
-    return serie.astype(str).str.strip().str.upper()
+    return normalizar_nome(serie)
 
 
 def _acelerador_vigente(mes: int, ano: int) -> bool:
