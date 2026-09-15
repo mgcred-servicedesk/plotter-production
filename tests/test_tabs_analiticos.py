@@ -225,7 +225,7 @@ class TestSelecionarBanco:
 # Os expanders de Emissão e Super Conta reimplementavam a máscara
 # inline — uma quarta superfície para "o que é Emissão / Super Conta",
 # além de `mascaras_aceleradores` (kpis/gerais.py), `kpis/produtos.py`
-# e `tabs/produtos.py::_PRODUTOS_QTD`. Passaram a usar a canônica.
+# e `tabs/produtos.py::_PRODS_QTD`. Passaram a usar a canônica.
 #
 # `_criterio_inline_*` abaixo é o código ANTIGO, copiado verbatim como
 # referência: a troca só é válida se as duas marcam as mesmas linhas

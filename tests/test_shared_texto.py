@@ -32,7 +32,7 @@ class TestNormalizarRotulo:
         "CARTÃO BENEFICIO", "Venda Pré-Adesão",
     ])
     def test_preserva_acento_dos_literais_da_config(self, literal):
-        """Estes dois estão em `_PRODUTOS_QTD` (tabs/produtos.py). Se
+        """Estes dois estão em `_PRODS_QTD` (tabs/produtos.py). Se
         esta função passasse a dobrar acento, a série viraria `CARTAO`
         e o literal continuaria `CARTÃO`: a linha sumiria da contagem
         sem erro nenhum."""

@@ -206,8 +206,10 @@ de BMG Med, Vida Familiar, Emissão e Super Conta.
 > Familiar ali seguem por `kpis/seguros.py` (união das três fontes).
 >
 > ⚠️ **Divergência aberta — Emissão tem dois critérios.** A consolidação
-> (zeragem de valor, `is_emissao_cartao`) e o contador da aba Produtos
-> usam `TIPO OPER. ∈ {CARTÃO BENEFICIO, Venda Pré-Adesão}`;
+> (zeragem de valor, `is_emissao_cartao`), os cards de quantidade do topo
+> (`kpis/gerais.py::_PRODUTOS_QTD`) e o contador da aba Produtos
+> (`tabs/produtos.py::_PRODS_QTD`) usam
+> `TIPO OPER. ∈ {CARTÃO BENEFICIO, Venda Pré-Adesão}`;
 > `mascaras_aceleradores` (rankings, Gestão, Distribuição, Aceleradores)
 > usa `TIPO_PRODUTO ∈ PRODUTOS_EMISSAO` (`EMISSAO`, `EMISSAO CC`,
 > `EMISSAO CB`). Se não marcarem as mesmas linhas, as superfícies contam

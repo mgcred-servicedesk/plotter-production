@@ -102,3 +102,21 @@ ORDER BY 3 DESC;
       Cancelados divide pela contagem total de linhas. Pode ser
       intencional, porque a consolidação só zera emissão nos pagos.
       Pergunta registrada, sem mudança.
+
+## Adendo — terceira superfície de Emissão por `TIPO OPER.`
+
+Conferindo o nome da constante da aba Produtos (é `_PRODS_QTD`, não
+`_PRODUTOS_QTD`, como escrevi aqui e no `business-rules.md`), achei a
+`_PRODUTOS_QTD` **real**, em `kpis/gerais.py`: os cards de quantidade
+do topo. Ela conta Emissão por `is_emissao_cartao` nos pagos e por
+`tipo_oper_analise` em análise, ou seja, por `TIPO OPER.`.
+
+A tabela da divergência fica assim:
+
+| Critério | Superfícies |
+|---|---|
+| `TIPO OPER. ∈ {CARTÃO BENEFICIO, Venda Pré-Adesão}` | consolidação (zeragem), cards de quantidade do topo, aba Produtos |
+| `TIPO_PRODUTO ∈ {EMISSAO, EMISSAO CC, EMISSAO CB}` | `mascaras_aceleradores`: rankings, Gestão, Distribuição, Aceleradores |
+
+Se o SQL mostrar divergência, o card do topo e o ranking discordam
+sobre a Emissão da mesma pessoa.
