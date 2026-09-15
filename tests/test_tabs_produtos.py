@@ -980,3 +980,94 @@ class TestRenderProdutoRegionalProducaoSupervisor:
         assert _contagens_na_linha(html, "Joao") == [0, 1, 2]
         assert _contagens_na_linha(html, "Maria") == [0, 1, 2]
         assert _contagens_na_linha(html, "Total") == [0, 2, 4]
+
+
+@pytest.mark.unit
+class TestMesComparativoReflecteDadoNovo:
+    """O frame comparativo precisa acompanhar o dado, não só o escopo.
+
+    O bug: a chave de ``_carregar_mes_comparativo`` tinha período,
+    perfil, escopo e filtros — nada do dado. Enquanto eles não mudavam,
+    ``consolidar_dados`` nem era chamada: o TTL do loader não tinha
+    efeito e uma correção retroativa num mês passado nunca chegava a
+    quem já estava com a aba aberta. Mesmo defeito da chave dos KPIs
+    corrigido na Etapa 1 da revisão de 09/2026.
+
+    Cada teste chama DUAS vezes com a MESMA sessão, o MESMO perfil e a
+    MESMA sidebar — só o que ``consolidar_dados`` devolve muda.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _ambiente(self, monkeypatch):
+        import src.dashboard.tabs.produtos as mod
+
+        st.session_state.clear()
+        self.carga = {"df": pd.DataFrame({"REGIAO": ["R1"], "VALOR": [100.0]})}
+        self.rls = []
+        monkeypatch.setattr(
+            mod, "consolidar_dados",
+            lambda mes, ano: (self.carga["df"].copy(), None, None),
+        )
+        monkeypatch.setattr(mod, "aplicar_nomes_display_produto", lambda df: df)
+
+        def _rls(df):
+            self.rls.append(len(df))
+            return df
+
+        monkeypatch.setattr(mod, "aplicar_rls", _rls)
+        monkeypatch.setattr(
+            mod, "_obter_perfil_efetivo",
+            lambda: {"perfil": "admin", "escopo": []},
+        )
+        self.mod = mod
+        yield
+        st.session_state.clear()
+
+    def _carregar(self):
+        return self.mod._carregar_mes_comparativo(
+            8, 2026, prefixo="_df_ant", rotulo="mês anterior",
+        )
+
+    def test_correcao_retroativa_chega_na_sessao_aberta(self):
+        assert self._carregar()["VALOR"].sum() == pytest.approx(100.0)
+
+        self.carga["df"] = pd.DataFrame(
+            {"REGIAO": ["R1", "R1"], "VALOR": [100.0, 250.0]}
+        )
+        assert self._carregar()["VALOR"].sum() == pytest.approx(350.0)
+
+    def test_snapshot_pre_rls_acompanha(self):
+        self._carregar()
+        self.carga["df"] = pd.DataFrame({"REGIAO": ["R2"], "VALOR": [7.0]})
+        self._carregar()
+        assert _mes_comparativo_full("_df_ant")["REGIAO"].tolist() == ["R2"]
+
+    def test_dado_identico_nao_refaz_a_cadeia(self):
+        """A correção não pode custar o memo: RLS e filtros só rodam de
+        novo quando o dado ou o escopo mudam."""
+        self._carregar()
+        self._carregar()
+        assert len(self.rls) == 1
+
+    def test_escopo_diferente_continua_invalidando(self, monkeypatch):
+        self._carregar()
+        monkeypatch.setattr(
+            self.mod, "_obter_perfil_efetivo",
+            lambda: {"perfil": "gerente_comercial", "escopo": ["R1"]},
+        )
+        self._carregar()
+        assert len(self.rls) == 2
+
+    def test_falha_nao_fica_congelada_na_sessao(self, monkeypatch):
+        """Antes, a falha era memoizada sob a chave de escopo: a curva
+        sumia até alguém clicar em "Atualizar Dados"."""
+        original = self.mod.consolidar_dados
+
+        def _falha(mes, ano):
+            raise ConnectionError("sem rede")
+
+        monkeypatch.setattr(self.mod, "consolidar_dados", _falha)
+        assert self._carregar().empty
+
+        monkeypatch.setattr(self.mod, "consolidar_dados", original)
+        assert self._carregar()["VALOR"].sum() == pytest.approx(100.0)

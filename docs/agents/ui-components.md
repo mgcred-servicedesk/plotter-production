@@ -242,6 +242,13 @@ a chave é a fronteira entre perfis. Único caso hoje:
 `tabs/produtos.py::_carregar_mes_comparativo` (mês anterior e mesmo mês
 do ano anterior, para as curvas do gráfico acumulado e do heatmap).
 
+A chave também **precisa** da revisão do dado (`_revisao_frame` do
+retorno de `consolidar_dados`), não só do escopo. Sem ela, a função
+cacheada nem é chamada enquanto o escopo não muda: o TTL do loader não
+tem efeito e o frame fica congelado pela sessão inteira. Por isso
+`consolidar_dados` é chamada a cada render — um cache hit, com custo de
+milissegundos e sem request — e só nomes, RLS e filtros são memoizados.
+
 ```python
 # src/dashboard/tabs/produtos.py
 def render_tab_produtos(df, df_metas_produto, categorias, ano, mes, dia_atual, df_sup, ...):

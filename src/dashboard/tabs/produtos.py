@@ -14,6 +14,7 @@ import streamlit as st
 import streamlit_antd_components as sac
 
 from src.dashboard.formatters import formatar_moeda, formatar_numero
+from src.dashboard.kpis.gerais import _revisao_frame
 from src.dashboard.kpis.produtos import calcular_kpis_por_produto
 from src.dashboard.kpis.regioes import (
     calcular_evolucao_media_du,
@@ -956,9 +957,19 @@ def _carregar_mes_comparativo(
     ``_mes_comparativo_full``). Nao paga query extra, so guarda a
     referencia anterior ao ``aplicar_rls``.
 
+    **A chave inclui a revisao do dado**, nao so o escopo. Ate 09/2026
+    ela tinha so periodo/perfil/filtros: enquanto nao mudavam,
+    ``consolidar_dados`` nem era chamada, o TTL do loader nao tinha
+    efeito e correcao retroativa num mes passado nunca chegava a quem ja
+    estava com a aba aberta. Agora ``consolidar_dados`` e consultada a
+    cada render (cache hit do ``st.cache_data``: ms, nenhum request) e
+    so a cadeia nomes + RLS + filtros e memoizada, refeita quando o
+    dado (``_revisao_frame``) ou o escopo mudam.
+
     Falha de carga nao derruba a aba: e logada, virada em ``st.warning``
     visivel e o comparativo cai para um frame vazio (o grafico apenas
-    perde a curva).
+    perde a curva). A falha nao fica congelada na sessao: o proximo
+    rerun tenta de novo.
 
     Args:
         mes / ano: periodo a carregar.
@@ -967,10 +978,11 @@ def _carregar_mes_comparativo(
             mesmo mes do ano anterior).
         rotulo: nome do comparativo nas mensagens de log e de aviso.
     """
-    chave = _chave_mes_comparativo(mes, ano)
-    if st.session_state.get(f"{prefixo}_chave") != chave:
-        try:
-            frame, _, _ = consolidar_dados(mes, ano)
+    chave_escopo = _chave_mes_comparativo(mes, ano)
+    try:
+        frame, _, _ = consolidar_dados(mes, ano)
+        chave = (chave_escopo, _revisao_frame(frame))
+        if st.session_state.get(f"{prefixo}_chave") != chave:
             frame = aplicar_nomes_display_produto(frame)
             frame_full = frame
             frame = aplicar_rls(frame)
@@ -979,19 +991,21 @@ def _carregar_mes_comparativo(
                 or st.session_state.get("ui_filtro_consultor")
             ):
                 frame = aplicar_filtros_ui(frame)
-        except Exception as exc:
-            logger.exception(
-                "Falha ao carregar %s (%s/%s)", rotulo, mes, ano,
-            )
-            st.warning(
-                f"Não foi possível carregar o {rotulo} "
-                f"({mes:02d}/{ano}): {exc}"
-            )
-            frame = pd.DataFrame()
-            frame_full = pd.DataFrame()
-        st.session_state[f"{prefixo}_cache"] = frame
-        st.session_state[f"{prefixo}_cache_full"] = frame_full
-        st.session_state[f"{prefixo}_chave"] = chave
+            st.session_state[f"{prefixo}_cache"] = frame
+            st.session_state[f"{prefixo}_cache_full"] = frame_full
+            st.session_state[f"{prefixo}_chave"] = chave
+    except Exception as exc:
+        logger.exception(
+            "Falha ao carregar %s (%s/%s)", rotulo, mes, ano,
+        )
+        st.warning(
+            f"Não foi possível carregar o {rotulo} "
+            f"({mes:02d}/{ano}): {exc}"
+        )
+        st.session_state[f"{prefixo}_cache"] = pd.DataFrame()
+        st.session_state[f"{prefixo}_cache_full"] = pd.DataFrame()
+        # Sem chave valida: o proximo rerun tenta de novo.
+        st.session_state.pop(f"{prefixo}_chave", None)
     return st.session_state[f"{prefixo}_cache"]
 
 
