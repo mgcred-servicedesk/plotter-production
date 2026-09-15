@@ -8,7 +8,6 @@ import pandas as pd
 import streamlit as st
 import streamlit_antd_components as sac
 
-from src.config.settings import PRODUTOS_EMISSAO
 from src.dashboard.components.tables import (
     botao_exportar_csv,
     exibir_tabela,
@@ -21,6 +20,7 @@ from src.dashboard.formatters import (
 from src.dashboard.kpis.gerais import (
     calcular_assertividade_consultores,
     calcular_oportunidades_perdidas,
+    mascaras_aceleradores,
     separar_cancelados_liquidos,
 )
 from src.dashboard.kpis.seguros import (
@@ -177,11 +177,7 @@ def _render_detalhamento_pagos(df, df_sup):
     # NUM_PROPOSTA preferido; fallback para CONTRATO_ID em registros
     # importados antes da correção do campo Nº PROP/ADE.
     df_d = df_d.copy()
-    df_d["NR_ADE"] = (
-        df_d.get("NUM_PROPOSTA", pd.Series("", index=df_d.index))
-        .replace("", pd.NA)
-        .fillna(df_d["CONTRATO_ID"].astype(str))
-    )
+    df_d["NR_ADE"] = _nr_ade(df_d)
 
     cols = ["NR_ADE", "DATA", "LOJA", "CONSULTOR"]
     if "REGIAO" in df_d.columns:
@@ -243,11 +239,7 @@ def _render_detalhamento_em_analise(df_analise):
 
     # Tabela detalhada
     df_d = df_d.copy()
-    df_d["NR_ADE"] = (
-        df_d.get("NUM_PROPOSTA", pd.Series("", index=df_d.index))
-        .replace("", pd.NA)
-        .fillna(df_d["CONTRATO_ID"].astype(str))
-    )
+    df_d["NR_ADE"] = _nr_ade(df_d)
 
     cols = ["NR_ADE", "DATA_CADASTRO", "LOJA", "CONSULTOR"]
     if "REGIAO" in df_d.columns:
@@ -332,11 +324,7 @@ def _render_detalhamento_cancelados(df_cancel):
 
     # Tabela detalhada
     df_d = df_d.copy()
-    df_d["NR_ADE"] = (
-        df_d.get("NUM_PROPOSTA", pd.Series("", index=df_d.index))
-        .replace("", pd.NA)
-        .fillna(df_d["CONTRATO_ID"].astype(str))
-    )
+    df_d["NR_ADE"] = _nr_ade(df_d)
 
     cols = ["NR_ADE", "DATA_CADASTRO", "LOJA", "CONSULTOR"]
     if "REGIAO" in df_d.columns:
@@ -646,6 +634,17 @@ def _render_expander_seguro(
         )
 
 
+def _linhas_acelerador(fonte: pd.DataFrame, nome: str) -> pd.DataFrame:
+    """Linhas de ``fonte`` que sao o acelerador ``nome``.
+
+    Delega a ``mascaras_aceleradores`` (kpis/gerais.py), a definicao
+    unica de Emissao e Super Conta. Ate 09/2026 os expanders escreviam a
+    mascara inline — uma quarta superficie que concordava com a canonica
+    por coincidencia.
+    """
+    return fonte[mascaras_aceleradores(fonte)[nome]]
+
+
 def _render_expander_emissao(
     df: pd.DataFrame,
     df_analise: pd.DataFrame,
@@ -660,10 +659,7 @@ def _render_expander_emissao(
             st.warning("Nenhum contrato de emissao no periodo.")
         return
 
-    mask = fonte["TIPO_PRODUTO"].astype(str).str.upper().isin(
-        {p.upper() for p in PRODUTOS_EMISSAO}
-    )
-    df_e = fonte[mask]
+    df_e = _linhas_acelerador(fonte, "Emissao")
 
     titulo = f"Emissao — {len(df_e)} contratos"
     with st.expander(titulo, expanded=False):
@@ -723,8 +719,7 @@ def _render_expander_super_conta(
             st.warning("Nenhum contrato Super Conta no periodo.")
         return
 
-    mask = fonte["SUBTIPO"].fillna("").astype(str).str.strip().str.upper() == "SUPER CONTA"
-    df_s = fonte[mask]
+    df_s = _linhas_acelerador(fonte, "Super Conta")
 
     titulo = f"Super Conta — {len(df_s)} contratos"
     with st.expander(titulo, expanded=False):

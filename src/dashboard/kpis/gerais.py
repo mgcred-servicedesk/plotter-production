@@ -300,7 +300,10 @@ def mascaras_aceleradores(df: pd.DataFrame) -> Dict[str, pd.Series]:
         return df[col].fillna(False).astype(bool)
 
     if "TIPO_PRODUTO" in df.columns:
-        emissao = df["TIPO_PRODUTO"].str.upper().isin(
+        # astype(str) antes de .str: coluna toda nula chega como float e
+        # o acessor .str levantaria. NaN/None viram "NAN"/"NONE", fora
+        # do conjunto — mesmo resultado para texto.
+        emissao = df["TIPO_PRODUTO"].astype(str).str.upper().isin(
             {p.upper() for p in PRODUTOS_EMISSAO}
         )
     else:

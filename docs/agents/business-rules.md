@@ -47,7 +47,8 @@ vivo do antigo aviso baseado na planilha `pontuacao/pontos_{mes}.xlsx`.)
 
 ## Emissão de cartão
 
-`TIPO_PRODUTO ∈ {CARTÃO BENEFICIO, Venda Pré-Adesão}`:
+`TIPO OPER. ∈ {CARTÃO BENEFICIO, Venda Pré-Adesão}` (flag
+`is_emissao_cartao`, `kpis/consolidacao.py`):
 
 - **Contam apenas como quantidade**.
 - `conta_valor = False` e `conta_pontuacao = False` em `categorias_produto`.
@@ -199,7 +200,21 @@ de BMG Med, Vida Familiar, Emissão e Super Conta.
 > traz. CLT e Consignado ficam só em `kpis/produtos.py`: são quantidade
 > por cima do pivot de valor, não aceleradores.
 >
-> A aba de Produtos tem uma **terceira** superfície, `_PRODUTOS_QTD` +
+> Os expanders de Emissão e Super Conta da sub-aba **Aceleradores**
+> (`tabs/analiticos.py`) também usam `mascaras_aceleradores` desde
+> 09/2026 — antes reimplementavam a máscara inline. BMG Med e Vida
+> Familiar ali seguem por `kpis/seguros.py` (união das três fontes).
+>
+> ⚠️ **Divergência aberta — Emissão tem dois critérios.** A consolidação
+> (zeragem de valor, `is_emissao_cartao`) e o contador da aba Produtos
+> usam `TIPO OPER. ∈ {CARTÃO BENEFICIO, Venda Pré-Adesão}`;
+> `mascaras_aceleradores` (rankings, Gestão, Distribuição, Aceleradores)
+> usa `TIPO_PRODUTO ∈ PRODUTOS_EMISSAO` (`EMISSAO`, `EMISSAO CC`,
+> `EMISSAO CB`). Se não marcarem as mesmas linhas, as superfícies contam
+> Emissão diferente. Aguardando verificação no dado e decisão de regra —
+> ver [progress/2026-09-15c](progress/2026-09-15c-analiticos-criterios-e-emissao.md).
+>
+> A aba de Produtos tem uma **terceira** superfície, `_PRODS_QTD` +
 > `_mask_subtab` ([`tabs/produtos.py`](../../src/dashboard/tabs/produtos.py)):
 > config declarativa com critérios mais granulares (digitação, subtipos,
 > exclusões por tipo de operação) que alimentam as sub-abas. **Não** é

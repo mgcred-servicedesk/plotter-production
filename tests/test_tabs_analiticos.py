@@ -218,3 +218,115 @@ class TestSelecionarBanco:
         at = _rodar_seletor(df=pd.DataFrame({"X": [1]}))
         assert at.selectbox[0].options == ["Todos", "BMG/Help"]
         assert at.session_state["_saida"] is None
+
+
+# ── Expanders de Aceleradores: critério canônico ─────────────────────
+#
+# Os expanders de Emissão e Super Conta reimplementavam a máscara
+# inline — uma quarta superfície para "o que é Emissão / Super Conta",
+# além de `mascaras_aceleradores` (kpis/gerais.py), `kpis/produtos.py`
+# e `tabs/produtos.py::_PRODUTOS_QTD`. Passaram a usar a canônica.
+#
+# `_criterio_inline_*` abaixo é o código ANTIGO, copiado verbatim como
+# referência: a troca só é válida se as duas marcam as mesmas linhas
+# em cada fonte (pagos COM a flag `is_super_conta`; em análise e
+# cancelados SEM ela) e nos casos de borda de texto.
+
+def _criterio_inline_emissao(fonte):
+    from src.config.settings import PRODUTOS_EMISSAO
+
+    return fonte["TIPO_PRODUTO"].astype(str).str.upper().isin(
+        {p.upper() for p in PRODUTOS_EMISSAO}
+    )
+
+
+def _criterio_inline_super_conta(fonte):
+    return (
+        fonte["SUBTIPO"].fillna("").astype(str).str.strip().str.upper()
+        == "SUPER CONTA"
+    )
+
+
+_TIPOS = ["EMISSAO", "emissao cc", "EMISSAO CB", "CNC", "", None, np.nan]
+_SUBTIPOS = [" super conta ", "SUPER CONTA", "NOVO", "", None, np.nan, "SUPERCONTA"]
+
+
+def _fontes_adversariais():
+    n = len(_TIPOS) * len(_SUBTIPOS)
+    tipos = [t for t in _TIPOS for _ in _SUBTIPOS]
+    subtipos = [s for _ in _TIPOS for s in _SUBTIPOS]
+    base = pd.DataFrame({
+        "TIPO_PRODUTO": tipos, "SUBTIPO": subtipos, "VALOR": [1.0] * n,
+    })
+    pagos = base.copy()
+    # A flag como a consolidação a deriva (kpis/consolidacao.py).
+    pagos["is_super_conta"] = (
+        pagos["SUBTIPO"].astype(str).str.strip().str.upper() == "SUPER CONTA"
+    )
+    return {
+        "pagos (com flag)": pagos,
+        "em análise (sem flag)": base.copy(),
+        "tipo todo NaN float": pd.DataFrame({
+            "TIPO_PRODUTO": [np.nan] * 3, "SUBTIPO": [np.nan] * 3,
+        }),
+        "tipo todo None": pd.DataFrame(
+            [{"TIPO_PRODUTO": None, "SUBTIPO": None}] * 3
+        ),
+    }
+
+
+@pytest.mark.unit
+class TestLinhasAceleradorIgualAoCriterioAntigo:
+    @pytest.mark.parametrize("nome_fonte", list(_fontes_adversariais()))
+    def test_emissao(self, nome_fonte):
+        from src.dashboard.tabs.analiticos import _linhas_acelerador
+
+        fonte = _fontes_adversariais()[nome_fonte]
+        esperado = fonte[_criterio_inline_emissao(fonte)]
+        pd.testing.assert_frame_equal(
+            _linhas_acelerador(fonte, "Emissao"), esperado
+        )
+
+    @pytest.mark.parametrize("nome_fonte", list(_fontes_adversariais()))
+    def test_super_conta(self, nome_fonte):
+        from src.dashboard.tabs.analiticos import _linhas_acelerador
+
+        fonte = _fontes_adversariais()[nome_fonte]
+        esperado = fonte[_criterio_inline_super_conta(fonte)]
+        pd.testing.assert_frame_equal(
+            _linhas_acelerador(fonte, "Super Conta"), esperado
+        )
+
+    def test_segue_a_definicao_canonica(self, monkeypatch):
+        """O mecanismo, não a aparência: se a regra canônica mudar, o
+        expander muda junto — é o motivo da troca."""
+        import src.dashboard.tabs.analiticos as mod
+
+        fonte = pd.DataFrame({"TIPO_PRODUTO": ["X", "Y"], "SUBTIPO": ["", ""]})
+        monkeypatch.setattr(
+            mod, "mascaras_aceleradores",
+            lambda df: {"Emissao": pd.Series([False, True], index=df.index)},
+        )
+        assert _linhas_acelerador_de(mod, fonte)["TIPO_PRODUTO"].tolist() == ["Y"]
+
+
+def _linhas_acelerador_de(mod, fonte):
+    return mod._linhas_acelerador(fonte, "Emissao")
+
+
+@pytest.mark.unit
+class TestNrAde:
+    def test_prefere_num_proposta_e_cai_para_contrato_id(self):
+        from src.dashboard.tabs.analiticos import _nr_ade
+
+        df = pd.DataFrame({
+            "NUM_PROPOSTA": ["123", "", None],
+            "CONTRATO_ID": [1, 2, 3],
+        })
+        assert _nr_ade(df).tolist() == ["123", "2", "3"]
+
+    def test_sem_num_proposta_usa_contrato_id(self):
+        from src.dashboard.tabs.analiticos import _nr_ade
+
+        df = pd.DataFrame({"CONTRATO_ID": [7, 8]})
+        assert _nr_ade(df).tolist() == ["7", "8"]
