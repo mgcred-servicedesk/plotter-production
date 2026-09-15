@@ -23,6 +23,10 @@ Elementos (keys):
     cards_drilldown       Botoes de detalhe (drill-down) dos
                           cards de contexto (Em Analise,
                           Cancelados, Medias)
+    resumo_lojas_pontuacao Resumo por loja no fim do Dashboard
+                          de Pontuacao (pontos, projecao,
+                          atingimento, meta diaria)
+    resumo_lojas_por_regiao Flag 'Separar por região' desse resumo
     visualizar_como       Seletor 'Visualizar Como'
     gestao_usuarios       Pagina de gestao de usuarios
 """
@@ -133,6 +137,22 @@ MATRIZ: dict[str, dict[str, bool]] = {
         "admin": True,
         "gestor": True,
         "gerente_comercial": True,
+        "supervisor": False,
+        "consultor": False,
+    },
+    # Tabela por loja no fim do Dashboard de Pontuacao
+    "resumo_lojas_pontuacao": {
+        "admin": True,
+        "gestor": True,
+        "gerente_comercial": True,
+        "supervisor": False,
+        "consultor": False,
+    },
+    # Flag 'Separar por regiao' do resumo — gerente ja ve so a regiao dele
+    "resumo_lojas_por_regiao": {
+        "admin": True,
+        "gestor": True,
+        "gerente_comercial": False,
         "supervisor": False,
         "consultor": False,
     },

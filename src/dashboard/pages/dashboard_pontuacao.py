@@ -19,7 +19,7 @@ tema: e sobre a mesma pontuacao. Se outros diagnosticos surgirem, vale
 promover a um modulo proprio.
 """
 
-from typing import Dict, Optional
+from typing import Dict, List, Optional, Tuple
 
 import pandas as pd
 import streamlit as st
@@ -30,7 +30,11 @@ from src.dashboard.kpis.pontuacao import (
     calcular_pontos_cancelados,
     calcular_pontos_em_analise,
     calcular_prioridades_pontuacao,
+    calcular_resumo_lojas_pontuacao,
+    calcular_resumo_lojas_pontuacao_por_regiao,
+    ROTULO_TOTAL_RESUMO_LOJAS,
 )
+from src.dashboard.components.tables import botao_exportar_csv, exibir_tabela
 from src.dashboard.permissions import pode_ver
 from src.dashboard.ui.kpi_cards_pontuacao import render_kpis_pontuacao
 from src.dashboard.ui.prioridades_pontuacao import render_prioridades_pontuacao
@@ -48,6 +52,10 @@ def render_dashboard_pontuacao(
     du_decorridos: int,
     perfil: Optional[str],
     peso_headcount: Optional[float] = None,
+    df_metas_loja: Optional[pd.DataFrame] = None,
+    consultor_selecionado: bool = False,
+    mes: Optional[int] = None,
+    ano: Optional[int] = None,
 ) -> None:
     """Renderiza a pagina de Pontuacao.
 
@@ -64,6 +72,12 @@ def render_dashboard_pontuacao(
             ``carregar_pontuacao_efetiva``).
         du_decorridos: dias uteis decorridos no periodo.
         perfil: role efetivo (apos Visualizar Como).
+        df_metas_loja: metas de pontos de escopo LOJA pos-RLS/filtros
+            (``df_metas_f``), usadas no resumo por loja. Nunca o frame
+            de escopo CONSULTOR que alimenta ``kpis``.
+        consultor_selecionado: filtro de consultor ativo — oculta o
+            resumo por loja.
+        mes, ano: competencia, so para o nome do arquivo exportado.
     """
     # Consultor nao ve cards gerenciais — segue a mesma matriz do
     # dashboard de vendas.
@@ -113,6 +127,206 @@ def render_dashboard_pontuacao(
         meta_prata=meta_prata,
         meta_ouro=meta_ouro,
     )
+
+    if pode_ver("resumo_lojas_pontuacao", perfil):
+        _render_resumo_lojas(
+            df=df,
+            df_metas_loja=df_metas_loja,
+            kpis=kpis,
+            consultor_selecionado=consultor_selecionado,
+            perfil=perfil,
+            mes=mes,
+            ano=ano,
+        )
+
+
+def _render_resumo_lojas(
+    *,
+    df: pd.DataFrame,
+    df_metas_loja: Optional[pd.DataFrame],
+    kpis: Dict,
+    consultor_selecionado: bool,
+    perfil: Optional[str] = None,
+    mes: Optional[int] = None,
+    ano: Optional[int] = None,
+) -> None:
+    """Tabela-resumo por loja no fim da pagina (admin/gestor/gerente).
+
+    Oculta com um consultor selecionado: a meta aqui e a de escopo LOJA,
+    e comparar os pontos de uma pessoa contra ela subestima o
+    atingimento — a distorcao que os cards ja corrigem trocando para a
+    meta individual.
+    """
+    st.markdown("---")
+    st.markdown("### 🏪 Resumo por Loja")
+
+    if consultor_selecionado:
+        st.caption(
+            "Resumo por loja indisponível com um consultor selecionado — "
+            "a meta da loja não se compara com a produção de uma pessoa."
+        )
+        return
+
+    args_resumo = dict(
+        df=df,
+        df_metas=(
+            df_metas_loja if df_metas_loja is not None else pd.DataFrame()
+        ),
+        du_total=int(kpis.get("du_total", 0) or 0),
+        du_decorridos=int(kpis.get("du_decorridos", 0) or 0),
+        du_restantes=int(kpis.get("du_restantes", 0) or 0),
+    )
+    resumo = calcular_resumo_lojas_pontuacao(**args_resumo)
+    if resumo.empty:
+        st.info("Nenhuma loja com pontos ou meta no período.")
+        return
+
+    # Flag so para quem enxerga mais de uma regiao (admin/gestor); o
+    # gerente comercial ja esta recortado na propria regiao.
+    por_regiao = pode_ver("resumo_lojas_por_regiao", perfil) and st.toggle(
+        "Separar por região",
+        key="resumo_lojas_por_regiao",
+        help=(
+            "Uma tabela por região (a região do período, mesmo eixo das "
+            "metas), cada uma com o próprio total, e o total geral no fim."
+        ),
+    )
+
+    st.caption(
+        "Pontos efetivos (pagos) e projeção no ritmo atual. Meta diária = "
+        "pontos que faltam para a meta ÷ dias úteis restantes (0 quando "
+        "a meta já foi batida)."
+    )
+
+    du_restantes = args_resumo["du_restantes"]
+    if por_regiao:
+        separado = calcular_resumo_lojas_pontuacao_por_regiao(**args_resumo)
+        for regiao, resumo_regiao in separado["regioes"]:
+            st.markdown(f"#### {regiao}")
+            _exibir_resumo(resumo_regiao)
+        st.markdown("#### Total geral")
+        _exibir_resumo(separado["total"])
+        exportacao = montar_exportacao_resumo_lojas(
+            separado["regioes"], du_restantes, total_geral=separado["total"]
+        )
+    else:
+        _exibir_resumo(resumo)
+        exportacao = montar_exportacao_resumo_lojas(
+            [(None, resumo)], du_restantes
+        )
+
+    if du_restantes <= 0:
+        st.caption(
+            "Período encerrado — meta diária em branco para lojas que "
+            "não bateram a meta."
+        )
+
+    # Frames ja pos-RLS/filtros (contrato de `botao_exportar_csv`).
+    competencia = f"_{ano}_{mes:02d}" if mes and ano else ""
+    sufixo = "_por_regiao" if por_regiao else ""
+    botao_exportar_csv(
+        exportacao,
+        nome=f"resumo_lojas_pontuacao{competencia}{sufixo}",
+        key="exp_resumo_lojas_pontuacao",
+    )
+
+
+# Colunas do resumo por tipo, para arredondar a exportacao igual a tela
+# (pontos com 2 casas, percentual com 1).
+_COLS_PONTOS_RESUMO = [
+    "Pontos",
+    "Projeção",
+    "Meta Prata",
+    "Meta Ouro",
+    "Meta Diária Prata",
+    "Meta Diária Ouro",
+]
+_COLS_PERC_RESUMO = ["Ating. Prata %", "Ating. Ouro %"]
+
+
+def _observacao_linha(linha: pd.Series, du_restantes: int) -> str:
+    """Texto que na tela vive nos captions e no CSV precisa da linha."""
+    notas = []
+    for nivel in ("Prata", "Ouro"):
+        meta = linha[f"Meta {nivel}"]
+        if meta <= 0:
+            notas.append(f"Sem meta {nivel} cadastrada")
+        elif du_restantes <= 0 and pd.isna(linha[f"Meta Diária {nivel}"]):
+            notas.append(f"Período encerrado — {nivel} não atingida")
+    return "; ".join(notas)
+
+
+def montar_exportacao_resumo_lojas(
+    blocos: List[Tuple[Optional[str], pd.DataFrame]],
+    du_restantes: int,
+    total_geral: Optional[pd.DataFrame] = None,
+) -> pd.DataFrame:
+    """Frame do CSV do resumo por loja — o que esta na tela, legivel no Excel.
+
+    - Numeros continuam NUMEROS (sem separador de milhar nem "%"): com
+      ``sep=";"``/``decimal=","`` do ``botao_exportar_csv`` o Excel pt-BR
+      soma e ordena direto. Arredondados como na tela: pontos 2 casas,
+      percentual 1.
+    - "Nao se aplica" fica em branco, e a coluna ``Observação`` diz o
+      porque — na tela isso esta nos captions, que nao vao para o arquivo.
+    - Separado por regiao (``blocos`` com nome): coluna ``Região``
+      primeiro, ``TOTAL`` de cada bloco vira ``TOTAL <regiao>`` e
+      ``total_geral`` entra por ultimo como ``TOTAL GERAL``. Sem regiao
+      (um bloco com nome ``None``) a coluna nao existe.
+    """
+    por_regiao = any(nome is not None for nome, _ in blocos)
+    partes = []
+    for nome, resumo in blocos:
+        parte = resumo.copy()
+        if por_regiao:
+            eh_total = parte["Loja"] == ROTULO_TOTAL_RESUMO_LOJAS
+            parte.loc[eh_total, "Loja"] = f"{ROTULO_TOTAL_RESUMO_LOJAS} {nome}"
+            parte.insert(0, "Região", nome)
+        partes.append(parte)
+
+    if por_regiao and total_geral is not None and not total_geral.empty:
+        geral = total_geral.copy()
+        geral["Loja"] = f"{ROTULO_TOTAL_RESUMO_LOJAS} GERAL"
+        geral.insert(0, "Região", "")
+        partes.append(geral)
+
+    if not partes:
+        return pd.DataFrame()
+    saida = pd.concat(partes, ignore_index=True)
+
+    saida["Observação"] = saida.apply(
+        _observacao_linha, axis=1, du_restantes=du_restantes
+    )
+    saida[_COLS_PONTOS_RESUMO] = saida[_COLS_PONTOS_RESUMO].round(2)
+    saida[_COLS_PERC_RESUMO] = saida[_COLS_PERC_RESUMO].round(1)
+    return saida
+
+
+def _exibir_resumo(resumo: pd.DataFrame) -> None:
+    """Uma tabela do resumo (geral, regiao ou total) + aviso de sem meta."""
+    exibir_tabela(
+        resumo,
+        colunas_pontos=[
+            "Pontos",
+            "Projeção",
+            "Meta Prata",
+            "Meta Ouro",
+            "Meta Diária Prata",
+            "Meta Diária Ouro",
+        ],
+        colunas_percentual=["Ating. Prata %", "Ating. Ouro %"],
+        highlight_mask=resumo["Loja"] == ROTULO_TOTAL_RESUMO_LOJAS,
+    )
+
+    # Vazio na tabela = nao se aplica. Nomear as lojas afetadas, como a
+    # aba Rankings faz, para ninguem ler a celula vazia como 0%.
+    lojas = resumo[resumo["Loja"] != ROTULO_TOTAL_RESUMO_LOJAS]
+    sem_meta = lojas.loc[lojas["Meta Prata"] <= 0, "Loja"].tolist()
+    if sem_meta:
+        st.caption(
+            "⚠ Sem Meta Prata cadastrada (atingimento e meta diária em "
+            "branco): " + ", ".join(sem_meta)
+        )
 
 
 def render_diagnostico_pontuacao(diag: Dict) -> None:

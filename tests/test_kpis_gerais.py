@@ -65,6 +65,24 @@ class TestHelpers:
         assert "João" not in out["CONSULTOR"].values
         assert len(out) == 3
 
+    def test_excluir_supervisores_ignora_caixa_espaco_e_acento(self):
+        """Cadastro de supervisores e contratos grafam o nome diferente
+        (caso real 08/2026: supervisora vazou no ranking de consultores)."""
+        df = pd.DataFrame({
+            "CONSULTOR": [
+                "Djane Maria Pereira dos Santos",
+                "  joão da silva ",
+                "ANA SOUZA",
+                None,
+            ],
+            "VALOR": [1.0, 2.0, 3.0, 4.0],
+        })
+        sup = pd.DataFrame({
+            "SUPERVISOR": ["DJANE MARIA PEREIRA DOS SANTOS", "JOAO DA SILVA", None],
+        })
+        out = excluir_supervisores(df, sup)
+        assert out["VALOR"].tolist() == [3.0, 4.0]
+
     def test_excluir_supervisores_sem_df_sup_retorna_copia(
         self, sample_pagos_produto_df
     ):

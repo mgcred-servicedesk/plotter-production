@@ -13,6 +13,23 @@ from src.dashboard.permissions import pode_ver
 
 
 @pytest.mark.unit
+class TestResumoLojasPontuacao:
+    def test_admin_gestor_e_gerente_veem(self):
+        for perfil in ("admin", "gestor", "gerente_comercial"):
+            assert pode_ver("resumo_lojas_pontuacao", perfil) is True
+
+    def test_supervisor_consultor_e_nulo_nao_veem(self):
+        for perfil in ("supervisor", "consultor", None):
+            assert pode_ver("resumo_lojas_pontuacao", perfil) is False
+
+    def test_flag_por_regiao_so_admin_e_gestor(self):
+        for perfil in ("admin", "gestor"):
+            assert pode_ver("resumo_lojas_por_regiao", perfil) is True
+        for perfil in ("gerente_comercial", "supervisor", "consultor", None):
+            assert pode_ver("resumo_lojas_por_regiao", perfil) is False
+
+
+@pytest.mark.unit
 class TestCardsMediasConsultorLoja:
     def test_admin_gestor_e_gerente_veem(self):
         for perfil in ("admin", "gestor", "gerente_comercial"):

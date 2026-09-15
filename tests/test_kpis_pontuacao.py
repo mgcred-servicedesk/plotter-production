@@ -14,7 +14,13 @@ from src.dashboard.kpis.pontuacao import (
     calcular_pontos_cancelados,
     calcular_pontos_em_analise,
     calcular_prioridades_pontuacao,
+    calcular_resumo_lojas_pontuacao,
+    calcular_resumo_lojas_pontuacao_por_regiao,
+    ROTULO_SEM_REGIAO,
+    ROTULO_TOTAL_RESUMO_LOJAS,
 )
+from src.dashboard.kpis.gerais import calcular_kpis_gerais
+from src.shared.dias_uteis import calcular_dias_uteis
 
 
 @pytest.mark.unit
@@ -186,3 +192,193 @@ class TestCalcularPrioridadesPontuacao:
         assert by["SAQUE"]["pontos_analise"] == pytest.approx(1000.0)
         # peso pago CNC = 600/1000 = 60%
         assert by["CNC"]["peso_atual"] == pytest.approx(60.0)
+
+
+@pytest.mark.unit
+class TestCalcularResumoLojasPontuacao:
+    """Resumo por loja: mesmas fórmulas dos cards, meta de escopo LOJA."""
+
+    @staticmethod
+    def _df(linhas):
+        return pd.DataFrame(linhas, columns=["LOJA", "pontos"])
+
+    @staticmethod
+    def _metas(linhas):
+        return pd.DataFrame(linhas, columns=["LOJA", "META_PRATA", "META_OURO"])
+
+    def _resumo(self, df, metas, du_total=20, du_dec=10, du_rest=10):
+        return calcular_resumo_lojas_pontuacao(
+            df, metas, du_total=du_total, du_decorridos=du_dec,
+            du_restantes=du_rest,
+        )
+
+    def test_vazio_devolve_frame_com_colunas(self):
+        res = self._resumo(pd.DataFrame(), pd.DataFrame())
+        assert res.empty
+        assert "Meta Diária Ouro" in res.columns
+
+    def test_formulas_por_loja(self):
+        res = self._resumo(
+            self._df([("A", 3000.0), ("A", 2000.0)]),
+            self._metas([("A", 10000.0, 20000.0)]),
+        )
+        a = res.set_index("Loja").loc["A"]
+        assert a["Pontos"] == pytest.approx(5000.0)
+        assert a["Projeção"] == pytest.approx(5000 / 10 * 20)
+        assert a["Ating. Prata %"] == pytest.approx(50.0)
+        assert a["Ating. Ouro %"] == pytest.approx(25.0)
+        # (meta - pontos) / DU restantes
+        assert a["Meta Diária Prata"] == pytest.approx(500.0)
+        assert a["Meta Diária Ouro"] == pytest.approx(1500.0)
+
+    def test_loja_com_meta_sem_pontos_aparece_zerada(self):
+        res = self._resumo(
+            self._df([("A", 1000.0)]),
+            self._metas([("A", 2000.0, 4000.0), ("B", 3000.0, 6000.0)]),
+        )
+        b = res.set_index("Loja").loc["B"]
+        assert b["Pontos"] == 0.0
+        assert b["Ating. Prata %"] == 0.0
+        assert b["Meta Diária Prata"] == pytest.approx(300.0)
+
+    def test_loja_sem_meta_fica_nan_e_nunca_atingida(self):
+        res = self._resumo(self._df([("DIGITAL", 5000.0)]), pd.DataFrame())
+        d = res.set_index("Loja").loc["DIGITAL"]
+        assert pd.isna(d["Ating. Prata %"])
+        assert pd.isna(d["Meta Diária Prata"])
+        assert pd.isna(d["Ating. Ouro %"])
+        assert d["Projeção"] == pytest.approx(10000.0)
+
+    def test_meta_batida_zera_meta_diaria(self):
+        res = self._resumo(
+            self._df([("A", 15000.0)]),
+            self._metas([("A", 10000.0, 20000.0)]),
+        )
+        a = res.set_index("Loja").loc["A"]
+        assert a["Meta Diária Prata"] == 0.0
+        assert a["Meta Diária Ouro"] == pytest.approx(500.0)
+
+    def test_periodo_encerrado_nao_divide_por_zero(self):
+        res = self._resumo(
+            self._df([("A", 5000.0)]),
+            self._metas([("A", 10000.0, 20000.0)]),
+            du_dec=20, du_rest=0,
+        )
+        a = res.set_index("Loja").loc["A"]
+        assert pd.isna(a["Meta Diária Prata"])
+        assert a["Projeção"] == pytest.approx(5000.0)
+
+    def test_ordena_por_prata_sem_meta_no_fim_e_total_por_ultimo(self):
+        res = self._resumo(
+            self._df([("A", 1000.0), ("B", 9000.0), ("C", 99999.0)]),
+            self._metas([("A", 10000.0, 0.0), ("B", 10000.0, 0.0)]),
+        )
+        assert res["Loja"].tolist() == [
+            "B", "A", "C", ROTULO_TOTAL_RESUMO_LOJAS,
+        ]
+
+    def test_total_bate_com_cards_do_topo(self, sem_feriados):
+        # Mesmo recorte em calcular_kpis_gerais: o TOTAL do resumo tem de
+        # reproduzir pontos, projeção, % e meta diária restante dos cards.
+        df = pd.DataFrame({
+            "LOJA": ["A", "A", "B"],
+            "pontos": [12000.0, 1000.0, 2000.0],
+            "VALOR": [100.0, 100.0, 100.0],
+            "CONSULTOR": ["x", "y", "z"],
+        })
+        metas = self._metas([("A", 10000.0, 20000.0), ("B", 8000.0, 9000.0)])
+        du_total, du_dec, du_rest = calcular_dias_uteis(2026, 3, 16)
+        kpis = calcular_kpis_gerais(df, metas, pd.DataFrame(), 2026, 3, 16)
+
+        total = (
+            self._resumo(df, metas, du_total, du_dec, du_rest)
+            .set_index("Loja")
+            .loc[ROTULO_TOTAL_RESUMO_LOJAS]
+        )
+        assert total["Pontos"] == pytest.approx(kpis["total_pontos"])
+        assert total["Projeção"] == pytest.approx(kpis["projecao_pontos"])
+        assert total["Ating. Prata %"] == pytest.approx(kpis["perc_ating_prata"])
+        assert total["Ating. Ouro %"] == pytest.approx(kpis["perc_ating_ouro"])
+        # Gap do agregado (A acima da meta compensa B), como nos cards.
+        assert total["Meta Diária Prata"] == pytest.approx(
+            kpis["meta_diaria_restante_pts"]
+        )
+
+
+@pytest.mark.unit
+class TestCalcularResumoLojasPontuacaoPorRegiao:
+    """Separação por REGIAO do período — cada bloco é o resumo das suas lojas."""
+
+    DU = dict(du_total=20, du_decorridos=10, du_restantes=10)
+
+    def test_vazio(self):
+        res = calcular_resumo_lojas_pontuacao_por_regiao(
+            pd.DataFrame(), pd.DataFrame(), **self.DU
+        )
+        assert res["regioes"] == []
+        assert res["total"].empty
+
+    def test_blocos_por_regiao_com_total_proprio_e_geral(self):
+        df = pd.DataFrame({
+            "LOJA": ["A", "B", "C"],
+            "REGIAO": ["SUL", "NORTE", "SUL"],
+            "pontos": [5000.0, 2000.0, 1000.0],
+        })
+        metas = pd.DataFrame({
+            "LOJA": ["A", "B", "C"],
+            "REGIAO": ["SUL", "NORTE", "SUL"],
+            "META_PRATA": [10000.0, 4000.0, 2000.0],
+            "META_OURO": [20000.0, 8000.0, 4000.0],
+        })
+        res = calcular_resumo_lojas_pontuacao_por_regiao(df, metas, **self.DU)
+
+        assert [nome for nome, _ in res["regioes"]] == ["NORTE", "SUL"]
+        sul = dict(res["regioes"])["SUL"]
+        assert sul["Loja"].tolist() == ["A", "C", ROTULO_TOTAL_RESUMO_LOJAS]
+        total_sul = sul.iloc[-1]
+        assert total_sul["Pontos"] == pytest.approx(6000.0)
+        assert total_sul["Ating. Prata %"] == pytest.approx(50.0)
+
+        geral = calcular_resumo_lojas_pontuacao(df, metas, **self.DU)
+        pd.testing.assert_frame_equal(
+            res["total"], geral.tail(1).reset_index(drop=True)
+        )
+
+    def test_regiao_vem_da_meta_antes_da_producao(self):
+        # Meta e realizado apuram a região pela competência; se divergirem,
+        # vale o eixo da meta que o resumo compara.
+        df = pd.DataFrame(
+            {"LOJA": ["A"], "REGIAO": ["ANTIGA"], "pontos": [100.0]}
+        )
+        metas = pd.DataFrame({
+            "LOJA": ["A"], "REGIAO": ["NOVA"],
+            "META_PRATA": [1000.0], "META_OURO": [2000.0],
+        })
+        res = calcular_resumo_lojas_pontuacao_por_regiao(df, metas, **self.DU)
+        assert [nome for nome, _ in res["regioes"]] == ["NOVA"]
+
+    def test_loja_so_com_producao_usa_regiao_de_mais_pontos(self):
+        df = pd.DataFrame({
+            "LOJA": ["X", "X", "X"],
+            "REGIAO": ["R2", "R1", "R1"],
+            "pontos": [300.0, 200.0, 200.0],
+        })
+        res = calcular_resumo_lojas_pontuacao_por_regiao(
+            df, pd.DataFrame(), **self.DU
+        )
+        assert [nome for nome, _ in res["regioes"]] == ["R1"]
+
+    def test_sem_regiao_vai_para_ultimo_bloco(self):
+        df = pd.DataFrame({
+            "LOJA": ["A", "DIGITAL"],
+            "REGIAO": ["SUL", None],
+            "pontos": [100.0, 50.0],
+        })
+        res = calcular_resumo_lojas_pontuacao_por_regiao(
+            df, pd.DataFrame(), **self.DU
+        )
+        nomes = [nome for nome, _ in res["regioes"]]
+        assert nomes == ["SUL", ROTULO_SEM_REGIAO]
+        assert dict(res["regioes"])[ROTULO_SEM_REGIAO]["Loja"].tolist() == [
+            "DIGITAL", ROTULO_TOTAL_RESUMO_LOJAS,
+        ]

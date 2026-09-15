@@ -351,3 +351,257 @@ def calcular_prioridades_pontuacao(
 
     resultados.sort(key=lambda r: r["pontos_analise"], reverse=True)
     return resultados
+
+
+# Rotulo da linha agregada do resumo por loja. Exportado para a UI
+# destacar a linha sem depender da posicao.
+ROTULO_TOTAL_RESUMO_LOJAS = "TOTAL"
+
+
+def _metas_por_loja(df_metas: pd.DataFrame, coluna: str) -> pd.Series:
+    """Soma ``coluna`` por LOJA; meta nula/negativa vira 0 (sem meta)."""
+    if df_metas.empty or "LOJA" not in df_metas.columns:
+        return pd.Series(dtype=float)
+    if coluna not in df_metas.columns:
+        return pd.Series(0.0, index=df_metas["LOJA"].dropna().unique())
+    valores = pd.to_numeric(df_metas[coluna], errors="coerce").fillna(0)
+    return (
+        valores.groupby(df_metas["LOJA"]).sum().clip(lower=0.0).astype(float)
+    )
+
+
+def _linha_resumo_loja(
+    loja: str,
+    pontos: float,
+    meta_prata: float,
+    meta_ouro: float,
+    du_total: int,
+    du_decorridos: int,
+    du_restantes: int,
+) -> Dict:
+    """Uma linha do resumo — mesmas formulas de ``calcular_kpis_gerais``.
+
+    ``NaN`` significa "nao se aplica", nunca zero:
+    - meta ``<= 0`` (nao cadastrada) ⇒ atingimento e meta diaria NaN,
+      para a UI nao mostrar 0% nem "0 pts/dia" como se fosse alvo;
+    - meta nao batida e ``du_restantes == 0`` (periodo encerrado) ⇒
+      meta diaria NaN — nao ha dia para dividir o gap.
+    """
+    nan = float("nan")
+    projecao = pontos / du_decorridos * du_total if du_decorridos > 0 else 0.0
+
+    def _perc(meta: float) -> float:
+        return pontos / meta * 100 if meta > 0 else nan
+
+    def _meta_diaria(meta: float) -> float:
+        if meta <= 0:
+            return nan
+        gap = max(0.0, meta - pontos)
+        if gap == 0:
+            return 0.0
+        return gap / du_restantes if du_restantes > 0 else nan
+
+    return {
+        "Loja": loja,
+        "Pontos": pontos,
+        "Projeção": projecao,
+        "Meta Prata": meta_prata,
+        "Ating. Prata %": _perc(meta_prata),
+        "Meta Ouro": meta_ouro,
+        "Ating. Ouro %": _perc(meta_ouro),
+        "Meta Diária Prata": _meta_diaria(meta_prata),
+        "Meta Diária Ouro": _meta_diaria(meta_ouro),
+    }
+
+
+def calcular_resumo_lojas_pontuacao(
+    df: pd.DataFrame,
+    df_metas: pd.DataFrame,
+    du_total: int,
+    du_decorridos: int,
+    du_restantes: int,
+) -> pd.DataFrame:
+    """Resumo por loja: pontos, projecao, atingimento e meta diaria.
+
+    Aplica por loja as MESMAS formulas dos cards do topo
+    (``calcular_kpis_gerais``):
+
+    - ``Projeção = pontos / DU_decorridos x DU_total``;
+    - ``Ating. X % = pontos / Meta X x 100``;
+    - ``Meta Diária X = max(0, Meta X - pontos) / DU_restantes``
+      (regra "Meta diaria restante" de business-rules).
+
+    A meta e a de escopo **LOJA** (``df_metas`` pos-RLS/filtros) — a
+    mesma do ranking de lojas. Nunca chamar com o frame de escopo
+    CONSULTOR: o resumo compara a producao da loja inteira.
+
+    Universo: lojas com producao em ``df`` UNIAO lojas com meta > 0 em
+    ``df_metas`` (loja com meta e sem ponto aparece zerada — sinal util).
+    ``pontos`` soma todas as linhas da loja, como ``total_pontos``.
+
+    Ordenado por ``Ating. Prata %`` desc (lojas sem meta no fim, por
+    pontos), com a linha ``ROTULO_TOTAL_RESUMO_LOJAS`` por ultimo. O
+    total usa a meta e os pontos SOMADOS do recorte — bate com os cards
+    do topo, inclusive na meta diaria (gap do agregado, e nao soma dos
+    gaps por loja: loja acima da meta compensa loja abaixo, como nos
+    cards).
+    """
+    colunas = list(
+        _linha_resumo_loja("", 0.0, 0.0, 0.0, 0, 0, 0).keys()
+    )
+
+    pontos_loja = pd.Series(dtype=float)
+    if not df.empty and "LOJA" in df.columns and "pontos" in df.columns:
+        pontos_loja = (
+            pd.to_numeric(df["pontos"], errors="coerce")
+            .fillna(0)
+            .groupby(df["LOJA"])
+            .sum()
+            .astype(float)
+        )
+
+    prata_loja = _metas_por_loja(df_metas, "META_PRATA")
+    ouro_loja = _metas_por_loja(df_metas, "META_OURO")
+
+    com_meta = set(prata_loja[prata_loja > 0].index) | set(
+        ouro_loja[ouro_loja > 0].index
+    )
+    lojas = sorted(set(pontos_loja.index) | com_meta)
+    if not lojas:
+        return pd.DataFrame(columns=colunas)
+
+    linhas = [
+        _linha_resumo_loja(
+            loja,
+            float(pontos_loja.get(loja, 0.0)),
+            float(prata_loja.get(loja, 0.0)),
+            float(ouro_loja.get(loja, 0.0)),
+            du_total,
+            du_decorridos,
+            du_restantes,
+        )
+        for loja in lojas
+    ]
+    resumo = pd.DataFrame(linhas, columns=colunas)
+    resumo = resumo.sort_values(
+        ["Ating. Prata %", "Pontos", "Loja"],
+        ascending=[False, False, True],
+        na_position="last",
+        kind="stable",
+    )
+
+    total = _linha_resumo_loja(
+        ROTULO_TOTAL_RESUMO_LOJAS,
+        float(resumo["Pontos"].sum()),
+        float(resumo["Meta Prata"].sum()),
+        float(resumo["Meta Ouro"].sum()),
+        du_total,
+        du_decorridos,
+        du_restantes,
+    )
+    resumo = pd.concat(
+        [resumo, pd.DataFrame([total], columns=colunas)],
+        ignore_index=True,
+    )
+    return resumo
+
+
+# Grupo das lojas sem regiao resolvida — sempre o ultimo bloco.
+ROTULO_SEM_REGIAO = "Sem região"
+
+
+def _regiao_por_loja(df: pd.DataFrame, df_metas: pd.DataFrame) -> pd.Series:
+    """LOJA -> REGIAO do periodo.
+
+    Metas primeiro: e o eixo da meta que o resumo compara (os pagos
+    resolvem a REGIAO pela mesma competencia, entao normalmente
+    coincidem). Loja so com producao cai no ``df``; se ali aparecer em
+    mais de uma regiao, vence a de mais pontos, desempate alfabetico —
+    mesmo criterio de ``resolver_loja_principal``.
+    """
+    regioes = pd.Series(dtype=object)
+
+    if (
+        not df.empty
+        and {"LOJA", "REGIAO", "pontos"} <= set(df.columns)
+    ):
+        base = df[["LOJA", "REGIAO"]].assign(
+            pontos=pd.to_numeric(df["pontos"], errors="coerce").fillna(0)
+        )
+        base = base[base["REGIAO"].fillna("").astype(str).str.strip() != ""]
+        if not base.empty:
+            somas = (
+                base.groupby(["LOJA", "REGIAO"])["pontos"].sum().reset_index()
+            )
+            somas = somas.sort_values(
+                ["LOJA", "pontos", "REGIAO"],
+                ascending=[True, False, True],
+                kind="stable",
+            ).drop_duplicates("LOJA", keep="first")
+            regioes = somas.set_index("LOJA")["REGIAO"]
+
+    if not df_metas.empty and {"LOJA", "REGIAO"} <= set(df_metas.columns):
+        metas = df_metas[["LOJA", "REGIAO"]].dropna()
+        metas = metas[metas["REGIAO"].astype(str).str.strip() != ""]
+        metas = metas.drop_duplicates("LOJA", keep="first")
+        regioes = metas.set_index("LOJA")["REGIAO"].combine_first(regioes)
+
+    return regioes
+
+
+def calcular_resumo_lojas_pontuacao_por_regiao(
+    df: pd.DataFrame,
+    df_metas: pd.DataFrame,
+    du_total: int,
+    du_decorridos: int,
+    du_restantes: int,
+) -> Dict:
+    """Resumo por loja separado por REGIAO do periodo.
+
+    Cada regiao e um ``calcular_resumo_lojas_pontuacao`` sobre as lojas
+    dela (com o proprio ``TOTAL``), entao as regras de universo,
+    ordenacao e "nao se aplica" sao exatamente as da tabela unica.
+
+    Returns:
+        ``{"regioes": [(regiao, resumo_df), ...], "total": total_df}``.
+        Regioes em ordem alfabetica, ``ROTULO_SEM_REGIAO`` por ultimo.
+        ``total`` e a linha ``TOTAL`` do resumo sem separacao (uma
+        linha) — igual aos cards do topo; vazio quando nao ha loja.
+    """
+    geral = calcular_resumo_lojas_pontuacao(
+        df, df_metas, du_total, du_decorridos, du_restantes
+    )
+    if geral.empty:
+        return {"regioes": [], "total": geral}
+
+    regiao_loja = _regiao_por_loja(df, df_metas)
+    lojas = geral.loc[geral["Loja"] != ROTULO_TOTAL_RESUMO_LOJAS, "Loja"]
+    grupo = lojas.map(regiao_loja).fillna(ROTULO_SEM_REGIAO)
+
+    nomes = sorted(set(grupo) - {ROTULO_SEM_REGIAO})
+    if ROTULO_SEM_REGIAO in set(grupo):
+        nomes.append(ROTULO_SEM_REGIAO)
+
+    blocos = []
+    for nome in nomes:
+        lojas_regiao = set(lojas[grupo == nome])
+        df_r = (
+            df[df["LOJA"].isin(lojas_regiao)]
+            if "LOJA" in df.columns
+            else df
+        )
+        metas_r = (
+            df_metas[df_metas["LOJA"].isin(lojas_regiao)]
+            if "LOJA" in df_metas.columns
+            else df_metas
+        )
+        blocos.append(
+            (
+                nome,
+                calcular_resumo_lojas_pontuacao(
+                    df_r, metas_r, du_total, du_decorridos, du_restantes
+                ),
+            )
+        )
+
+    return {"regioes": blocos, "total": geral.tail(1).reset_index(drop=True)}

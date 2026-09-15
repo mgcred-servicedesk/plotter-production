@@ -655,6 +655,15 @@ def main():
                 du_decorridos=du_decorridos,
                 perfil=role,
                 peso_headcount=peso_headcount,
+                # Resumo por loja usa a meta de escopo LOJA, nao a
+                # `df_metas_kpis` (que vira escopo CONSULTOR no recorte
+                # de uma pessoa).
+                df_metas_loja=df_metas_f,
+                consultor_selecionado=(
+                    role == "consultor" or _consultor_selecionado
+                ),
+                mes=mes,
+                ano=ano,
             )
             return
 

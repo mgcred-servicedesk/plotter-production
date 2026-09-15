@@ -15,6 +15,7 @@ import pandas as pd
 
 from src.dashboard.kpis.consolidacao import eh_emissao
 from src.shared.dias_uteis import calcular_dias_uteis
+from src.shared.texto import normalizar_nome
 
 
 # Mapeamento de produtos do dashboard para categoria_codigo
@@ -44,14 +45,21 @@ def excluir_supervisores(
     df: pd.DataFrame,
     df_sup: Optional[pd.DataFrame],
 ) -> pd.DataFrame:
-    """Remove supervisores do DataFrame de vendas."""
+    """Remove supervisores do DataFrame de vendas.
+
+    Match por ``normalizar_nome`` (caixa, espacos nas pontas e acento): o nome do
+    supervisor vem do cadastro e o do consultor vem dos contratos, e as
+    duas fontes divergem na grafia — em 08/2026 ``Djane Maria Pereira
+    dos Santos`` (contratos) escapava de ``DJANE MARIA PEREIRA DOS
+    SANTOS`` (supervisores) e entrava no ranking de consultores.
+    """
     if (
         df_sup is not None
         and "SUPERVISOR" in df_sup.columns
         and "CONSULTOR" in df.columns
     ):
-        supervisores = df_sup["SUPERVISOR"].unique()
-        return df[~df["CONSULTOR"].isin(supervisores)].copy()
+        supervisores = set(normalizar_nome(df_sup["SUPERVISOR"].dropna()))
+        return df[~normalizar_nome(df["CONSULTOR"]).isin(supervisores)].copy()
     return df.copy()
 
 
