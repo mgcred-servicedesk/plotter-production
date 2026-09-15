@@ -74,16 +74,15 @@ class TestAplicarContaValor:
         out = aplicar_conta_valor(df)
         assert out["VALOR"].tolist() == [100.0]
 
-    def test_tipo_oper_emissao_zera_valor_mesmo_com_conta_valor_true(self):
-        # Venda Pre-Adesao de produto CONSIG herda categoria conta_valor=True;
-        # a clausula TIPO OPER. zera o valor mesmo assim (regra nova da ST-03).
+    def test_produto_emissao_zera_valor_mesmo_com_conta_valor_true(self):
+        # Emissao com categoria conta_valor=True: a clausula de emissao
+        # (por PRODUTO desde 09/2026, ver test_criterio_emissao.py) zera
+        # o valor mesmo assim.
         df = pd.DataFrame(
             {
                 "VALOR": [1000.0, 2000.0, 300.0],
                 "conta_valor": [True, True, True],
-                "TIPO OPER.": [
-                    "CARTÃO BENEFICIO", "Venda Pré-Adesão", "CNC NORMAL",
-                ],
+                "TIPO_PRODUTO": ["EMISSAO", "EMISSAO CC", "CNC"],
             }
         )
         out = aplicar_conta_valor(df)
@@ -92,34 +91,33 @@ class TestAplicarContaValor:
         # nao muta o original
         assert df["VALOR"].tolist() == [1000.0, 2000.0, 300.0]
 
-    def test_tipo_oper_fora_do_conjunto_mantem_valor(self):
+    def test_produto_fora_do_conjunto_mantem_valor(self):
         df = pd.DataFrame(
             {
                 "VALOR": [500.0],
                 "conta_valor": [True],
-                "TIPO OPER.": ["CNC NORMAL"],
+                "TIPO_PRODUTO": ["SAQUE BENEFICIO"],
+                "TIPO OPER.": ["CARTÃO BENEFICIO"],
             }
         )
         out = aplicar_conta_valor(df)
         assert out["VALOR"].tolist() == [500.0]
 
-    def test_conta_valor_e_tipo_oper_sao_clausulas_cumulativas(self):
+    def test_conta_valor_e_emissao_sao_clausulas_cumulativas(self):
         df = pd.DataFrame(
             {
                 "VALOR": [100.0, 200.0, 300.0],
                 "conta_valor": [False, True, True],
-                "TIPO OPER.": [
-                    "CNC NORMAL", "CARTÃO BENEFICIO", "CNC NORMAL",
-                ],
+                "TIPO_PRODUTO": ["CNC", "EMISSAO", "CNC"],
             }
         )
         out = aplicar_conta_valor(df)
         # linha 0: zerada pela clausula conta_valor
-        # linha 1: zerada pela clausula TIPO OPER. (emissao)
+        # linha 1: zerada pela clausula de emissao (produto)
         # linha 2: nenhuma clausula bate -> inalterada
         assert out["VALOR"].tolist() == [0.0, 0.0, 300.0]
 
-    def test_sem_coluna_tipo_oper_inalterado(self):
+    def test_sem_coluna_tipo_produto_inalterado(self):
         df = pd.DataFrame({"VALOR": [100.0], "conta_valor": [True]})
         out = aplicar_conta_valor(df)
         assert out["VALOR"].tolist() == [100.0]

@@ -47,8 +47,25 @@ vivo do antigo aviso baseado na planilha `pontuacao/pontos_{mes}.xlsx`.)
 
 ## Emissão de cartão
 
-`TIPO OPER. ∈ {CARTÃO BENEFICIO, Venda Pré-Adesão}` (flag
-`is_emissao_cartao`, `kpis/consolidacao.py`):
+`TIPO_PRODUTO ∈ PRODUTOS_EMISSAO` (`EMISSAO`, `EMISSAO CC`, `EMISSAO CB`) —
+**critério único**, em `kpis/consolidacao.py::eh_emissao`. A flag
+`is_emissao_cartao` dos pagos, a zeragem de valor de análise/cancelados
+(`aplicar_conta_valor`), `mascaras_aceleradores`, os cards de quantidade e
+as abas Produtos/Em Análise chamam essa função; o Caderno (SQL) usa o mesmo
+produto.
+
+> **Por que o produto e não a operação (decisão de 09/2026).** Até então
+> metade das superfícies usava `TIPO OPER. ∈ {CARTÃO BENEFICIO, Venda
+> Pré-Adesão}`. Na base inteira os dois critérios concordavam, exceto em 3
+> propostas de **operação de cartão com produto de SAQUE** (abr/2025 e
+> dez/2025) — saque é produção com valor. O caso que motivou a zeragem por
+> operação (`292ab90`, "Pré-Adesão de produto CONSIG") não existe mais na
+> base. Na aba Produtos a operação segue como **dimensão de exibição** (as
+> colunas "Cartão Benefício" / "Venda Pré-Adesão"), sempre restrita a
+> produto de emissão. Catraca: `tests/test_criterio_emissao.py`.
+>
+> Emissão está zerada desde jun/2026 por pausa burocrática na emissão de
+> cartões — **não** é bug nem produto descontinuado.
 
 - **Contam apenas como quantidade**.
 - `conta_valor = False` e `conta_pontuacao = False` em `categorias_produto`.
@@ -124,7 +141,7 @@ comissionamento; nos demais produtos o banco não é critério de negócio):
 
 | Contador | Critério |
 |---|---|
-| **Emissão** | `TIPO OPER. ∈ {CARTÃO BENEFICIO, Venda Pré-Adesão}` (soma as duas subtabs) |
+| **Emissão** | produto de emissão (`eh_emissao`); as duas subtabs dividem por `TIPO OPER.` (Cartão Benefício / Venda Pré-Adesão) e o total soma as duas |
 | **Super Conta** | `SUBTIPO = SUPER CONTA` |
 | **BMG Med** | `TIPO OPER. = BMG MED` |
 | **Vida Familiar** | `TIPO OPER. = Seguro` |
@@ -195,7 +212,7 @@ de BMG Med, Vida Familiar, Emissão e Super Conta.
 > ([`kpis/gerais.py`](../../src/dashboard/kpis/gerais.py)), de onde
 > `kpis/produtos.py` as importa desde 09/2026 — antes eram
 > reimplementadas lá com o mesmo texto, e concordavam por coincidência.
-> Super Conta prefere a flag canônica `is_super_conta` (derivada em
+> Emissão delega a `consolidacao.eh_emissao`. Super Conta prefere a flag canônica `is_super_conta` (derivada em
 > `kpis/consolidacao.py`) e só cai para o `SUBTIPO` quando o frame não a
 > traz. CLT e Consignado ficam só em `kpis/produtos.py`: são quantidade
 > por cima do pivot de valor, não aceleradores.
@@ -205,16 +222,8 @@ de BMG Med, Vida Familiar, Emissão e Super Conta.
 > 09/2026 — antes reimplementavam a máscara inline. BMG Med e Vida
 > Familiar ali seguem por `kpis/seguros.py` (união das três fontes).
 >
-> ⚠️ **Divergência aberta — Emissão tem dois critérios.** A consolidação
-> (zeragem de valor, `is_emissao_cartao`), os cards de quantidade do topo
-> (`kpis/gerais.py::_PRODUTOS_QTD`) e o contador da aba Produtos
-> (`tabs/produtos.py::_PRODS_QTD`) usam
-> `TIPO OPER. ∈ {CARTÃO BENEFICIO, Venda Pré-Adesão}`;
-> `mascaras_aceleradores` (rankings, Gestão, Distribuição, Aceleradores)
-> usa `TIPO_PRODUTO ∈ PRODUTOS_EMISSAO` (`EMISSAO`, `EMISSAO CC`,
-> `EMISSAO CB`). Se não marcarem as mesmas linhas, as superfícies contam
-> Emissão diferente. Aguardando verificação no dado e decisão de regra —
-> ver [progress/2026-09-15c](progress/2026-09-15c-analiticos-criterios-e-emissao.md).
+> Emissão tinha um segundo critério (por `TIPO OPER.`) até 09/2026 —
+> unificado por produto, ver [Emissão de cartão](#emissão-de-cartão).
 >
 > A aba de Produtos tem uma **terceira** superfície, `_PRODS_QTD` +
 > `_mask_subtab` ([`tabs/produtos.py`](../../src/dashboard/tabs/produtos.py)):

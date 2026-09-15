@@ -37,7 +37,33 @@ alteracao (prova de move byte-identico no commit).
 
 import pandas as pd
 
-from src.config.settings import NOMES_DISPLAY_PRODUTO
+from src.config.settings import NOMES_DISPLAY_PRODUTO, PRODUTOS_EMISSAO
+
+
+def eh_emissao(df: pd.DataFrame) -> pd.Series:
+    """Emissao de cartao: ``TIPO_PRODUTO`` em ``PRODUTOS_EMISSAO``.
+
+    **O unico criterio de Emissao do dashboard.** Consolidacao (zeragem
+    de valor/pontos e flag ``is_emissao_cartao``), ``aplicar_conta_valor``
+    (analise/cancelados), ``mascaras_aceleradores``, cards de quantidade
+    e abas Produtos/Em Analise chamam esta funcao — o Caderno (SQL) usa
+    o mesmo produto.
+
+    Ate 09/2026 metade das superficies usava ``TIPO OPER. in {CARTAO
+    BENEFICIO, Venda Pre-Adesao}``. Na base inteira os dois concordavam,
+    exceto em 3 propostas de operacao de cartao com produto de SAQUE —
+    que sao producao com valor. Decisao do usuario: vale o produto.
+    Ver ``tests/test_criterio_emissao.py``.
+
+    ``astype(str)`` antes de ``.str``: coluna toda nula chega como float.
+    Sem a coluna, nada e emissao.
+    """
+    if "TIPO_PRODUTO" not in df.columns:
+        return pd.Series(False, index=df.index)
+    return (
+        df["TIPO_PRODUTO"].astype(str).str.strip().str.upper()
+        .isin({p.upper() for p in PRODUTOS_EMISSAO})
+    )
 
 
 # Fallback TIPO_PRODUTO → categoria, usado quando
@@ -269,19 +295,15 @@ def consolidar_pontuacao(
         .str.upper() == "SUPER CONTA"
     )
 
-    # Classificacoes por TIPO OPER. (mesma logica do dashboard original)
+    # Classificacoes por TIPO OPER. (seguros)
     col_tipo_oper = "TIPO OPER."
 
-    # Emissao de cartao: contam apenas quantidade
-    df["is_emissao_cartao"] = (
-        df[col_tipo_oper].isin(["CARTÃO BENEFICIO", "Venda Pré-Adesão"])
-        if col_tipo_oper in df.columns
-        else False
-    )
+    # Emissao de cartao: contam apenas quantidade. Criterio unico por
+    # produto — ver `eh_emissao`.
+    df["is_emissao_cartao"] = eh_emissao(df)
 
-    # Zerar valor/pontos de emissoes nao cobertas por conta_valor=false
-    # (ex: Venda Pre-Adesao com produto CONSIG tem categoria CONSIG_BMG
-    # que possui conta_valor=true, mas o TIPO OPER. indica emissao)
+    # Zerar valor/pontos de emissoes mesmo quando a categoria nao traz
+    # conta_valor=false (defesa contra cadastro de categoria incompleto).
     mask_emissao = df["is_emissao_cartao"]
     if mask_emissao.any():
         df.loc[mask_emissao, "VALOR"] = 0

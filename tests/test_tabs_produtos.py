@@ -82,22 +82,28 @@ class TestMaskSubtab:
     def test_nao_regressao_tipo_oper_emissao_cartao_beneficio(self):
         sub = _cfg("Emissão")["subtabs"][0]
         valor = sub["tipo_oper"][0]
+        # Operação divide a exibição; o critério é o produto: a última
+        # linha tem a operação certa, mas produto de SAQUE.
         df = pd.DataFrame({
             "TIPO OPER.": [
-                valor, valor.lower(), "Venda Pré-Adesão", "Outro",
+                valor, valor.lower(), "Venda Pré-Adesão", "Outro", valor,
+            ],
+            "TIPO_PRODUTO": [
+                "EMISSAO", "EMISSAO", "EMISSAO", "EMISSAO", "SAQUE BENEFICIO",
             ],
         })
         assert _mask_subtab(df, sub).tolist() == [
-            True, False, False, False,
+            True, False, False, False, False,
         ]
 
     def test_nao_regressao_tipo_oper_emissao_venda_pre_adesao(self):
         sub = _cfg("Emissão")["subtabs"][1]
         valor = sub["tipo_oper"][0]
         df = pd.DataFrame({
-            "TIPO OPER.": [valor, "CARTÃO BENEFICIO", "Outro"],
+            "TIPO OPER.": [valor, "CARTÃO BENEFICIO", "Outro", valor],
+            "TIPO_PRODUTO": ["EMISSAO CC", "EMISSAO", "EMISSAO", "SAQUE"],
         })
-        assert _mask_subtab(df, sub).tolist() == [True, False, False]
+        assert _mask_subtab(df, sub).tolist() == [True, False, False, False]
 
     def test_nao_regressao_tipo_oper_bmg_med(self):
         sub = _cfg("BMG Med")["subtabs"][0]
@@ -697,6 +703,7 @@ class TestRenderProdutoRegionalTotalSemToggle:
         val_venda = cfg["subtabs"][1]["tipo_oper"][0]
         df = pd.DataFrame({
             "TIPO OPER.": [val_cartao, val_cartao, val_venda, "Outro"],
+            "TIPO_PRODUTO": ["EMISSAO"] * 4,
             "REGIAO": ["R1", "R1", "R1", "R1"],
             "LOJA": ["L1", "L1", "L1", "L1"],
         })
@@ -854,6 +861,7 @@ class TestRenderProdutoRegionalProducaoSupervisor:
         val_venda = cfg["subtabs"][1]["tipo_oper"][0]
         df = pd.DataFrame({
             "TIPO OPER.": [val_cartao, val_cartao, val_venda],
+            "TIPO_PRODUTO": ["EMISSAO"] * 3,
             "LOJA": ["L1", "L1", "L1"],
             "CONSULTOR": [
                 "Joao", "Chefe Supervisor", "Chefe Supervisor",

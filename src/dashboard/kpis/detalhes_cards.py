@@ -34,6 +34,7 @@ from typing import Callable, Optional
 
 import pandas as pd
 
+from src.dashboard.kpis.consolidacao import eh_emissao
 from src.dashboard.kpis.gerais import (
     excluir_supervisores,
     separar_cancelados_liquidos,
@@ -69,17 +70,6 @@ def _projetar(valor: float, du_decorridos: int, du_totais: int) -> float:
 # ──────────────────────────────────────────────────────────────────
 
 
-# Emissoes identificadas pelo ``TIPO OPER.`` do contrato. Contam apenas
-# como quantidade, mas nem sempre chegam com ``conta_valor=False``: uma
-# "Venda Pré-Adesão" de produto CONSIG herda a categoria ``CONSIG_*``,
-# que tem ``conta_valor=True``. Sem esta clausula o valor da emissao
-# inflaria os totais. Ver "Emissão de cartão" em
-# ``docs/agents/business-rules.md``.
-TIPOS_OPER_EMISSAO: frozenset = frozenset(
-    {"CARTÃO BENEFICIO", "Venda Pré-Adesão"}
-)
-
-
 def aplicar_conta_valor(df: pd.DataFrame) -> pd.DataFrame:
     """Zera o ``VALOR`` do que conta so como quantidade (copia defensiva).
 
@@ -87,8 +77,8 @@ def aplicar_conta_valor(df: pd.DataFrame) -> pd.DataFrame:
     nao contam para o total monetario"):
 
     1. ``conta_valor=False`` na categoria — nulo/ausente vale ``True``;
-    2. ``TIPO OPER.`` em :data:`TIPOS_OPER_EMISSAO` — emissoes que a
-       categoria nao marca (Venda Pré-Adesão de produto CONSIG).
+    2. emissao de cartao (``consolidacao.eh_emissao``, por produto) —
+       mesmo quando a categoria nao a marca com ``conta_valor=False``.
 
     Mantem todas as linhas (a contagem nao muda) — apenas neutraliza o
     VALOR. Cada clausula e ignorada se a coluna correspondente nao
@@ -100,8 +90,7 @@ def aplicar_conta_valor(df: pd.DataFrame) -> pd.DataFrame:
     if "conta_valor" in out.columns:
         nao_conta = ~out["conta_valor"].fillna(True).astype(bool)
         out.loc[nao_conta, "VALOR"] = 0.0
-    if "TIPO OPER." in out.columns:
-        out.loc[out["TIPO OPER."].isin(TIPOS_OPER_EMISSAO), "VALOR"] = 0.0
+    out.loc[eh_emissao(out), "VALOR"] = 0.0
     return out
 
 

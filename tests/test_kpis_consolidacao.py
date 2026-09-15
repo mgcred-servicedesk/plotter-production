@@ -195,20 +195,32 @@ class TestClassificacoes:
         )
         assert df["is_super_conta"].tolist() == [True]
 
-    @pytest.mark.parametrize("tipo_oper", [
-        "CARTÃO BENEFICIO", "Venda Pré-Adesão",
+    @pytest.mark.parametrize("tipo_produto", [
+        "EMISSAO", "EMISSAO CC", "EMISSAO CB",
     ])
-    def test_emissao_conta_so_quantidade(self, tipo_oper):
-        """Zera valor e pontos POR CIMA da categoria: uma Venda
-        Pré-Adesão de produto CONSIG tem `conta_valor=True`, mas o TIPO
-        OPER. diz que é emissão."""
+    def test_emissao_conta_so_quantidade(self, tipo_produto):
+        """Zera valor e pontos POR CIMA da categoria (`conta_valor=True`
+        aqui). Desde 09/2026 o critério é o PRODUTO — ver
+        `tests/test_criterio_emissao.py`."""
         df, _ = consolidar_pontuacao(
-            _contratos(**{"TIPO OPER.": [tipo_oper]}),
+            _contratos(TIPO_PRODUTO=[tipo_produto]),
             _pontos(), _sem_categorias,
         )
         assert df["is_emissao_cartao"].tolist() == [True]
         assert df["VALOR"].tolist() == [0]
         assert df["pontos"].tolist() == [0]
+
+    def test_operacao_de_cartao_com_produto_saque_nao_e_emissao(self):
+        """O caso real que decidiu o critério (3 propostas na base)."""
+        df, _ = consolidar_pontuacao(
+            _contratos(
+                TIPO_PRODUTO=["SAQUE BENEFICIO"],
+                **{"TIPO OPER.": ["CARTÃO BENEFICIO"]},
+            ),
+            _pontos(), _sem_categorias,
+        )
+        assert df["is_emissao_cartao"].tolist() == [False]
+        assert df["VALOR"].tolist() == [1000.0]
 
     def test_bmg_med_por_tipo_oper(self):
         df, _ = consolidar_pontuacao(

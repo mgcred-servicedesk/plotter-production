@@ -15,7 +15,6 @@ import pandas as pd
 from src.config.settings import (  # noqa: F401  (PACK_SPLIT_LABELS reexportado)
     NOMES_DISPLAY_PRODUTO,
     PACK_SPLIT_LABELS,
-    PRODUTOS_EMISSAO,
 )
 from src.dashboard.kpis.gerais import (
     mascaras_aceleradores,

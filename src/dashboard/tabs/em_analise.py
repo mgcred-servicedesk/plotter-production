@@ -11,6 +11,7 @@ from src.dashboard.components.tables import (
     exibir_tabela,
 )
 from src.dashboard.formatters import formatar_moeda, formatar_numero
+from src.dashboard.kpis.consolidacao import eh_emissao
 from src.dashboard.kpis.produtos import (
     COL_PRODUTO_DETALHADO,
     adicionar_produto_detalhado,
@@ -69,11 +70,7 @@ def render_tab_em_analise(df_analise, df_sup):
     if filt_status != "Todos":
         df_a = df_a[df_a["STATUS_BANCO"] == filt_status]
 
-    qtd_emissao_analise = (
-        (df_a["TIPO OPER."].isin(["CARTÃO BENEFICIO", "Venda Pré-Adesão"])).sum()
-        if "TIPO OPER." in df_a.columns
-        else 0
-    )
+    qtd_emissao_analise = int(eh_emissao(df_a).sum())
     qtd_sem_emissao = len(df_a) - qtd_emissao_analise
 
     st.markdown(f"**{len(df_a):,} propostas em analise**")

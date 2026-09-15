@@ -51,7 +51,7 @@ Ambas as pastas têm `TEMPLATE.md`. Copie, renomeie e preencha.
 ## Regras de negócio críticas (resumo de 1 linha)
 
 - **Pontos** = `VALOR × PTS` (tabela `pontuacao`, via RPC `obter_pontuacao_periodo`).
-- **Cartão** (`CARTÃO BENEFICIO`, `Venda Pré-Adesão`) — só quantidade.
+- **Emissão de cartão** (`TIPO_PRODUTO` EMISSAO / EMISSAO CC / EMISSAO CB, via `eh_emissao`) — só quantidade.
 - **Seguros** (`BMG MED`, `Seguro` → "Vida Familiar") — só quantidade; entram em "Pagos" via `sub_status_banco = 'Liquidada'`.
 - **Super Conta** — subtipo de CNC; conta para valor/pontos E como produção separada.
 - **Pipeline Em Análise** — exclui `PAGO AO CLIENTE`, `CANCELADO`, `Liquidada`.

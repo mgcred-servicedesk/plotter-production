@@ -14,6 +14,7 @@ import streamlit as st
 import streamlit_antd_components as sac
 
 from src.dashboard.formatters import formatar_moeda, formatar_numero
+from src.dashboard.kpis.consolidacao import eh_emissao
 from src.dashboard.kpis.gerais import _revisao_frame
 from src.dashboard.kpis.produtos import calcular_kpis_por_produto
 from src.dashboard.kpis.regioes import (
@@ -65,7 +66,7 @@ _BANCOS_BMG_HELP = ("BMG", "BANCO BMG", "HELP", "BANCO HELP")
 #   ``nome_col`` + os criterios de filtro lidos por ``_mask_subtab``
 #   (``tipo_oper``, ``subtipo``, ``categoria``, ``subtipos``,
 #   ``excluir_tipo_oper``).
-# - ``col_dig_tipo`` / ``col_dig_subtipo``: criterio da coluna
+# - ``col_dig_tipo`` / ``col_dig_subtipo`` / ``col_dig_emissao``: criterio da coluna
 #   "Análise" (digitados). Ausentes = aba sem coluna de análise.
 # - ``total_label`` / ``total_help``: KPI de total no topo da aba.
 # - ``toggle_banco``: flag opcional que restringe o total **e** as
@@ -75,19 +76,21 @@ _PRODS_QTD = [
     {
         "label": "Emissão",
         "subtabs": [
+            # A operacao aqui e so DIMENSAO de exibicao (divide a
+            # Emissao em duas colunas); o criterio e o produto
+            # (`emissao: True` -> `consolidacao.eh_emissao`).
             {
                 "nome_col": "Cartão Benefício",
                 "tipo_oper": ["CARTÃO BENEFICIO"],
+                "emissao": True,
             },
             {
                 "nome_col": "Venda Pré-Adesão",
                 "tipo_oper": ["Venda Pré-Adesão"],
+                "emissao": True,
             },
         ],
-        "col_dig_tipo": [
-            "CARTÃO BENEFICIO",
-            "Venda Pré-Adesão",
-        ],
+        "col_dig_emissao": True,
         "total_label": "Propostas pagas",
         "total_help": (
             "Contratos pagos de Emissão (Cartão Benefício + "
@@ -313,6 +316,9 @@ def _mask_subtab(df: pd.DataFrame, sub: dict) -> pd.Series:
     - ``subtipos``: ``SUBTIPO`` dentro de uma lista (normalizado).
     - ``excluir_tipo_oper``: ``TIPO OPER.`` **fora** de uma lista
       (normalizado).
+    - ``emissao``: produto de emissao (``consolidacao.eh_emissao``) — o
+      criterio unico de Emissao; ``tipo_oper`` ao lado so divide a
+      exibicao.
 
     Criterio declarado cuja coluna nao existe no frame zera a contagem
     — o mesmo comportamento defensivo de antes desta extensao. Vale
@@ -349,6 +355,12 @@ def _mask_subtab(df: pd.DataFrame, sub: dict) -> pd.Series:
         partes.append(
             ~_norm(df["TIPO OPER."]).isin(sub["excluir_tipo_oper"])
             if "TIPO OPER." in df.columns
+            else _mask_falsa(df)
+        )
+    if sub.get("emissao"):
+        partes.append(
+            eh_emissao(df)
+            if "TIPO_PRODUTO" in df.columns
             else _mask_falsa(df)
         )
 
@@ -650,7 +662,11 @@ def _render_produto_regional(
     # Aba sem criterio de digitados (CLT, Consignado) nao ganha coluna
     # "Análise": o frame vazio so com as chaves de merge some no
     # ``col_exib``, que filtra por coluna existente.
-    tem_analise = "col_dig_subtipo" in cfg or "col_dig_tipo" in cfg
+    tem_analise = (
+        "col_dig_subtipo" in cfg
+        or "col_dig_tipo" in cfg
+        or cfg.get("col_dig_emissao")
+    )
     if not tem_analise:
         df_dig = pd.DataFrame(columns=merge_cols)
     elif not df_a.empty:
@@ -663,6 +679,8 @@ def _render_produto_regional(
                 if "SUBTIPO" in df_a.columns
                 else pd.Series(False, index=df_a.index)
             )
+        elif cfg.get("col_dig_emissao"):
+            mask_dig = eh_emissao(df_a)
         else:
             tipos = cfg.get("col_dig_tipo", [])
             mask_dig = (

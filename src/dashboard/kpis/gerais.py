@@ -13,7 +13,7 @@ from typing import Any, Dict, List, MutableMapping, NamedTuple, Optional
 
 import pandas as pd
 
-from src.config.settings import PRODUTOS_EMISSAO
+from src.dashboard.kpis.consolidacao import eh_emissao
 from src.shared.dias_uteis import calcular_dias_uteis
 
 
@@ -299,15 +299,7 @@ def mascaras_aceleradores(df: pd.DataFrame) -> Dict[str, pd.Series]:
             return falso
         return df[col].fillna(False).astype(bool)
 
-    if "TIPO_PRODUTO" in df.columns:
-        # astype(str) antes de .str: coluna toda nula chega como float e
-        # o acessor .str levantaria. NaN/None viram "NAN"/"NONE", fora
-        # do conjunto — mesmo resultado para texto.
-        emissao = df["TIPO_PRODUTO"].astype(str).str.upper().isin(
-            {p.upper() for p in PRODUTOS_EMISSAO}
-        )
-    else:
-        emissao = falso
+    emissao = eh_emissao(df)
 
     # Prefere a flag canonica derivada na consolidacao; o fallback por
     # SUBTIPO cobre df parcial (testes, periodo sem consolidacao) e usa
@@ -991,10 +983,7 @@ _PRODUTOS_QTD = [
         "nome": "Emissão",
         "col_pago": "is_emissao_cartao",
         "col_meta": "EMISSAO",
-        "tipo_oper_analise": [
-            "CARTÃO BENEFICIO",
-            "Venda Pré-Adesão",
-        ],
+        "emissao_analise": True,
     },
     {
         "produto": "SUPER_CONTA",
@@ -1080,6 +1069,8 @@ def calcular_kpis_qtd_produtos(
                             == prod["subtipo_analise"]
                         ).sum()
                     )
+            elif prod.get("emissao_analise"):
+                qtd_analise = int(eh_emissao(df_analise).sum())
             elif "tipo_oper_analise" in prod:
                 if "TIPO OPER." in df_analise.columns:
                     qtd_analise = int(

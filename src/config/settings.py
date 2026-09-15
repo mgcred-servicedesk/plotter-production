@@ -7,7 +7,8 @@ produto (grupos, metas, flags) e os feriados/períodos vêm do Supabase
 constantes que não têm fonte no banco.
 """
 
-# Produtos de emissão (CARTÃO/Pré-Adesão) — contam só como quantidade.
+# Produtos de emissão de cartão — contam só como quantidade. Critério único
+# de Emissão do dashboard: `kpis/consolidacao.py::eh_emissao`.
 PRODUTOS_EMISSAO = ['EMISSAO', 'EMISSAO CC', 'EMISSAO CB']
 
 # Meses por extenso em pt-BR. O calendário do `st.date_input` é

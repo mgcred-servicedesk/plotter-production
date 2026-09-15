@@ -669,6 +669,7 @@ class TestCalcularKpisQtdProdutos:
         df_analise = pd.DataFrame({
             "SUBTIPO": ["SUPER CONTA", None],
             "TIPO OPER.": ["CARTÃO BENEFICIO", "BMG MED"],
+            "TIPO_PRODUTO": ["EMISSAO", "BMG MED"],
         })
         df_metas_produto = pd.DataFrame({
             "LOJA": ["A"], "EMISSAO": [5.0], "SUPER_CONTA": [3.0],
@@ -682,7 +683,7 @@ class TestCalcularKpisQtdProdutos:
 
         emissao = by["EMISSAO"]
         assert emissao["qtd_paga"] == 2
-        assert emissao["qtd_analise"] == 1  # CARTÃO BENEFICIO
+        assert emissao["qtd_analise"] == 1  # TIPO_PRODUTO EMISSAO
         assert emissao["meta"] == pytest.approx(5.0)
         assert emissao["perc_atingido"] == pytest.approx(40.0)
 
