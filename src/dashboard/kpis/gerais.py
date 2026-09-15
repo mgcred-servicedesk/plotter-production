@@ -1239,6 +1239,23 @@ def _revisao_entradas(*entradas: Any) -> tuple:
     )
 
 
+def _revisao_calendario(mes: int, ano: int, dia_atual: Optional[int]) -> tuple:
+    """Os dias uteis do periodo, como entrada da revisao.
+
+    ``calcular_kpis_gerais`` calcula ``du_total`` POR DENTRO, a partir
+    de ``carregar_feriados`` — entao o calendario e uma entrada tao real
+    quanto os frames, so que invisivel na assinatura. Feriado cadastrado
+    num dia ainda nao decorrido nao muda ``du_decorridos`` nem frame
+    nenhum; sem isto a chave ficava igual e o ``du_total`` antigo
+    seguia na sessao de todo usuario.
+
+    Usa o proprio ``calcular_dias_uteis`` (e nao o conjunto de feriados)
+    para a chave depender exatamente do que o calculo consome. Nao custa
+    request: ``carregar_feriados`` e cacheado.
+    """
+    return calcular_dias_uteis(ano, mes, dia_atual)
+
+
 def _chave_kpis(
     mes: int,
     ano: int,
@@ -1334,6 +1351,7 @@ def obter_kpis_gerais_periodo(
         mes, ano, role, perfil_efetivo, session_state,
         _revisao_entradas(
             df, df_metas, df_metas_produto, df_sup, dia_atual,
+            _revisao_calendario(mes, ano, dia_atual),
         ),
     )
 
@@ -1574,7 +1592,7 @@ def obter_metas_prod_diarias_periodo(
         mes, ano, role, perfil_efetivo, session_state,
         _revisao_entradas(
             df, df_metas, df_metas_produto, df_sup, dia_atual,
-            du_decorridos,
+            du_decorridos, _revisao_calendario(mes, ano, dia_atual),
         ),
     )
 
@@ -1647,6 +1665,7 @@ def obter_kpis_qtd_periodo(
         _revisao_entradas(
             df, df_metas, df_metas_produto, df_sup, df_analise,
             df_full, df_sup_full, dia_atual, du_decorridos,
+            _revisao_calendario(mes, ano, dia_atual),
         ),
     )
 

@@ -28,6 +28,7 @@ from src.dashboard.kpis.gerais import (
     PRODUTOS_DASHBOARD,
     KpisPipeline,
     _chave_kpis,
+    _revisao_calendario,
     _revisao_entradas,
     calcular_assertividade_consultores,
     calcular_kpis_analise,
@@ -967,17 +968,29 @@ _ENTRADAS_REVISAO = {
 }
 
 
+# As que dependem de ``du_total`` calculado por dentro recebem o
+# calendario como ultima entrada da revisao (ver TestCalendarioNaRevisao).
+_REVISAO_COM_CALENDARIO = {
+    "_kpis_gerais_chave", "_metas_prod_diarias_chave", "_kpis_qtd_chave",
+}
+
+
 def _chave_esperada(nome_chave: str, kwargs: dict, ss) -> tuple:
     """Reconstroi a chave que a `obter_*_periodo` deve ter gravado."""
+    entradas = [kwargs.get(n) for n in _ENTRADAS_REVISAO[nome_chave]]
+    if nome_chave in _REVISAO_COM_CALENDARIO:
+        entradas.append(
+            _revisao_calendario(
+                kwargs["mes"], kwargs["ano"], kwargs["dia_atual"]
+            )
+        )
     return _chave_kpis(
         kwargs["mes"],
         kwargs["ano"],
         kwargs["role"],
         kwargs["perfil_efetivo"],
         ss,
-        _revisao_entradas(
-            *(kwargs.get(n) for n in _ENTRADAS_REVISAO[nome_chave])
-        ),
+        _revisao_entradas(*entradas),
     )
 
 
@@ -2140,4 +2153,98 @@ class TestRevisaoDosDadosNasSeisFuncoes:
                     df_metas_produto_periodo.copy(),
                 )
             )
+        assert len(chamadas) == 1
+
+
+@pytest.mark.unit
+class TestCalendarioNaRevisao:
+    """Feriado cadastrado no meio do mês precisa invalidar os KPIs.
+
+    Três das seis ``obter_*_periodo`` dependem de ``du_total``, que
+    ``calcular_kpis_gerais`` calcula POR DENTRO a partir de
+    ``carregar_feriados``. As outras três recebem ``du_decorridos``
+    pronto do ``app.py`` e já invalidam por ele.
+
+    O bug: com feriado num dia AINDA NÃO DECORRIDO, ``du_decorridos``
+    não muda, os frames não mudam — e a chave também não. O KPI seguia
+    com o ``total_du`` antigo na sessão de TODO usuário, porque limpar
+    ``st.cache_data`` (o que o CRUD de feriados fazia) não toca
+    ``session_state``.
+
+    Junho/2026, referência no dia 16; o feriado entra no dia 25.
+    """
+
+    _FERIADO = datetime(2026, 6, 25).date()
+
+    def _calendario(self, monkeypatch, feriados):
+        import src.shared.dias_uteis as du
+
+        monkeypatch.setattr(du, "carregar_feriados", lambda mes, ano: feriados)
+
+    def test_gerais_reflete_feriado_futuro(
+        self, monkeypatch, df_escopo_a, df_metas_produto_periodo
+    ):
+        ss = {}
+        kwargs = _kwargs_gerais(
+            ss, df_escopo_a, _PERFIL_A, df_metas_produto_periodo
+        )
+        self._calendario(monkeypatch, set())
+        antes = obter_kpis_gerais_periodo(**kwargs)["du_total"]
+
+        self._calendario(monkeypatch, {self._FERIADO})
+        depois = obter_kpis_gerais_periodo(**kwargs)["du_total"]
+
+        assert depois == antes - 1
+
+    def test_metas_prod_diarias_refletem_feriado_futuro(
+        self, monkeypatch, df_escopo_a, df_metas_produto_periodo
+    ):
+        ss = {}
+        kwargs = _kwargs_metas_prod_diarias(
+            ss, df_escopo_a, _PERFIL_A, df_metas_produto_periodo
+        )
+        self._calendario(monkeypatch, set())
+        antes = obter_metas_prod_diarias_periodo(**kwargs)
+
+        self._calendario(monkeypatch, {self._FERIADO})
+        depois = obter_metas_prod_diarias_periodo(**kwargs)
+
+        # Um DU restante a menos: a meta diária de quem tem gap sobe.
+        assert depois != antes
+
+    def test_kpis_qtd_refletem_feriado_futuro(
+        self, monkeypatch, df_escopo_a, df_metas_produto_periodo
+    ):
+        ss = {}
+        kwargs = _kwargs_kpis_qtd(
+            ss, df_escopo_a, _PERFIL_A, df_metas_produto_periodo, df_escopo_a
+        )
+        self._calendario(monkeypatch, set())
+        antes = obter_kpis_qtd_periodo(**kwargs)
+
+        self._calendario(monkeypatch, {self._FERIADO})
+        depois = obter_kpis_qtd_periodo(**kwargs)
+
+        assert depois != antes
+
+    def test_calendario_igual_continua_cache_hit(
+        self, monkeypatch, df_escopo_a, df_metas_produto_periodo
+    ):
+        """A correção não pode custar o cache: sem mudança de
+        calendário, a segunda chamada não recalcula."""
+        chamadas = []
+        original = kpis_gerais_module.calcular_kpis_gerais
+
+        def contar(*a, **k):
+            chamadas.append(1)
+            return original(*a, **k)
+
+        monkeypatch.setattr(kpis_gerais_module, "calcular_kpis_gerais", contar)
+        self._calendario(monkeypatch, {self._FERIADO})
+        ss = {}
+        kwargs = _kwargs_gerais(
+            ss, df_escopo_a, _PERFIL_A, df_metas_produto_periodo
+        )
+        obter_kpis_gerais_periodo(**kwargs)
+        obter_kpis_gerais_periodo(**kwargs)
         assert len(chamadas) == 1

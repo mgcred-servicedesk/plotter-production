@@ -356,3 +356,22 @@ sucesso posterior apaga a marca.
 **Padrão a repetir:** dentro de função cacheada, falha de I/O deve
 *levantar*, nunca devolver o valor-vazio do caminho feliz — senão o
 cache promove o erro a resposta válida.
+
+### Quem depende do calendário (e é limpo no CRUD)
+
+Feriado não mora só no cache de feriados. O CRUD
+(`feriados_mgmt._limpar_cache_feriados`) limpa **só** o que deriva dias
+úteis — nunca `st.cache_data.clear()`, que derruba contratos e metas de
+todos os usuários:
+
+| Onde | Como depende | Como é invalidado |
+|---|---|---|
+| cache de feriados (`dias_uteis`) | direto | `limpar_cache_feriados()` |
+| `carregar_headcount_ponderado` | RPC `fn_headcount_ponderado` lê `feriados` no SQL | `loaders.limpar_caches_de_calendario()` |
+| `_vinculos_consultores_atual/_historico` | `_dias_uteis_competencia` | idem |
+| KPIs em `session_state` (gerais, metas diárias, qtd) | `du_total` calculado por dentro | calendário na revisão da chave (`_revisao_calendario`) — cada sessão invalida sozinha |
+
+Cache novo que dependa de feriado entra em `loaders.CACHES_DE_CALENDARIO`.
+A catraca `tests/test_limpeza_cache_calendario.py` deriva a lista do
+código e das migrations (última definição de cada função SQL) e falha
+se faltar alguém.

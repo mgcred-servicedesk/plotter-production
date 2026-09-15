@@ -151,22 +151,38 @@ def carregar_feriados_supabase(
     return datas
 
 
+_feriados_cacheados = None
+
+
+def _funcao_cacheada():
+    """A funcao ``st.cache_data`` de feriados, criada UMA vez.
+
+    Ate 09/2026 o decorator era aplicado dentro de
+    ``_carregar_feriados_cached`` a cada chamada. O cache funcionava
+    (o Streamlit identifica a funcao pelo codigo), mas nao havia objeto
+    com ``.clear()`` para limpar so ele — e a tentativa de limpar
+    falhava em silencio. Guardar a funcao decorada da o ``.clear()``.
+
+    Importa st apenas quando necessario, como antes.
+    """
+    global _feriados_cacheados
+    if _feriados_cacheados is None:
+        import streamlit as st
+
+        @st.cache_data(ttl=86400, show_spinner=False)
+        def _cached(mes: int, ano: int) -> set[date]:
+            return carregar_feriados_supabase(mes, ano)
+
+        _feriados_cacheados = _cached
+    return _feriados_cacheados
+
+
 def _carregar_feriados_cached(
     mes: int,
     ano: int,
 ) -> set[date]:
-    """Wrapper cacheado para uso no Streamlit.
-
-    Importa st apenas quando necessario para nao
-    quebrar execucoes CLI (relatorios PDF/Excel).
-    """
-    import streamlit as st
-
-    @st.cache_data(ttl=86400, show_spinner=False)
-    def _cached(mes: int, ano: int) -> set[date]:
-        return carregar_feriados_supabase(mes, ano)
-
-    return _cached(mes, ano)
+    """Wrapper cacheado para uso no Streamlit."""
+    return _funcao_cacheada()(mes, ano)
 
 
 def carregar_feriados(
@@ -206,13 +222,16 @@ def carregar_feriados(
 
 
 def limpar_cache_feriados() -> None:
-    """Limpa cache de feriados apos CRUD na tela admin."""
-    try:
-        import streamlit as st
-        _carregar_feriados_cached.__wrapped__ = None
-        st.cache_data.clear()
-    except Exception:
-        pass
+    """Limpa SO o cache de feriados, apos CRUD na tela admin.
+
+    Nao limpa quem deriva dias uteis de feriados em outro modulo
+    (headcount, vinculos): isso e de ``loaders.limpar_caches_de_calendario``,
+    e quem compoe as duas e o CRUD (``feriados_mgmt``).
+
+    Sem ``try/except``: foi um ``except: pass`` que escondeu, por anos,
+    que a limpeza cirurgica nunca rodava.
+    """
+    _funcao_cacheada().clear()
 
 
 def calcular_dias_uteis(

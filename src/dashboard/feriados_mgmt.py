@@ -10,6 +10,8 @@ import pandas as pd
 import streamlit as st
 
 from src.config.supabase_client import get_supabase_client
+from src.dashboard.loaders import limpar_caches_de_calendario
+from src.shared.dias_uteis import limpar_cache_feriados
 
 TIPOS_FERIADO = {
     "nacional": "Nacional",
@@ -76,15 +78,21 @@ def _remover_feriado(feriado_id: int) -> tuple[bool, str]:
 
 
 def _limpar_cache_feriados():
-    """Limpa cache de dias uteis apos alteracao."""
-    try:
-        from src.shared.dias_uteis import (
-            _carregar_feriados_cached,
-        )
-        _carregar_feriados_cached.clear()
-    except Exception:
-        pass
-    st.cache_data.clear()
+    """Limpa os caches que dependem de feriados apos alteracao.
+
+    So eles: o cache de feriados e os de ``loaders`` que derivam dias
+    uteis (``CACHES_DE_CALENDARIO``). Os KPIs em ``session_state`` nao
+    precisam de limpeza — o calendario entra na revisao da chave
+    (``kpis/gerais.py::_revisao_calendario``), entao invalidam sozinhos
+    na sessao de cada usuario.
+
+    Ate 09/2026 aqui havia ``st.cache_data.clear()``: derrubava
+    contratos, metas e todo o resto de todos os usuarios, e era o que
+    de fato funcionava — a limpeza "cirurgica" ao lado falhava num
+    ``except: pass``.
+    """
+    limpar_cache_feriados()
+    limpar_caches_de_calendario()
 
 
 def _render_lista_feriados(ano: int):

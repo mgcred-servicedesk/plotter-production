@@ -1983,6 +1983,31 @@ def _vinculos_consultores_historico(
     return _fetch_vinculos_consultores(mes, ano, ate)
 
 
+# Caches cujo resultado depende da tabela ``feriados``: via
+# ``carregar_feriados`` (dias uteis dos vinculos) ou via RPC que le
+# ``public.feriados`` no SQL (``fn_headcount_ponderado``, 091/096).
+# Cache novo nessa condicao entra aqui — a catraca em
+# ``tests/test_limpeza_cache_calendario.py`` deriva a lista do codigo e
+# das migrations e falha se faltar alguem.
+CACHES_DE_CALENDARIO = (
+    carregar_headcount_ponderado,
+    _vinculos_consultores_atual,
+    _vinculos_consultores_historico,
+)
+
+
+def limpar_caches_de_calendario() -> None:
+    """Limpa os caches de ``loaders`` que dependem de feriados.
+
+    Chamado pelo CRUD de feriados junto de
+    ``dias_uteis.limpar_cache_feriados``, no lugar do
+    ``st.cache_data.clear()`` global — que derrubava contratos e metas
+    de todos os usuarios por causa de uma data.
+    """
+    for funcao in CACHES_DE_CALENDARIO:
+        funcao.clear()
+
+
 # ══════════════════════════════════════════════════════
 # Supervisores
 # ══════════════════════════════════════════════════════
