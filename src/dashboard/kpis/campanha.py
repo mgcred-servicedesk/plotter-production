@@ -1,23 +1,21 @@
-"""Regras da Campanha Semestral 2026-H2.
+"""Regras de campanha — registro e apuracao.
 
-Regras **da campanha**, nao de producao. Moram separadas de
-``kpis/gerais.py`` de proposito: o recorte de produtos, a meta e o
-criterio de desempate valem para esta campanha e para mais nada. Mudar
+Regras **de campanha**, nao de producao. Moram separadas de
+``kpis/gerais.py`` de proposito: recorte de produtos, meta e criterio de
+desempate valem para a campanha que os declarou e para mais nada. Mudar
 qualquer coisa aqui nao pode mexer no numero do dashboard de vendas.
 
-Contrato apurado (definido pelo usuario em 09/2026):
+O modulo e generico e o registro :data:`CAMPANHAS` e a fonte unica: uma
+campanha nova e uma entrada nova, sem tocar em funcao nenhuma. Toda
+funcao de apuracao recebe a :class:`Campanha` como parametro — nao ha
+constante de campanha solta no modulo, justamente para que a segunda
+campanha nao precise reabrir a primeira.
 
-- Meta de **R$ 75 milhoes em VALOR** — nao em pontos.
-- Produtos elegiveis: CNC, CLT, Consignado (inclui portabilidade),
-  Antecipacao de Beneficio e FGTS. **SAQUE de cartao fica de fora.**
-- Valem propostas **pagas** entre 01/07/2026 e 31/12/2026.
-- Ranking de consultores e de lojas por **pontos**; desempate pela
-  **producao de CNC**.
+Duas decisoes do usuario que o codigo nao teria como inferir, tomadas
+para a Semestral 2026-H2 e registradas na propria entrada dela:
 
-Duas decisoes do usuario que o codigo nao teria como inferir:
-
-1. **Super Conta conta como CNC** — tanto na producao quanto no
-   desempate. O projeto ja trata Super Conta como subtipo de CNC
+1. **Super Conta conta como CNC** — na producao e no desempate. O
+   projeto ja trata Super Conta como subtipo de CNC
    (``business-rules.md``), e a campanha seguiu a mesma leitura.
 2. **A apuracao sempre reflete a base atual.** Contrato pago em julho e
    cancelado depois some da base no proximo import e sai da campanha
@@ -26,59 +24,158 @@ Duas decisoes do usuario que o codigo nao teria como inferir:
    mudar; nao ha snapshot congelado.
 """
 
+from dataclasses import dataclass
 from datetime import date
-from typing import Optional
+from typing import Mapping, Optional
 
 import pandas as pd
 
+
 # ══════════════════════════════════════════════════════
-# Parametros da campanha
+# Definicao de campanha
 # ══════════════════════════════════════════════════════
 
-CAMPANHA_INICIO = date(2026, 7, 1)
-CAMPANHA_FIM = date(2026, 12, 31)
-META_VALOR = 75_000_000.0
 
-CAMPANHA_ROTULO = "Campanha Semestral 2026 · 2º semestre"
+@dataclass(frozen=True)
+class Campanha:
+    """Uma campanha e o conjunto fechado das suas regras.
 
-# Categorias elegiveis, por familia declarada pelo usuario.
-#
-# Os codigos saem de `categorias_produto` (database/schema.sql). O
-# mapa TIPO_PRODUTO -> categoria_codigo vive em
+    ``frozen`` porque campanha em curso nao muda de regra no meio: se
+    mudar, e outra campanha (ou uma correcao deliberada no registro,
+    versionada pelo git).
+
+    Campos:
+        slug: identificador estavel. E a chave de ``session_state`` e o
+            nome da pasta de assets — mudar quebra as duas coisas.
+        rotulo: nome exibido.
+        inicio, fim: janela de PAGAMENTO, limites inclusivos.
+        meta_valor: meta em R$ de producao (``VALOR``), nao em pontos.
+        familias: rotulo da familia -> codigos de ``categorias_produto``.
+            A ordem e a de exibicao. E o unico lugar que decide
+            elegibilidade.
+        familia_desempate: qual familia desempata o ranking. Precisa
+            existir em ``familias``.
+        excluidas_notaveis: codigos que alguem esperaria ver e nao
+            estao — exibidos no rodape para quem audita. Documentacao,
+            nao regra: a regra e ``familias``.
+    """
+
+    slug: str
+    rotulo: str
+    inicio: date
+    fim: date
+    meta_valor: float
+    familias: Mapping[str, tuple[str, ...]]
+    familia_desempate: str
+    excluidas_notaveis: tuple[str, ...] = ()
+    descricao: str = ""
+
+    def __post_init__(self) -> None:
+        # Desempate apontando para familia inexistente daria ranking
+        # sem criterio de desempate e ninguem perceberia — so empates
+        # ficariam com a ordem arbitraria do sort.
+        if self.familia_desempate not in self.familias:
+            raise ValueError(
+                f"Campanha {self.slug!r}: familia_desempate "
+                f"{self.familia_desempate!r} nao esta em familias "
+                f"({list(self.familias)})."
+            )
+        if self.fim < self.inicio:
+            raise ValueError(
+                f"Campanha {self.slug!r}: fim anterior ao inicio."
+            )
+
+    @property
+    def categorias_elegiveis(self) -> frozenset:
+        return frozenset(
+            codigo
+            for codigos in self.familias.values()
+            for codigo in codigos
+        )
+
+    @property
+    def categorias_desempate(self) -> frozenset:
+        return frozenset(self.familias[self.familia_desempate])
+
+    def vigente_em(self, quando: date) -> bool:
+        return self.inicio <= quando <= self.fim
+
+
+# ══════════════════════════════════════════════════════
+# Registro
+# ══════════════════════════════════════════════════════
+
+# Os codigos saem de `categorias_produto` (database/schema.sql). O mapa
+# TIPO_PRODUTO -> categoria_codigo vive em
 # `kpis/consolidacao.py::_TIPO_PARA_CATEGORIA` e ja foi aplicado pelo
-# loader antes de chegar aqui — sem ele, ANT. DE BENEF. e CLT chegam
-# SEM categoria (o ETL zera `categoria_id` quando a planilha renomeia o
+# loader antes de chegar aqui — sem ele, ANT. DE BENEF. e CLT chegam SEM
+# categoria (o ETL zera `categoria_id` quando a planilha renomeia o
 # tipo; ver migration 061). Em 16/09/2026 isso era 27% dos contratos da
 # janela e R$ 4,19 mi da apuracao.
-CATEGORIAS_POR_FAMILIA: dict[str, tuple[str, ...]] = {
-    # Super Conta e subtipo de CNC — decisao do usuario, 09/2026.
-    "CNC": ("CNC", "SUPER_CONTA"),
-    "CLT": ("CONSIG_PRIV",),
-    "Consignado": ("CONSIG_BMG", "CONSIG_ITAU", "CONSIG_C6", "PORTABILIDADE"),
-    "Ant. de Benef.": ("ANT_BENEF",),
-    "FGTS": ("FGTS",),
-}
-
-CATEGORIAS_ELEGIVEIS = frozenset(
-    codigo
-    for codigos in CATEGORIAS_POR_FAMILIA.values()
-    for codigo in codigos
+SEMESTRAL_2026H2 = Campanha(
+    slug="semestral-2026h2",
+    rotulo="Campanha Semestral 2026 · 2º semestre",
+    inicio=date(2026, 7, 1),
+    fim=date(2026, 12, 31),
+    meta_valor=75_000_000.0,
+    familias={
+        # Super Conta e subtipo de CNC — decisao do usuario, 09/2026.
+        "CNC": ("CNC", "SUPER_CONTA"),
+        "CLT": ("CONSIG_PRIV",),
+        "Consignado": (
+            "CONSIG_BMG",
+            "CONSIG_ITAU",
+            "CONSIG_C6",
+            "PORTABILIDADE",
+        ),
+        "Ant. de Benef.": ("ANT_BENEF",),
+        "FGTS": ("FGTS",),
+    },
+    familia_desempate="CNC",
+    # Explicito para quem for auditar: SAQUE e SAQUE_BENEFICIO (o "saque
+    # do cartao" que o usuario excluiu), alem de CARTAO/BMG_MED/
+    # SEGURO_VIDA, que nao contam valor em lugar nenhum.
+    #
+    # CNC_13 ("CNC 13º") NAO esta elegivel: o usuario nomeou cinco
+    # familias e CNC_13 e categoria propria, com
+    # `grupo_meta = FGTS_ANT_BENEF_13`. Em 16/09/2026 nao havia nenhum
+    # contrato CNC_13 na janela, mas 13º e produto de nov/dez — DENTRO
+    # da campanha. Confirmar antes de novembro; incluir e acrescentar
+    # "CNC_13" a familia CNC acima.
+    excluidas_notaveis=("SAQUE", "SAQUE_BENEFICIO", "CNC_13"),
+    descricao=(
+        "Meta de R$ 75 milhoes em producao (valor, nao pontos) entre "
+        "01/07/2026 e 31/12/2026. Ranking de consultores e de lojas "
+        "por pontos; desempate pela producao de CNC."
+    ),
 )
 
-# Desempate: producao de CNC. Segue a mesma leitura da familia CNC —
-# Super Conta incluida.
-CATEGORIAS_DESEMPATE = frozenset(CATEGORIAS_POR_FAMILIA["CNC"])
+# Ordem = ordem de exibicao. Campanha nova entra aqui e aparece sozinha
+# no seletor da pagina; nenhuma funcao precisa mudar.
+CAMPANHAS: tuple[Campanha, ...] = (SEMESTRAL_2026H2,)
 
-# Fora da campanha, explicito para quem for auditar: SAQUE e
-# SAQUE_BENEFICIO (o "saque do cartao" que o usuario excluiu), alem de
-# CARTAO/BMG_MED/SEGURO_VIDA, que nao contam valor em lugar nenhum.
-#
-# CNC_13 ("CNC 13º") NAO esta elegivel: o usuario nomeou cinco familias
-# e CNC_13 e categoria propria, com `grupo_meta = FGTS_ANT_BENEF_13`.
-# Em 16/09/2026 nao havia nenhum contrato CNC_13 na janela, mas 13º e
-# produto de nov/dez — DENTRO da campanha. Confirmar antes de novembro;
-# incluir e acrescentar "CNC_13" a familia CNC acima.
-CATEGORIAS_EXCLUIDAS_NOTAVEIS = ("SAQUE", "SAQUE_BENEFICIO", "CNC_13")
+
+def campanha_por_slug(slug: str) -> Optional[Campanha]:
+    """Campanha do registro, ou ``None``. Nunca levanta."""
+    for camp in CAMPANHAS:
+        if camp.slug == slug:
+            return camp
+    return None
+
+
+def campanha_padrao(hoje: Optional[date] = None) -> Optional[Campanha]:
+    """A campanha a abrir por default: a vigente hoje, senao a ultima.
+
+    "Vigente" ganha da ordem do registro para que, com duas campanhas
+    cadastradas, a pagina abra na que esta rodando — nao na que terminou.
+    """
+    if not CAMPANHAS:
+        return None
+    hoje = hoje or date.today()
+    for camp in CAMPANHAS:
+        if camp.vigente_em(hoje):
+            return camp
+    return max(CAMPANHAS, key=lambda c: c.fim)
 
 
 # ══════════════════════════════════════════════════════
@@ -86,11 +183,7 @@ CATEGORIAS_EXCLUIDAS_NOTAVEIS = ("SAQUE", "SAQUE_BENEFICIO", "CNC_13")
 # ══════════════════════════════════════════════════════
 
 
-def filtrar_janela(
-    df: pd.DataFrame,
-    inicio: date = CAMPANHA_INICIO,
-    fim: date = CAMPANHA_FIM,
-) -> pd.DataFrame:
+def filtrar_janela(df: pd.DataFrame, camp: Campanha) -> pd.DataFrame:
     """Recorta pela data de PAGAMENTO, limites inclusivos.
 
     A coluna ``DATA`` e a data de pagamento (``data_status_pagamento``)
@@ -117,16 +210,16 @@ def filtrar_janela(
         return df.iloc[0:0].copy()
 
     datas = pd.to_datetime(df["DATA"], errors="coerce")
-    limite = pd.Timestamp(fim) + pd.Timedelta(days=1)
+    limite = pd.Timestamp(camp.fim) + pd.Timedelta(days=1)
     dentro = (
         datas.notna()
-        & (datas >= pd.Timestamp(inicio))
+        & (datas >= pd.Timestamp(camp.inicio))
         & (datas < limite)
     )
     return df[dentro].copy()
 
 
-def filtrar_elegiveis(df: pd.DataFrame) -> pd.DataFrame:
+def filtrar_elegiveis(df: pd.DataFrame, camp: Campanha) -> pd.DataFrame:
     """Mantem so os produtos que pontuam na campanha.
 
     Pressupoe ``categoria_codigo`` ja reidratada pelo fallback do
@@ -140,16 +233,14 @@ def filtrar_elegiveis(df: pd.DataFrame) -> pd.DataFrame:
     if df.empty or "categoria_codigo" not in df.columns:
         return df.iloc[0:0].copy()
 
-    return df[df["categoria_codigo"].isin(CATEGORIAS_ELEGIVEIS)].copy()
+    return df[
+        df["categoria_codigo"].isin(camp.categorias_elegiveis)
+    ].copy()
 
 
-def preparar(
-    df: pd.DataFrame,
-    inicio: date = CAMPANHA_INICIO,
-    fim: date = CAMPANHA_FIM,
-) -> pd.DataFrame:
+def preparar(df: pd.DataFrame, camp: Campanha) -> pd.DataFrame:
     """Janela + elegibilidade, na ordem. Entrada de tudo mais aqui."""
-    return filtrar_elegiveis(filtrar_janela(df, inicio, fim))
+    return filtrar_elegiveis(filtrar_janela(df, camp), camp)
 
 
 # ══════════════════════════════════════════════════════
@@ -163,10 +254,7 @@ def _soma(df: pd.DataFrame, coluna: str) -> float:
     return float(pd.to_numeric(df[coluna], errors="coerce").fillna(0).sum())
 
 
-def apurar(
-    df: pd.DataFrame,
-    meta: float = META_VALOR,
-) -> dict:
+def apurar(df: pd.DataFrame, camp: Campanha) -> dict:
     """Numeros de topo da campanha.
 
     ``df`` deve vir de :func:`preparar`. ``valor`` e a producao
@@ -178,24 +266,25 @@ def apurar(
         ``pontos``, ``qtd``, ``valor_cnc``.
     """
     valor = _soma(df, "VALOR")
+    meta = float(camp.meta_valor)
     cnc = (
-        df[df["categoria_codigo"].isin(CATEGORIAS_DESEMPATE)]
+        df[df["categoria_codigo"].isin(camp.categorias_desempate)]
         if not df.empty and "categoria_codigo" in df.columns
         else df
     )
     return {
         "valor": valor,
-        "meta": float(meta),
+        "meta": meta,
         "atingimento": (valor / meta) if meta else 0.0,
-        "falta": max(float(meta) - valor, 0.0),
+        "falta": max(meta - valor, 0.0),
         "pontos": _soma(df, "pontos"),
         "qtd": int(len(df)),
         "valor_cnc": _soma(cnc, "VALOR"),
     }
 
 
-def apurar_por_familia(df: pd.DataFrame) -> pd.DataFrame:
-    """Quebra da producao pelas cinco familias declaradas na campanha.
+def apurar_por_familia(df: pd.DataFrame, camp: Campanha) -> pd.DataFrame:
+    """Quebra da producao pelas familias declaradas na campanha.
 
     Agrupa por FAMILIA (o rotulo que o usuario usou), nao por
     ``categoria_codigo`` — e como a rede le a campanha. Familia sem
@@ -203,7 +292,7 @@ def apurar_por_familia(df: pd.DataFrame) -> pd.DataFrame:
     ambigua entre "nao vendeu" e "regra nao pegou".
     """
     linhas = []
-    for familia, codigos in CATEGORIAS_POR_FAMILIA.items():
+    for familia, codigos in camp.familias.items():
         parte = (
             df[df["categoria_codigo"].isin(codigos)]
             if not df.empty and "categoria_codigo" in df.columns
@@ -229,31 +318,38 @@ def apurar_por_familia(df: pd.DataFrame) -> pd.DataFrame:
 # ══════════════════════════════════════════════════════
 
 
+def rotulo_desempate(camp: Campanha) -> str:
+    """Nome da coluna de desempate — segue a familia da campanha."""
+    return f"{camp.familia_desempate} (desempate)"
+
+
 def ranking(
     df: pd.DataFrame,
     coluna: str,
+    camp: Campanha,
     top: Optional[int] = None,
 ) -> pd.DataFrame:
-    """Ranking por PONTOS, desempate por producao de CNC.
+    """Ranking por PONTOS, desempate pela familia declarada da campanha.
 
     ``coluna`` e ``CONSULTOR`` ou ``LOJA``. O desempate entra como
     segunda chave de ordenacao — e o criterio declarado da campanha, e
-    fica materializado numa coluna visivel ("CNC (desempate)") para que
-    quem contesta a posicao veja o numero que a decidiu.
+    fica materializado numa coluna visivel (ex.: "CNC (desempate)") para
+    que quem contesta a posicao veja o numero que a decidiu.
 
     A posicao e ``1..n`` densa: empate real nos DOIS criterios divide a
     mesma posicao, em vez de escolher um vencedor pela ordem alfabetica
     que o sort deixou por acaso.
     """
+    col_desempate = rotulo_desempate(camp)
     vazio = pd.DataFrame(
-        columns=[coluna, "Pontos", "Valor", "CNC (desempate)", "Contratos"]
+        columns=[coluna, "Pontos", "Valor", col_desempate, "Contratos"]
     )
     if df.empty or coluna not in df.columns:
         return vazio
 
     base = df.copy()
-    base["_cnc"] = base["VALOR"].where(
-        base["categoria_codigo"].isin(CATEGORIAS_DESEMPATE), 0.0
+    base["_desempate"] = base["VALOR"].where(
+        base["categoria_codigo"].isin(camp.categorias_desempate), 0.0
     )
 
     out = (
@@ -261,7 +357,7 @@ def ranking(
         .agg(
             Pontos=("pontos", "sum"),
             Valor=("VALOR", "sum"),
-            **{"CNC (desempate)": ("_cnc", "sum")},
+            **{col_desempate: ("_desempate", "sum")},
             Contratos=(coluna, "size"),
         )
         .reset_index()
@@ -270,12 +366,12 @@ def ranking(
         return vazio
 
     out = out.sort_values(
-        ["Pontos", "CNC (desempate)"], ascending=[False, False]
+        ["Pontos", col_desempate], ascending=[False, False]
     ).reset_index(drop=True)
 
     # Posicao densa sobre o PAR (pontos, cnc): so quem empata nos dois
     # criterios divide posicao.
-    chave = list(zip(out["Pontos"], out["CNC (desempate)"]))
+    chave = list(zip(out["Pontos"], out[col_desempate]))
     posicoes, anterior, pos = [], None, 0
     for i, atual in enumerate(chave, start=1):
         if atual != anterior:
@@ -293,9 +389,8 @@ def ranking(
 
 def ritmo(
     apuracao: dict,
+    camp: Campanha,
     hoje: Optional[date] = None,
-    inicio: date = CAMPANHA_INICIO,
-    fim: date = CAMPANHA_FIM,
 ) -> dict:
     """Pace da campanha em dias corridos.
 
@@ -309,18 +404,18 @@ def ritmo(
     previsao: nao conhece sazonalidade (13º em nov/dez, por exemplo).
     """
     hoje = hoje or date.today()
-    total_dias = (fim - inicio).days + 1
+    total_dias = (camp.fim - camp.inicio).days + 1
 
-    if hoje < inicio:
+    if hoje < camp.inicio:
         decorridos = 0
-    elif hoje > fim:
+    elif hoje > camp.fim:
         decorridos = total_dias
     else:
-        decorridos = (hoje - inicio).days + 1
+        decorridos = (hoje - camp.inicio).days + 1
 
     restantes = max(total_dias - decorridos, 0)
     valor = apuracao.get("valor", 0.0)
-    meta = apuracao.get("meta", META_VALOR)
+    meta = apuracao.get("meta", camp.meta_valor)
 
     ritmo_dia = (valor / decorridos) if decorridos else 0.0
     projecao = ritmo_dia * total_dias

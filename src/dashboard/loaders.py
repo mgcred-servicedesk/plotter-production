@@ -2169,7 +2169,7 @@ def _executar_consolidacao(
 def carregar_consolidado_intervalo(
     data_ini,
     data_fim,
-) -> Tuple[pd.DataFrame, str]:
+) -> Tuple[pd.DataFrame, pd.DataFrame, str]:
     """Contratos pagos COM pontuacao, num intervalo livre de datas.
 
     Irma de :func:`carregar_contratos_pagos_intervalo`, com uma
@@ -2196,36 +2196,57 @@ def carregar_consolidado_intervalo(
     do ultimo mes do intervalo — a campanha mexendo no dashboard de
     vendas pela porta dos fundos. Aqui o ``diag`` e descartado.
 
+    Devolve tambem os **supervisores do intervalo** (uniao dos meses).
+    Quem consome campanha nao tem o ``df_sup`` do periodo da sidebar —
+    e nem deveria usar: a campanha atravessa meses, e supervisor muda no
+    caminho (ha promocao de consultor a supervisor dentro da janela de
+    2026-H2, migration 110). A uniao e o recorte correto para "quem foi
+    supervisor em algum momento do intervalo".
+
     Args:
         data_ini, data_fim: limites inclusivos (``datetime.date``).
 
     Returns:
-        ``(df, aviso)``. ``aviso`` traz o motivo quando o resultado vem
-        vazio ou limitado — nunca devolvemos vazio silencioso.
+        ``(df, df_supervisores, aviso)``. ``aviso`` traz o motivo quando
+        o resultado vem vazio ou limitado — nunca devolvemos vazio
+        silencioso.
     """
+    vazio = pd.DataFrame()
     meses = meses_do_intervalo(data_ini, data_fim, CAMPO_PAGAMENTO)
     if not meses:
-        return pd.DataFrame(), "Intervalo invalido: fim anterior ao inicio."
+        return vazio, vazio, "Intervalo invalido: fim anterior ao inicio."
     if len(meses) > MAX_MESES_INTERVALO:
         return (
-            pd.DataFrame(),
+            vazio,
+            vazio,
             f"Intervalo exige varrer {len(meses)} meses (maximo "
             f"{MAX_MESES_INTERVALO}). Reduza a faixa de datas.",
         )
 
-    partes = []
+    partes, sups = [], []
     for mes, ano in meses:
         if _eh_mes_atual(mes, ano):
-            df_mes, _, _, _ = _consolidar_atual(mes, ano, cache_version=4)
+            df_mes, _, df_sup_mes, _ = _consolidar_atual(
+                mes, ano, cache_version=4
+            )
         else:
-            df_mes, _, _, _ = _consolidar_historico(mes, ano, cache_version=4)
+            df_mes, _, df_sup_mes, _ = _consolidar_historico(
+                mes, ano, cache_version=4
+            )
         if not df_mes.empty:
             partes.append(df_mes)
+        if df_sup_mes is not None and not df_sup_mes.empty:
+            sups.append(df_sup_mes)
 
     if not partes:
-        return pd.DataFrame(), "Nenhum contrato pago nos meses do intervalo."
+        return vazio, vazio, "Nenhum contrato pago nos meses do intervalo."
 
-    return pd.concat(partes, ignore_index=True), ""
+    df_sup = (
+        pd.concat(sups, ignore_index=True).drop_duplicates()
+        if sups
+        else vazio
+    )
+    return pd.concat(partes, ignore_index=True), df_sup, ""
 
 
 # ══════════════════════════════════════════════════════

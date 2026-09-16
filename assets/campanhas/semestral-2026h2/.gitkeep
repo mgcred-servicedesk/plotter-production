@@ -1,0 +1,8 @@
+Pasta da arte da Campanha Semestral 2026-H2.
+
+Solte aqui: hero.png (banner do topo), lateral*.png (ao lado dos
+rankings), rodape*.png (fim da pagina). Convencao completa em ../README.md.
+
+Este arquivo existe para o git versionar a pasta vazia — sem ele, um
+clone novo nao teria o diretorio e test_pasta_da_campanha_vigente_existe
+falharia.
