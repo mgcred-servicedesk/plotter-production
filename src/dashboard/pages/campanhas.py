@@ -73,6 +73,35 @@ from src.dashboard.ui.theme import CHART_COLORS
 _RAIZ_ASSETS = Path("assets/campanhas")
 _EXTENSOES = (".png", ".jpg", ".jpeg", ".webp", ".gif", ".svg")
 
+# Chave do container dos cards — vira a classe `st-key-<chave>` no DOM e
+# e o que limita o CSS abaixo a esta pagina.
+_CHAVE_CARDS = "campanha_cards"
+
+# Cards da mesma linha com a mesma altura.
+#
+# `st.metric` cresce quando recebe `delta`: na linha de topo, Atingimento
+# e Projecao (com delta) ficavam ~25px mais altos que Realizado e Falta,
+# e a moldura da CSS do projeto tornava o degrau visivel.
+#
+# A coluna (`stColumn`) JA estica sozinha — `stHorizontalBlock` e flex
+# com `align-items: stretch`. O que falta e repassar essa altura pelos
+# dois wrappers ate o card. Por isso a regra NAO toca no `stColumn`:
+# por-lhe `height: 100%` faz a altura percentual referenciar um pai de
+# altura automatica (referencia circular), o valor resolve como `auto` e
+# a coluna PARA de esticar — foi o que derrubou a primeira tentativa.
+#
+# Medido com Playwright numa reproducao isolada: 93/118/93/118 antes,
+# 118/118/118/118 depois.
+_CSS_CARDS = f"""
+<style>
+.st-key-{_CHAVE_CARDS} [data-testid="stColumn"] [data-testid="stVerticalBlock"],
+.st-key-{_CHAVE_CARDS} [data-testid="stElementContainer"],
+.st-key-{_CHAVE_CARDS} [data-testid="stMetric"] {{
+    height: 100%;
+}}
+</style>
+"""
+
 
 # ══════════════════════════════════════════════════════
 # Assets
@@ -326,29 +355,32 @@ def _render_painel(camp: Campanha, hoje: date) -> None:
         config={"displayModeBar": False},
     )
 
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Realizado", formatar_moeda(apuracao["valor"]))
-    c2.metric(
-        "Atingimento",
-        f"{apuracao['atingimento'] * 100:.1f}%",
-        delta=(
-            f"{(apuracao['atingimento'] - pace['pct_tempo']) * 100:+.1f}"
-            " p.p. vs ritmo"
-        ),
-    )
-    c3.metric("Falta", formatar_moeda(apuracao["falta"]))
-    c4.metric(
-        "Projeção",
-        formatar_moeda_compacta(pace["projecao"]),
-        delta=f"{pace['projecao_vs_meta'] * 100:.0f}% da meta",
-    )
+    st.markdown(_CSS_CARDS, unsafe_allow_html=True)
+    with st.container(key=_CHAVE_CARDS):
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("Realizado", formatar_moeda(apuracao["valor"]))
+        c2.metric(
+            "Atingimento",
+            f"{apuracao['atingimento'] * 100:.1f}%",
+            delta=(
+                f"{(apuracao['atingimento'] - pace['pct_tempo']) * 100:+.1f}"
+                " p.p. vs ritmo"
+            ),
+        )
+        c3.metric("Falta", formatar_moeda(apuracao["falta"]))
+        c4.metric(
+            "Projeção",
+            formatar_moeda_compacta(pace["projecao"]),
+            delta=f"{pace['projecao_vs_meta'] * 100:.0f}% da meta",
+        )
 
-    d1, d2, d3 = st.columns(3)
-    d1.metric("Dias restantes", formatar_numero(pace["dias_restantes"]))
-    d2.metric(
-        "Necessário/dia", formatar_moeda_compacta(pace["necessario_dia"])
-    )
-    d3.metric("Contratos", formatar_numero(apuracao["qtd"]))
+        d1, d2, d3 = st.columns(3)
+        d1.metric("Dias restantes", formatar_numero(pace["dias_restantes"]))
+        d2.metric(
+            "Necessário/dia",
+            formatar_moeda_compacta(pace["necessario_dia"]),
+        )
+        d3.metric("Contratos", formatar_numero(apuracao["qtd"]))
 
     if camp.descricao:
         st.caption(camp.descricao)
@@ -356,7 +388,7 @@ def _render_painel(camp: Campanha, hoje: date) -> None:
         f"Pagos de {camp.inicio.strftime('%d/%m/%Y')} a "
         f"{camp.fim.strftime('%d/%m/%Y')} · elegíveis: "
         f"{', '.join(camp.familias)} · fora: "
-        f"{', '.join(camp.excluidas_notaveis)}. Projecao e extrapolacao "
+        f"{', '.join(camp.excluidas_notaveis)}. Projeção é extrapolação "
         "linear do ritmo até hoje — não considera sazonalidade."
     )
 

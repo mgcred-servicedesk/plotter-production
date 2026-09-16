@@ -489,3 +489,39 @@ class TestAssets:
     def test_pasta_da_campanha_vigente_existe(self):
         """A pasta precisa existir para o usuario soltar a arte nela."""
         assert (Path("assets/campanhas") / CAMP.slug).is_dir()
+
+
+# ══════════════════════════════════════════════════════
+# CSS dos cards
+# ══════════════════════════════════════════════════════
+
+
+class TestCssDosCards:
+    """O CSS que iguala a altura dos cards precisa ficar NA campanha.
+
+    Sem escopo, `[data-testid="stMetric"] { height: 100% }` vale para o
+    app inteiro e mexe em Vendas e Pontuacao junto. Medido com
+    Playwright: fora do container o degrau 93/118 se mantem; dentro,
+    118/118/118/118.
+    """
+
+    def test_toda_regra_e_escopada(self):
+        corpo = campanhas_page._CSS_CARDS
+        corpo = corpo[corpo.index("<style>") + 7: corpo.index("</style>")]
+        seletores = [
+            linha.strip()
+            for bloco in corpo.split("}")
+            for linha in bloco.split("{")[0].split(",")
+            if linha.strip()
+        ]
+        assert seletores, "CSS vazio — o teste nao esta lendo as regras"
+        for sel in seletores:
+            assert sel.startswith(f".st-key-{campanhas_page._CHAVE_CARDS}"), (
+                f"seletor sem escopo da campanha: {sel!r}"
+            )
+
+    def test_chave_bate_com_a_classe_usada_no_css(self):
+        assert (
+            f".st-key-{campanhas_page._CHAVE_CARDS}"
+            in campanhas_page._CSS_CARDS
+        )
