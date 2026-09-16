@@ -489,8 +489,52 @@ def contemplacao(df: pd.DataFrame, camp: Campanha) -> dict:
 
 
 def rotulo_desempate(camp: Campanha) -> str:
-    """Nome da coluna de desempate — segue a familia da campanha."""
-    return f"{camp.familia_desempate} (desempate)"
+    """Nome da coluna de desempate — segue a familia da campanha.
+
+    Diz "pts" porque o desempate e em PONTOS, nao em valor: o ranking
+    inteiro e em pontos, e um desempate noutra unidade seria uma
+    segunda moeda escondida na mesma tabela.
+    """
+    return f"{camp.familia_desempate} (pts, desempate)"
+
+
+COLUNA_LOJA_CONSULTOR = "Loja"
+
+
+def _loja_do_consultor(df: pd.DataFrame, coluna: str) -> dict:
+    """Loja de cada consultor: a do contrato pago MAIS RECENTE.
+
+    Numa janela de seis meses a pessoa pode ter sido transferida — o
+    projeto agrega consultor por NOME justamente para nao fragmentar a
+    producao de quem mudou de loja (ver `rls.md`). A coluna e contexto
+    de leitura ("de onde e essa pessoa"), entao vale a loja atual, que e
+    a do ultimo pagamento.
+
+    Quem produziu em mais de uma loja na janela sai marcado com ``*`` —
+    sem isso a coluna afirmaria uma lotacao unica que nao existiu, e o
+    supervisor da loja anterior nao entenderia por que a producao dele
+    aparece sob outra loja. A producao em si nunca se move: o ranking de
+    LOJA usa `contratos.loja_id`, que e por contrato.
+    """
+    if "LOJA" not in df.columns or "DATA" not in df.columns:
+        return {}
+
+    base = df[[coluna, "LOJA", "DATA"]].dropna(subset=[coluna, "LOJA"]).copy()
+    if base.empty:
+        return {}
+    base["DATA"] = pd.to_datetime(base["DATA"], errors="coerce")
+
+    # Ultima loja por data de pagamento; NaT vai para o fim do sort.
+    recentes = (
+        base.sort_values("DATA", na_position="first")
+        .groupby(coluna)["LOJA"]
+        .last()
+    )
+    multiplas = base.groupby(coluna)["LOJA"].nunique()
+    return {
+        nome: (f"{loja} *" if multiplas.get(nome, 1) > 1 else loja)
+        for nome, loja in recentes.items()
+    }
 
 
 def ranking(
@@ -498,27 +542,36 @@ def ranking(
     coluna: str,
     camp: Campanha,
     top: Optional[int] = None,
+    com_loja: bool = False,
 ) -> pd.DataFrame:
     """Ranking por PONTOS, desempate pela familia declarada da campanha.
 
     ``coluna`` e ``CONSULTOR`` ou ``LOJA``. O desempate entra como
     segunda chave de ordenacao — e o criterio declarado da campanha, e
-    fica materializado numa coluna visivel (ex.: "CNC (desempate)") para
-    que quem contesta a posicao veja o numero que a decidiu.
+    fica materializado numa coluna visivel (ex.: "CNC (pts, desempate)")
+    para que quem contesta a posicao veja o numero que a decidiu.
+    Desempate em **pontos**, mesma unidade do ranking.
 
     A posicao e ``1..n`` densa: empate real nos DOIS criterios divide a
     mesma posicao, em vez de escolher um vencedor pela ordem alfabetica
     que o sort deixou por acaso.
+
+    ``com_loja`` acrescenta a loja do consultor. Ver
+    :func:`_loja_do_consultor` para o criterio — numa janela de seis
+    meses a pessoa pode ter mudado de loja.
     """
     col_desempate = rotulo_desempate(camp)
-    vazio = pd.DataFrame(
-        columns=[coluna, "Pontos", "Valor", col_desempate, "Contratos"]
-    )
+    colunas_vazias = [coluna, "Pontos", "Valor", col_desempate, "Contratos"]
+    if com_loja:
+        colunas_vazias.insert(1, COLUNA_LOJA_CONSULTOR)
+    vazio = pd.DataFrame(columns=colunas_vazias)
     if df.empty or coluna not in df.columns:
         return vazio
 
     base = df.copy()
-    base["_desempate"] = base["VALOR"].where(
+    # Desempate em PONTOS da familia (nao em valor): o ranking e em
+    # pontos, e misturar unidades na mesma tabela esconderia o criterio.
+    base["_desempate"] = base["pontos"].where(
         base["categoria_codigo"].isin(camp.categorias_desempate), 0.0
     )
 
@@ -535,6 +588,12 @@ def ranking(
     if out.empty:
         return vazio
 
+    if com_loja:
+        lojas = _loja_do_consultor(base, coluna)
+        out.insert(
+            1, COLUNA_LOJA_CONSULTOR, out[coluna].map(lojas).fillna("—")
+        )
+
     out = out.sort_values(
         ["Pontos", col_desempate], ascending=[False, False]
     ).reset_index(drop=True)
@@ -550,6 +609,57 @@ def ranking(
     out.insert(0, "#", posicoes)
 
     return out.head(top) if top else out
+
+
+# ══════════════════════════════════════════════════════
+# Dias uteis da janela
+# ══════════════════════════════════════════════════════
+
+
+def dias_uteis_campanha(
+    camp: Campanha,
+    hoje: Optional[date] = None,
+) -> tuple[int, int]:
+    """``(du_total, du_decorridos)`` na janela inteira da campanha.
+
+    Soma mes a mes porque ``calcular_dias_uteis`` e mensal — e mensal
+    porque o calendario de feriados e consultado por competencia. Para
+    cada mes da janela: se ja passou, conta o mes inteiro; se e o
+    corrente, conta ate hoje; se e futuro, conta zero decorridos.
+
+    **Nao substitui o ritmo em dias corridos.** Sao perguntas
+    diferentes: a campanha foi declarada por datas de calendario ("de
+    01/07 a 31/12"), entao a projecao contra a meta usa dias corridos
+    (:func:`ritmo`); a media/DU e produtividade — quanto sai por dia
+    trabalhado — e ai feriado e fim de semana nao contam.
+
+    Meses parciais nas pontas (se a campanha nao comecar no dia 1º ou
+    nao terminar no ultimo dia) nao sao recortados: a Semestral 2026-H2
+    casa com as bordas dos meses. Campanha com janela quebrada precisa
+    rever isto — por isso o aviso fica aqui, e nao so no commit.
+    """
+    from src.shared.dias_uteis import calcular_dias_uteis
+
+    hoje = hoje or date.today()
+    total = decorridos = 0
+
+    mes, ano = camp.inicio.month, camp.inicio.year
+    while (ano, mes) <= (camp.fim.year, camp.fim.month):
+        du_mes, _, _ = calcular_dias_uteis(ano, mes, dia_atual=None)
+        total += du_mes
+
+        if (ano, mes) < (hoje.year, hoje.month):
+            decorridos += du_mes
+        elif (ano, mes) == (hoje.year, hoje.month):
+            _, du_dec, _ = calcular_dias_uteis(ano, mes, dia_atual=hoje.day)
+            decorridos += du_dec
+        # mes futuro: nada a somar em decorridos
+
+        mes += 1
+        if mes > 12:
+            mes, ano = 1, ano + 1
+
+    return total, decorridos
 
 
 # ══════════════════════════════════════════════════════

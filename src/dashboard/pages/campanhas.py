@@ -60,6 +60,7 @@ from src.dashboard.kpis.campanha import (
     Campanha,
     apurar,
     contemplacao,
+    dias_uteis_campanha,
     marcar_contemplados,
     apurar_por_familia,
     campanha_padrao,
@@ -243,6 +244,78 @@ def _render_condicoes(camp: Campanha, premio: dict) -> None:
         "condição pode aparecer atingida e ainda assim travada. "
         "“Consultores” e “Lojas” são quantos passam a ser contemplados "
         "quando aquele degrau é liberado."
+    )
+
+
+def _render_analitico(df: pd.DataFrame, camp: Campanha) -> None:
+    """Propostas da campanha, linha a linha, para auditoria.
+
+    **RLS:** o frame chega aqui ja recortado — ``_render_painel`` aplica
+    ``aplicar_rls`` logo apos a carga, antes de qualquer agregacao. Isto
+    importa mais aqui do que em qualquer outro bloco da pagina: e o
+    unico que expoe **linha crua**, entao um gerente ve so as regioes
+    dele e um supervisor so as lojas dele — que e justamente o que torna
+    o numero auditavel por quem responde por ele.
+
+    Por isso LOJA, REGIÃO e CONSULTOR entram na tabela mesmo sendo
+    redundantes para quem tem escopo estreito: sem elas, quem audita nao
+    consegue conferir de quem e cada proposta.
+    """
+    sac.divider(
+        label="Analítico de propostas", align="left", color="gray"
+    )
+
+    if df.empty:
+        st.info("Sem propostas no seu escopo.")
+        return
+
+    det = df.copy()
+    # NUM_PROPOSTA preferido, CONTRATO_ID como fallback — mesmo criterio
+    # da aba Analiticos (`_nr_ade`), para o mesmo ADE aparecer igual nas
+    # duas telas.
+    det["NR_ADE"] = (
+        det.get("NUM_PROPOSTA", pd.Series("", index=det.index))
+        .replace("", pd.NA)
+        .fillna(det["CONTRATO_ID"].astype(str))
+    )
+
+    cols = [
+        ("NR_ADE", "Nº ADE"),
+        ("DATA_CADASTRO", "Data Digitação"),
+        ("DATA", "Data Pagamento"),
+        ("BANCO", "Banco"),
+        ("VALOR", "Valor"),
+        ("pontos", "Pontos"),
+        ("TIPO_PRODUTO", "Produto"),
+        ("CONSULTOR", "Consultor"),
+        ("LOJA", "Loja"),
+        ("REGIAO", "Região"),
+    ]
+    presentes = [(orig, novo) for orig, novo in cols if orig in det.columns]
+    tabela = (
+        det[[o for o, _ in presentes]]
+        .rename(columns=dict(presentes))
+        .sort_values("Data Pagamento", ascending=False)
+        .reset_index(drop=True)
+    )
+
+    st.caption(
+        f"{formatar_numero(len(tabela))} propostas pagas entre "
+        f"{camp.inicio.strftime('%d/%m/%Y')} e "
+        f"{camp.fim.strftime('%d/%m/%Y')}, já filtradas pelo seu perfil "
+        "(RLS). Só produtos elegíveis à campanha."
+    )
+    exibir_tabela(
+        tabela,
+        colunas_moeda=["Valor"],
+        colunas_pontos=["Pontos"],
+        paginacao=100,
+        key="tab_campanha_analitico",
+    )
+    botao_exportar_csv(
+        tabela,
+        f"{camp.slug}_analitico_propostas",
+        key="csv_campanha_analitico",
     )
 
 
@@ -442,13 +515,45 @@ def _render_painel(camp: Campanha, hoje: date) -> None:
             delta=f"{pace['projecao_vs_meta'] * 100:.0f}% da meta",
         )
 
+        # Media/DU no lugar da contagem de contratos: quantidade nao diz
+        # nada numa campanha apurada em VALOR — um contrato de R$ 500 e
+        # um de R$ 50 mil contavam igual. Producao por dia trabalhado e
+        # a leitura que a rede usa (o dashboard de vendas ja fala em
+        # "Media DU").
+        du_total, du_dec = dias_uteis_campanha(camp, hoje)
+        du_rest = max(du_total - du_dec, 0)
+        media_du = apuracao["valor"] / du_dec if du_dec else 0.0
+        # "Necessario" tambem por DU, e nao por dia corrido como no
+        # `ritmo`: os dois cards ficam lado a lado e o leitor compara —
+        # com denominadores diferentes (106 dias corridos x 72 DU) a
+        # comparacao daria ~R$ 466K contra ~R$ 464K e sugeriria "quase
+        # la", quando o necessario por DU e ~48% acima do ritmo atual.
+        # Mesma unidade, comparacao honesta.
+        necessario_du = apuracao["falta"] / du_rest if du_rest else 0.0
+
         d1, d2, d3 = st.columns(3)
-        d1.metric("Dias restantes", formatar_numero(pace["dias_restantes"]))
-        d2.metric(
-            "Necessário/dia",
-            formatar_moeda_compacta(pace["necessario_dia"]),
+        d1.metric(
+            "Dias restantes",
+            formatar_numero(pace["dias_restantes"]),
+            delta=f"{du_rest} DU",
+            delta_color="off",
         )
-        d3.metric("Contratos", formatar_numero(apuracao["qtd"]))
+        d2.metric(
+            "Média/DU",
+            formatar_moeda_compacta(media_du),
+            delta=f"{du_dec} de {du_total} DU",
+            delta_color="off",
+        )
+        d3.metric(
+            "Necessário/DU",
+            formatar_moeda_compacta(necessario_du),
+            delta=(
+                f"{necessario_du / media_du - 1:+.0%} vs ritmo atual"
+                if media_du
+                else None
+            ),
+            delta_color="inverse",
+        )
 
     if camp.descricao:
         st.caption(camp.descricao)
@@ -510,7 +615,12 @@ def _render_painel(camp: Campanha, hoje: date) -> None:
             # `df_sup` vem dos MESES DA CAMPANHA (uniao), nao do mes da
             # sidebar: quem foi promovido no meio da janela (migration
             # 110) precisa sair do ranking de consultor.
-            rk = ranking(excluir_supervisores(df, df_sup), "CONSULTOR", camp)
+            rk = ranking(
+                excluir_supervisores(df, df_sup),
+                "CONSULTOR",
+                camp,
+                com_loja=True,
+            )
             nome_csv = f"{camp.slug}_ranking_consultores"
             vagas = premio["consultores"]
         else:
@@ -539,9 +649,12 @@ def _render_painel(camp: Campanha, hoje: date) -> None:
             # empurrava o rodape para muito longe.
             exibir_tabela(
                 rk,
-                colunas_moeda=["Valor", rotulo_desempate(camp)],
+                colunas_moeda=["Valor"],
+                # O desempate e em PONTOS — formatar como moeda diria
+                # que o criterio e valor, que e exatamente a confusao
+                # que a mudanca de criterio veio desfazer.
+                colunas_pontos=["Pontos", rotulo_desempate(camp)],
                 colunas_numero=["#", "Contratos"],
-                colunas_pontos=["Pontos"],
                 paginacao=100,
                 key=f"tab_{nome_csv}",
             )
@@ -551,3 +664,6 @@ def _render_painel(camp: Campanha, hoje: date) -> None:
         with col_arte:
             for fig in laterais:
                 st.image(str(fig), width="stretch")
+
+    # ── Analitico de propostas ─────────────────────
+    _render_analitico(df, camp)

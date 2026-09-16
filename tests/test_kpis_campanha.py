@@ -49,12 +49,14 @@ from src.dashboard.kpis.campanha import (
     CAMPANHAS,
     SEMESTRAL_2026H2 as CAMP,
     Campanha,
+    COLUNA_LOJA_CONSULTOR,
     COLUNA_PREMIADO,
     Condicao,
     apurar,
     apurar_por_familia,
     campanha_padrao,
     contemplacao,
+    dias_uteis_campanha,
     marcar_contemplados,
     campanha_por_slug,
     filtrar_elegiveis,
@@ -289,39 +291,64 @@ class TestRanking:
         assert out["CONSULTOR"].tolist() == ["B", "C", "A"]
         assert out["#"].tolist() == [1, 2, 3]
 
-    def test_desempate_por_producao_cnc(self):
-        """Pontos iguais: ganha quem produziu mais CNC.
+    def test_desempate_por_cnc_e_em_PONTOS_nao_em_valor(self):
+        """O teste que separa os dois criterios possiveis.
 
-        A tem mais VALOR total, mas B tem mais CNC. O criterio da
-        campanha e CNC — B vence.
+        Empate no total de pontos. Em CNC, A produziu **mais valor**
+        (900 contra 100) e B fez **mais pontos** (9 contra 1). Se o
+        desempate fosse por valor, A venceria; sendo por pontos, vence
+        B — que e a regra que o usuario confirmou em 16/09/2026.
+
+        Sem valor e pontos discordando, o teste passaria nos dois
+        criterios e nao provaria nada.
         """
         df = pd.DataFrame(
             {
-                "categoria_codigo": ["FGTS", "CNC", "CNC", "FGTS"],
-                "VALOR": [900.0, 100.0, 500.0, 500.0],
-                "pontos": [10.0, 10.0, 10.0, 10.0],
+                "categoria_codigo": ["CNC", "FGTS", "CNC", "FGTS"],
+                "VALOR": [900.0, 100.0, 100.0, 900.0],
+                "pontos": [1.0, 9.0, 9.0, 1.0],
                 "CONSULTOR": ["A", "A", "B", "B"],
                 "DATA": [pd.Timestamp("2026-08-01")] * 4,
             }
         )
         out = ranking(preparar(df, CAMP), "CONSULTOR", CAMP)
+        assert out["Pontos"].tolist() == [10.0, 10.0]   # empate no total
         assert out["CONSULTOR"].tolist() == ["B", "A"]
-        assert out.loc[0, COL_DESEMPATE] == 500.0
-        assert out.loc[1, COL_DESEMPATE] == 100.0
+        assert out.loc[0, COL_DESEMPATE] == 9.0   # pontos de CNC, nao 100
+        assert out.loc[1, COL_DESEMPATE] == 1.0   # nao 900
 
     def test_super_conta_vale_no_desempate(self):
-        """B so ganha porque Super Conta conta como CNC."""
+        """B so ganha porque Super Conta conta como CNC — em pontos."""
         df = pd.DataFrame(
             {
                 "categoria_codigo": ["CNC", "SUPER_CONTA"],
-                "VALOR": [100.0, 500.0],
+                "VALOR": [100.0, 100.0],
                 "pontos": [10.0, 10.0],
                 "CONSULTOR": ["A", "B"],
                 "DATA": [pd.Timestamp("2026-08-01")] * 2,
             }
         )
+        # Empate perfeito: os dois tem 10 pontos, e os 10 sao de CNC
+        # (Super Conta inclusa) — dividem a posicao.
         out = ranking(preparar(df, CAMP), "CONSULTOR", CAMP)
-        assert out["CONSULTOR"].tolist() == ["B", "A"]
+        assert out[COL_DESEMPATE].tolist() == [10.0, 10.0]
+        assert out["#"].tolist() == [1, 1]
+
+    def test_familia_fora_do_desempate_nao_soma(self):
+        """FGTS nao entra no desempate, por mais pontos que tenha."""
+        df = pd.DataFrame(
+            {
+                "categoria_codigo": ["CNC", "FGTS"],
+                "VALOR": [10.0, 10.0],
+                "pontos": [5.0, 5.0],
+                "CONSULTOR": ["A", "B"],
+                "DATA": [pd.Timestamp("2026-08-01")] * 2,
+            }
+        )
+        out = ranking(preparar(df, CAMP), "CONSULTOR", CAMP)
+        por_nome = dict(zip(out["CONSULTOR"], out[COL_DESEMPATE]))
+        assert por_nome["A"] == 5.0
+        assert por_nome["B"] == 0.0
 
     def test_empate_real_divide_posicao(self):
         """Empate nos DOIS criterios nao inventa vencedor."""
@@ -443,9 +470,9 @@ class TestRegistro:
             CAMP.meta_valor = 1.0
 
     def test_rotulo_do_desempate_segue_a_familia(self):
-        assert rotulo_desempate(CAMP) == "CNC (desempate)"
+        assert rotulo_desempate(CAMP) == "CNC (pts, desempate)"
         outra = replace(CAMP, familia_desempate="FGTS")
-        assert rotulo_desempate(outra) == "FGTS (desempate)"
+        assert rotulo_desempate(outra) == "FGTS (pts, desempate)"
 
     def test_campanha_alternativa_muda_a_elegibilidade(self):
         """Prova que a regra vem da campanha, nao de constante global.
@@ -751,3 +778,93 @@ class TestContratoConfirmadoDaPremiacao:
             c.meta for c in CAMP.condicoes if c.familia is not None
         )
         assert CAMP.meta_valor - outras == 44_500_000.0
+
+
+class TestLojaDoConsultor:
+    """A coluna Loja do ranking de consultores.
+
+    Numa janela de seis meses a pessoa pode ter sido transferida — o
+    projeto agrega consultor por NOME justamente para nao fragmentar a
+    producao de quem mudou (ver `rls.md`).
+    """
+
+    def _df(self, lojas, datas):
+        n = len(lojas)
+        return pd.DataFrame(
+            {
+                "categoria_codigo": ["CNC"] * n,
+                "VALOR": [100.0] * n,
+                "pontos": [10.0] * n,
+                "CONSULTOR": ["A"] * n,
+                "LOJA": lojas,
+                "DATA": [pd.Timestamp(d) for d in datas],
+            }
+        )
+
+    def test_loja_unica_aparece_limpa(self):
+        df = self._df(["L1", "L1"], ["2026-07-01", "2026-08-01"])
+        out = ranking(preparar(df, CAMP), "CONSULTOR", CAMP, com_loja=True)
+        assert out.loc[0, COLUNA_LOJA_CONSULTOR] == "L1"
+
+    def test_transferido_mostra_a_loja_mais_recente(self):
+        """Pagou em L1 em julho e em L2 em setembro -> L2."""
+        df = self._df(["L1", "L2"], ["2026-07-01", "2026-09-01"])
+        out = ranking(preparar(df, CAMP), "CONSULTOR", CAMP, com_loja=True)
+        assert out.loc[0, COLUNA_LOJA_CONSULTOR].startswith("L2")
+
+    def test_transferido_sai_marcado(self):
+        """O asterisco avisa que houve mais de uma loja na janela.
+
+        Sem ele a coluna afirmaria uma lotacao unica que nao existiu.
+        """
+        df = self._df(["L1", "L2"], ["2026-07-01", "2026-09-01"])
+        out = ranking(preparar(df, CAMP), "CONSULTOR", CAMP, com_loja=True)
+        assert out.loc[0, COLUNA_LOJA_CONSULTOR] == "L2 *"
+
+    def test_ordem_das_linhas_nao_decide_a_loja(self):
+        """Mais recente e por DATA, nao pela ordem em que veio o frame."""
+        df = self._df(["L2", "L1"], ["2026-09-01", "2026-07-01"])
+        out = ranking(preparar(df, CAMP), "CONSULTOR", CAMP, com_loja=True)
+        assert out.loc[0, COLUNA_LOJA_CONSULTOR] == "L2 *"
+
+    def test_sem_com_loja_nao_cria_a_coluna(self):
+        df = self._df(["L1"], ["2026-08-01"])
+        out = ranking(preparar(df, CAMP), "CONSULTOR", CAMP)
+        assert COLUNA_LOJA_CONSULTOR not in out.columns
+
+    def test_ranking_vazio_com_loja_preserva_schema(self):
+        out = ranking(pd.DataFrame(), "CONSULTOR", CAMP, com_loja=True)
+        assert COLUNA_LOJA_CONSULTOR in out.columns
+
+
+class TestDiasUteisDaCampanha:
+    """DU somados mes a mes na janela — `calcular_dias_uteis` e mensal."""
+
+    def test_antes_do_inicio_nao_tem_du_decorrido(self):
+        total, dec = dias_uteis_campanha(CAMP, date(2026, 6, 1))
+        assert total > 0
+        assert dec == 0
+
+    def test_depois_do_fim_decorrido_iguala_o_total(self):
+        total, dec = dias_uteis_campanha(CAMP, date(2027, 3, 1))
+        assert dec == total
+
+    def test_no_meio_fica_entre_zero_e_o_total(self):
+        total, dec = dias_uteis_campanha(CAMP, date(2026, 9, 16))
+        assert 0 < dec < total
+
+    def test_total_nao_depende_de_hoje(self):
+        """O total da janela e fixo; so o decorrido anda."""
+        t1, _ = dias_uteis_campanha(CAMP, date(2026, 7, 2))
+        t2, _ = dias_uteis_campanha(CAMP, date(2026, 12, 30))
+        assert t1 == t2
+
+    def test_decorrido_cresce_com_o_tempo(self):
+        _, d1 = dias_uteis_campanha(CAMP, date(2026, 8, 31))
+        _, d2 = dias_uteis_campanha(CAMP, date(2026, 9, 30))
+        assert d2 > d1
+
+    def test_semestre_tem_ordem_de_grandeza_plausivel(self):
+        """6 meses uteis ficam na casa dos 120-132 dias."""
+        total, _ = dias_uteis_campanha(CAMP, date(2026, 9, 16))
+        assert 110 <= total <= 135
