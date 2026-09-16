@@ -273,11 +273,13 @@ def main():
             subtitulo="Apuração de pontuação e atingimento - MGCred",
         )
     elif _view == "campanhas":
+        # SEM mes/ano de proposito: campanha tem janela propria e o
+        # seletor da sidebar nao a governa. Passar o periodo punha
+        # "Setembro 2026" no breadcrumb de uma pagina que apura o
+        # semestre inteiro — sugeria um recorte que nao existe.
         render_header(
-            mes=mes,
-            ano=ano,
             titulo="Campanhas",
-            subtitulo="Acompanhamento de campanhas - MGCred",
+            subtitulo="Apuração de campanhas — MGCred",
         )
     else:
         render_header(mes=mes, ano=ano)

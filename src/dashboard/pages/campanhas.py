@@ -121,9 +121,18 @@ def _render_hero(camp: Campanha) -> None:
 
     Varias convivem (``hero-1``, ``hero-2``, ...) e entram em ordem
     alfabetica — hoje o titulo da campanha e a arte do premio.
+
+    Renderiza a ~70% da largura (as colunas 1/5/1) porque a arte e
+    2,55:1: ocupando a pagina inteira, duas pecas lado a lado passavam
+    de 290px de altura e empurravam o termometro — o numero da campanha
+    — para fora da primeira tela. Proporcao, nao pixel fixo, para o
+    corte acompanhar a largura da janela.
     """
     figuras = assets_da_campanha(camp.slug, "hero")
-    if figuras:
+    if not figuras:
+        return
+    _, centro, _ = st.columns([1, 5, 1])
+    with centro:
         _render_faixa(figuras)
 
 
@@ -198,6 +207,16 @@ def _termometro(apuracao: dict, pace: dict) -> go.Figure:
         annotation_font_size=11,
     )
 
+    # Eixo em milhoes, PT-BR. O default do Plotly (",.0f") escreve
+    # "10,000,000" — separador de milhar ingles, num dashboard pt-BR.
+    # Cinco divisoes fazem a ultima marca cair exatamente na meta.
+    passo = meta / 5
+    tickvals = [passo * i for i in range(6)]
+    ticktext = ["0"] + [
+        f"{passo * i / 1_000_000:,.0f} mi".replace(",", ".")
+        for i in range(1, 6)
+    ]
+
     fig.update_layout(
         barmode="overlay",
         height=130,
@@ -206,7 +225,8 @@ def _termometro(apuracao: dict, pace: dict) -> go.Figure:
         plot_bgcolor="rgba(0,0,0,0)",
         xaxis=dict(
             range=[0, max(meta, valor) * 1.02],
-            tickformat=",.0f",
+            tickvals=tickvals,
+            ticktext=ticktext,
             gridcolor="rgba(128,128,128,0.1)",
         ),
         yaxis=dict(showticklabels=False),
@@ -294,7 +314,7 @@ def _render_painel(camp: Campanha, hoje: date) -> None:
 
     df = preparar(bruto, camp)
     if df.empty:
-        st.info("Nenhum contrato de produto elegivel na janela.")
+        st.info("Nenhum contrato de produto elegível na janela.")
         return
 
     apuracao = apurar(df, camp)
@@ -318,7 +338,7 @@ def _render_painel(camp: Campanha, hoje: date) -> None:
     )
     c3.metric("Falta", formatar_moeda(apuracao["falta"]))
     c4.metric(
-        "Projecao",
+        "Projeção",
         formatar_moeda_compacta(pace["projecao"]),
         delta=f"{pace['projecao_vs_meta'] * 100:.0f}% da meta",
     )
@@ -326,7 +346,7 @@ def _render_painel(camp: Campanha, hoje: date) -> None:
     d1, d2, d3 = st.columns(3)
     d1.metric("Dias restantes", formatar_numero(pace["dias_restantes"]))
     d2.metric(
-        "Necessario/dia", formatar_moeda_compacta(pace["necessario_dia"])
+        "Necessário/dia", formatar_moeda_compacta(pace["necessario_dia"])
     )
     d3.metric("Contratos", formatar_numero(apuracao["qtd"]))
 
@@ -334,14 +354,14 @@ def _render_painel(camp: Campanha, hoje: date) -> None:
         st.caption(camp.descricao)
     st.caption(
         f"Pagos de {camp.inicio.strftime('%d/%m/%Y')} a "
-        f"{camp.fim.strftime('%d/%m/%Y')} · elegiveis: "
+        f"{camp.fim.strftime('%d/%m/%Y')} · elegíveis: "
         f"{', '.join(camp.familias)} · fora: "
         f"{', '.join(camp.excluidas_notaveis)}. Projecao e extrapolacao "
-        "linear do ritmo ate hoje — nao considera sazonalidade."
+        "linear do ritmo até hoje — não considera sazonalidade."
     )
 
     # ── Producao por familia ───────────────────────
-    sac.divider(label="Producao por familia", align="left", color="gray")
+    sac.divider(label="Produção por família", align="left", color="gray")
     exibir_tabela(
         apurar_por_familia(df, camp),
         colunas_moeda=["Valor"],
@@ -353,7 +373,7 @@ def _render_painel(camp: Campanha, hoje: date) -> None:
     # ── Rankings ───────────────────────────────────
     sac.divider(
         label=(
-            "Rankings (por pontos · desempate: producao "
+            "Rankings (por pontos · desempate: produção "
             f"{camp.familia_desempate})"
         ),
         align="left",
@@ -394,11 +414,16 @@ def _render_painel(camp: Campanha, hoje: date) -> None:
         if rk.empty:
             st.info("Sem dados para este ranking.")
         else:
+            # Paginado como as demais tabelas longas do projeto: o
+            # ranking de consultores passa de 300 linhas no semestre e
+            # empurrava o rodape para muito longe.
             exibir_tabela(
                 rk,
                 colunas_moeda=["Valor", rotulo_desempate(camp)],
                 colunas_numero=["#", "Contratos"],
                 colunas_pontos=["Pontos"],
+                paginacao=100,
+                key=f"tab_{nome_csv}",
             )
             botao_exportar_csv(rk, nome_csv, key=f"csv_{nome_csv}")
 
