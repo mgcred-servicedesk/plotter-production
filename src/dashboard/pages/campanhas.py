@@ -21,13 +21,20 @@ prefixo — **sem codigo**: soltar o arquivo na pasta basta.
 
 | Prefixo do arquivo | Onde aparece |
 |---|---|
-| ``hero.*``      | banner de largura total, abrindo a pagina |
+| ``hero*.*``     | faixa do cabecalho, abrindo a pagina |
+| ``rodape*.*``   | faixa no fim da pagina |
 | ``lateral*.*``  | coluna estreita a direita dos rankings |
-| ``rodape*.*``   | faixa de figuras no fim da pagina |
 
-Varios ``lateral``/``rodape`` convivem (``rodape-1.png``,
-``rodape-2.png``, ...) e entram em ordem alfabetica. Formato: png, jpg,
-jpeg, webp, gif ou svg. Nada configurado = nada renderizado, sem erro.
+Varios arquivos do mesmo prefixo convivem (``hero-1.png``,
+``hero-2.png``, ...) e entram **em colunas de largura igual**, na ordem
+alfabetica do nome. Formato: png, jpg, jpeg, webp, gif ou svg. Nada
+configurado = nada renderizado, sem erro.
+
+**As pecas precisam compartilhar a proporcao** para sairem do mesmo
+tamanho na mesma faixa: ``width="stretch"`` iguala a largura, nao a
+altura. As da Semestral 2026-H2 estao normalizadas em disco numa
+moldura transparente de 1078x422 (a da arte do premio), com o conteudo
+centralizado.
 """
 
 from datetime import date
@@ -94,10 +101,30 @@ def assets_da_campanha(slug: str, prefixo: str) -> List[Path]:
         return []
 
 
+def _render_faixa(figuras: List[Path]) -> None:
+    """Renderiza as figuras lado a lado, em colunas de largura igual.
+
+    Colunas iguais + molduras de mesma proporcao = figuras do mesmo
+    tamanho na tela. As pecas sao normalizadas em disco para uma
+    moldura transparente comum (a da arte do premio, 1078x422), com o
+    conteudo centralizado: sem isso, duas artes de proporcoes
+    diferentes na mesma linha renderiam com alturas diferentes, porque
+    ``width="stretch"`` iguala a largura, nao a altura.
+    """
+    for col, fig in zip(st.columns(len(figuras)), figuras):
+        with col:
+            st.image(str(fig), width="stretch")
+
+
 def _render_hero(camp: Campanha) -> None:
-    hero = assets_da_campanha(camp.slug, "hero")
-    if hero:
-        st.image(str(hero[0]), width="stretch")
+    """Cabecalho: todas as artes ``hero*`` numa faixa so.
+
+    Varias convivem (``hero-1``, ``hero-2``, ...) e entram em ordem
+    alfabetica — hoje o titulo da campanha e a arte do premio.
+    """
+    figuras = assets_da_campanha(camp.slug, "hero")
+    if figuras:
+        _render_faixa(figuras)
 
 
 def _render_rodape(camp: Campanha) -> None:
@@ -105,9 +132,7 @@ def _render_rodape(camp: Campanha) -> None:
     if not figuras:
         return
     st.divider()
-    for col, fig in zip(st.columns(len(figuras)), figuras):
-        with col:
-            st.image(str(fig), width="stretch")
+    _render_faixa(figuras)
 
 
 # ══════════════════════════════════════════════════════
