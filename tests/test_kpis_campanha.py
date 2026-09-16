@@ -697,3 +697,57 @@ class TestMarcacaoDeContemplados:
         out = marcar_contemplados(ranking(pd.DataFrame(), "CONSULTOR", CAMP), 5)
         assert COLUNA_PREMIADO in out.columns
         assert out.empty
+
+
+class TestContratoConfirmadoDaPremiacao:
+    """Valores confirmados pelo usuario em 16/09/2026.
+
+    Nao sao detalhe de implementacao: decidem quem recebe premio. Um
+    ajuste silencioso aqui muda pagamento, entao ficam pinados.
+    """
+
+    def test_os_tres_degraus_na_ordem(self):
+        assert [c.rotulo for c in CAMP.condicoes] == [
+            "Meta global",
+            "Meta de CNC",
+            "Meta de CLT",
+        ]
+
+    def test_metas_confirmadas(self):
+        g, cnc, clt = CAMP.condicoes
+        assert (g.familia, g.meta) == (None, 75_000_000.0)
+        assert (cnc.familia, cnc.meta) == ("CNC", 23_000_000.0)
+        assert (clt.familia, clt.meta) == ("CLT", 7_500_000.0)
+
+    def test_vagas_confirmadas(self):
+        assert [(c.consultores, c.lojas) for c in CAMP.condicoes] == [
+            (8, 4),
+            (12, 6),
+            (16, 8),
+        ]
+
+    def test_meta_global_bate_com_a_meta_da_campanha(self):
+        """A 1a condicao e a meta global — nao pode divergir do termometro."""
+        assert CAMP.condicoes[0].meta == CAMP.meta_valor
+
+    def test_bloco_de_44_5_mi_esta_fora_por_ora(self):
+        """Consignado + Antecipacao + FGTS nao e degrau (usuario, 16/09).
+
+        Existe na arte e soma 44,5 mi (75 - 23 - 7,5), mas o usuario o
+        deixou fora "no momento". Este teste falha se alguem o incluir
+        sem registrar a decisao.
+
+        Nota de modelagem: incluir NAO e so acrescentar uma linha —
+        `Condicao.familia` aponta para UMA familia, e o bloco abrange
+        tres. Exigiria agrupa-las ou permitir varias familias por
+        condicao.
+        """
+        escopos = {c.familia for c in CAMP.condicoes}
+        assert "Consignado" not in escopos
+        assert "Ant. de Benef." not in escopos
+        assert "FGTS" not in escopos
+        # E a aritmetica que torna o bloco tentador continua valendo:
+        outras = sum(
+            c.meta for c in CAMP.condicoes if c.familia is not None
+        )
+        assert CAMP.meta_valor - outras == 44_500_000.0

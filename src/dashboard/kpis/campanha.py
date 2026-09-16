@@ -208,9 +208,16 @@ SEMESTRAL_2026H2 = Campanha(
     #
     # Os valores de CNC e CLT vem da arte oficial da campanha
     # (assets/campanhas/semestral-2026h2/rodape-2.png), que quebra os
-    # R$ 75 mi em 44,5 + 23 + 7,5. O bloco de R$ 44,5 mi
-    # (Consignado + Antecipacao + FGTS) NAO e condicao de premiacao —
-    # aparece na arte, mas o usuario nao o listou entre os degraus.
+    # R$ 75 mi em 44,5 + 23 + 7,5. Confirmados pelo usuario em
+    # 16/09/2026.
+    #
+    # O bloco de R$ 44,5 mi (Consignado + Antecipacao + FGTS) fica
+    # **fora dos degraus por ora** — decisao do usuario na mesma data,
+    # e "no momento" foi a palavra dele: o bloco existe na arte e pode
+    # virar uma quarta condicao. Se vier, e uma linha na tupla abaixo,
+    # e as tres familias precisam ser agrupadas numa so (hoje sao
+    # "Consignado", "Ant. de Benef." e "FGTS" separadas, porque
+    # `Condicao.familia` aponta para UMA familia de `familias`).
     condicoes=(
         Condicao("Meta global", None, 75_000_000.0, 8, 4),
         Condicao("Meta de CNC", "CNC", 23_000_000.0, 12, 6),
