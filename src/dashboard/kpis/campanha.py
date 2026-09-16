@@ -358,7 +358,11 @@ def apurar(df: pd.DataFrame, camp: Campanha) -> dict:
     }
 
 
-def apurar_por_familia(df: pd.DataFrame, camp: Campanha) -> pd.DataFrame:
+def apurar_por_familia(
+    df: pd.DataFrame,
+    camp: Campanha,
+    du_decorridos: int = 0,
+) -> pd.DataFrame:
     """Quebra da producao pelas familias declaradas na campanha.
 
     Agrupa por FAMILIA (o rotulo que o usuario usou), nao por
@@ -376,7 +380,6 @@ def apurar_por_familia(df: pd.DataFrame, camp: Campanha) -> pd.DataFrame:
         linhas.append(
             {
                 "Família": familia,
-                "Contratos": int(len(parte)),
                 "Valor": _soma(parte, "VALOR"),
                 "Pontos": _soma(parte, "pontos"),
             }
@@ -385,6 +388,7 @@ def apurar_por_familia(df: pd.DataFrame, camp: Campanha) -> pd.DataFrame:
     out = pd.DataFrame(linhas)
     total = out["Valor"].sum()
     out["% do Total"] = (out["Valor"] / total * 100) if total else 0.0
+    out[COLUNA_MEDIA_DU] = _media_du(out["Valor"], du_decorridos)
     return out.sort_values("Valor", ascending=False).reset_index(drop=True)
 
 
@@ -499,6 +503,30 @@ def rotulo_desempate(camp: Campanha) -> str:
 
 
 COLUNA_LOJA_CONSULTOR = "Loja"
+COLUNA_MEDIA_DU = "Média/DU"
+
+
+def _media_du(valores, du_decorridos: int):
+    """Producao por dia util decorrido.
+
+    O denominador e o **mesmo para todas as linhas**: os DU decorridos
+    da campanha. E o que torna as linhas comparaveis entre si e com o
+    card de Media/DU do topo.
+
+    Consequencia aceita: quem foi admitido no meio da janela aparece
+    diluido, porque nao trabalhou os 55 DU. O projeto tem a maquinaria
+    de vigencia para ponderar isso (`consultor_vigencia`,
+    `fn_headcount_ponderado`), mas ela nao entra aqui — a coluna e
+    leitura de contexto, e o ranking e ordenado por PONTOS, nao por
+    media/DU, entao a diluicao nao muda posicao nem premiacao.
+
+    ``du_decorridos = 0`` (campanha nao comecou) devolve zero — nao ha
+    media sem dia util decorrido, e nesse momento a producao tambem e
+    zero.
+    """
+    if not du_decorridos:
+        return valores * 0.0
+    return valores / du_decorridos
 
 
 def _loja_do_consultor(df: pd.DataFrame, coluna: str) -> dict:
@@ -543,6 +571,7 @@ def ranking(
     camp: Campanha,
     top: Optional[int] = None,
     com_loja: bool = False,
+    du_decorridos: int = 0,
 ) -> pd.DataFrame:
     """Ranking por PONTOS, desempate pela familia declarada da campanha.
 
@@ -559,9 +588,15 @@ def ranking(
     ``com_loja`` acrescenta a loja do consultor. Ver
     :func:`_loja_do_consultor` para o criterio — numa janela de seis
     meses a pessoa pode ter mudado de loja.
+
+    ``du_decorridos`` alimenta a coluna Media/DU, que substituiu a
+    contagem de contratos: quantidade nao diz nada numa campanha
+    apurada em VALOR. Ver :func:`_media_du`.
     """
     col_desempate = rotulo_desempate(camp)
-    colunas_vazias = [coluna, "Pontos", "Valor", col_desempate, "Contratos"]
+    colunas_vazias = [
+        coluna, "Pontos", "Valor", col_desempate, COLUNA_MEDIA_DU
+    ]
     if com_loja:
         colunas_vazias.insert(1, COLUNA_LOJA_CONSULTOR)
     vazio = pd.DataFrame(columns=colunas_vazias)
@@ -581,12 +616,13 @@ def ranking(
             Pontos=("pontos", "sum"),
             Valor=("VALOR", "sum"),
             **{col_desempate: ("_desempate", "sum")},
-            Contratos=(coluna, "size"),
         )
         .reset_index()
     )
     if out.empty:
         return vazio
+
+    out[COLUNA_MEDIA_DU] = _media_du(out["Valor"], du_decorridos)
 
     if com_loja:
         lojas = _loja_do_consultor(base, coluna)

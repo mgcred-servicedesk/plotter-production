@@ -50,6 +50,7 @@ from src.dashboard.kpis.campanha import (
     SEMESTRAL_2026H2 as CAMP,
     Campanha,
     COLUNA_LOJA_CONSULTOR,
+    COLUNA_MEDIA_DU,
     COLUNA_PREMIADO,
     Condicao,
     apurar,
@@ -868,3 +869,88 @@ class TestDiasUteisDaCampanha:
         """6 meses uteis ficam na casa dos 120-132 dias."""
         total, _ = dias_uteis_campanha(CAMP, date(2026, 9, 16))
         assert 110 <= total <= 135
+
+
+class TestMediaDuNasTabelas:
+    """A coluna que substituiu "Contratos" no ranking e nas familias.
+
+    Quantidade nao diz nada numa campanha apurada em VALOR — um
+    contrato de R$ 500 e um de R$ 50 mil contavam igual. O denominador
+    e o MESMO para todas as linhas (DU decorridos da campanha), o que
+    as torna comparaveis entre si e com o card do topo.
+    """
+
+    def _df(self):
+        return pd.DataFrame(
+            {
+                "categoria_codigo": ["CNC", "CNC", "FGTS"],
+                "VALOR": [1000.0, 500.0, 300.0],
+                "pontos": [10.0, 5.0, 3.0],
+                "CONSULTOR": ["A", "B", "B"],
+                "LOJA": ["L1", "L2", "L2"],
+                "DATA": [pd.Timestamp("2026-08-01")] * 3,
+            }
+        )
+
+    # ── ranking ────────────────────────────────────
+
+    def test_ranking_nao_tem_mais_contratos(self):
+        out = ranking(preparar(self._df(), CAMP), "CONSULTOR", CAMP,
+                      du_decorridos=10)
+        assert "Contratos" not in out.columns
+        assert COLUNA_MEDIA_DU in out.columns
+
+    def test_ranking_divide_valor_pelos_du(self):
+        out = ranking(preparar(self._df(), CAMP), "CONSULTOR", CAMP,
+                      du_decorridos=10)
+        por_nome = dict(zip(out["CONSULTOR"], out[COLUNA_MEDIA_DU]))
+        assert por_nome["A"] == 100.0        # 1000 / 10
+        assert por_nome["B"] == 80.0         # (500 + 300) / 10
+
+    def test_ranking_du_zero_nao_divide_por_zero(self):
+        """Campanha nao comecou: media zero, nao ZeroDivisionError."""
+        out = ranking(preparar(self._df(), CAMP), "CONSULTOR", CAMP,
+                      du_decorridos=0)
+        assert set(out[COLUNA_MEDIA_DU]) == {0.0}
+
+    def test_ranking_vazio_preserva_a_coluna(self):
+        out = ranking(pd.DataFrame(), "CONSULTOR", CAMP, du_decorridos=10)
+        assert COLUNA_MEDIA_DU in out.columns
+        assert "Contratos" not in out.columns
+
+    def test_media_du_nao_reordena_o_ranking(self):
+        """A ordem e por PONTOS — media/DU e so leitura de contexto."""
+        a = ranking(preparar(self._df(), CAMP), "CONSULTOR", CAMP,
+                    du_decorridos=1)
+        b = ranking(preparar(self._df(), CAMP), "CONSULTOR", CAMP,
+                    du_decorridos=999)
+        assert a["CONSULTOR"].tolist() == b["CONSULTOR"].tolist()
+
+    # ── producao por familia ───────────────────────
+
+    def test_familia_nao_tem_mais_contratos(self):
+        out = apurar_por_familia(preparar(self._df(), CAMP), CAMP, 10)
+        assert "Contratos" not in out.columns
+        assert COLUNA_MEDIA_DU in out.columns
+
+    def test_familia_divide_valor_pelos_du(self):
+        out = apurar_por_familia(preparar(self._df(), CAMP), CAMP, 10)
+        por_fam = dict(zip(out["Família"], out[COLUNA_MEDIA_DU]))
+        assert por_fam["CNC"] == 150.0       # (1000 + 500) / 10
+        assert por_fam["FGTS"] == 30.0       # 300 / 10
+
+    def test_familia_du_zero_nao_divide_por_zero(self):
+        out = apurar_por_familia(preparar(self._df(), CAMP), CAMP, 0)
+        assert set(out[COLUNA_MEDIA_DU]) == {0.0}
+
+    def test_soma_das_familias_bate_com_o_card_do_topo(self):
+        """A media/DU total e a soma das medias/DU das familias.
+
+        Vale porque o denominador e o mesmo em todas as linhas — e a
+        propriedade que justifica essa escolha de denominador.
+        """
+        df = preparar(self._df(), CAMP)
+        fam = apurar_por_familia(df, CAMP, 10)
+        assert fam[COLUNA_MEDIA_DU].sum() == pytest.approx(
+            apurar(df, CAMP)["valor"] / 10
+        )

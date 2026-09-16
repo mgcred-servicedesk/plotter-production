@@ -59,6 +59,7 @@ from src.dashboard.kpis.campanha import (
     CAMPANHAS,
     Campanha,
     apurar,
+    COLUNA_MEDIA_DU,
     contemplacao,
     dias_uteis_campanha,
     marcar_contemplados,
@@ -573,9 +574,8 @@ def _render_painel(camp: Campanha, hoje: date) -> None:
     # ── Producao por familia ───────────────────────
     sac.divider(label="Produção por família", align="left", color="gray")
     exibir_tabela(
-        apurar_por_familia(df, camp),
-        colunas_moeda=["Valor"],
-        colunas_numero=["Contratos"],
+        apurar_por_familia(df, camp, du_dec),
+        colunas_moeda=["Valor", COLUNA_MEDIA_DU],
         colunas_percentual=["% do Total"],
         colunas_pontos=["Pontos"],
     )
@@ -620,11 +620,12 @@ def _render_painel(camp: Campanha, hoje: date) -> None:
                 "CONSULTOR",
                 camp,
                 com_loja=True,
+                du_decorridos=du_dec,
             )
             nome_csv = f"{camp.slug}_ranking_consultores"
             vagas = premio["consultores"]
         else:
-            rk = ranking(df, "LOJA", camp)
+            rk = ranking(df, "LOJA", camp, du_decorridos=du_dec)
             nome_csv = f"{camp.slug}_ranking_lojas"
             vagas = premio["lojas"]
 
@@ -649,12 +650,12 @@ def _render_painel(camp: Campanha, hoje: date) -> None:
             # empurrava o rodape para muito longe.
             exibir_tabela(
                 rk,
-                colunas_moeda=["Valor"],
+                colunas_moeda=["Valor", COLUNA_MEDIA_DU],
                 # O desempate e em PONTOS — formatar como moeda diria
                 # que o criterio e valor, que e exatamente a confusao
                 # que a mudanca de criterio veio desfazer.
                 colunas_pontos=["Pontos", rotulo_desempate(camp)],
-                colunas_numero=["#", "Contratos"],
+                colunas_numero=["#"],
                 paginacao=100,
                 key=f"tab_{nome_csv}",
             )
