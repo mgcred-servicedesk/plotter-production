@@ -16,6 +16,8 @@ Elementos (keys):
     tab_em_analise        Pipeline em analise
     tab_detalhes          Tabela detalhada
     tab_pagamentos_online Estimativa horaria do extrator DNA
+    tab_campanha          Aba Campanha Semestral 2026-H2 (janela
+                          propria: 01/07 a 31/12/2026)
     tab_chat_ia           Aba Assistente de IA (chat com tool-use
                           sobre os KPIs ja calculados do periodo)
     cards_gerenciais      Cards agregados (num consultores,
@@ -107,6 +109,17 @@ MATRIZ: dict[str, dict[str, bool]] = {
         "gerente_comercial": True,
         "supervisor": False,
         "consultor": False,
+    },
+    # Campanha Semestral 2026-H2: visivel aos cinco perfis — a campanha
+    # premia consultor e loja, entao quem participa precisa acompanhar.
+    # O recorte por perfil e o mesmo de sempre (aplicar_rls dentro da
+    # aba): consultor ve a propria linha, supervisor as lojas dele.
+    "tab_campanha": {
+        "admin": True,
+        "gestor": True,
+        "gerente_comercial": True,
+        "supervisor": True,
+        "consultor": True,
     },
     # Aba visivel aos cinco perfis para sinalizar roadmap. No rollout
     # inicial, somente admin usa o chat; os demais perfis veem estado

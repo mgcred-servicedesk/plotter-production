@@ -69,6 +69,7 @@ from src.dashboard.rls import (
     aplicar_rls_metas,
 )
 from src.dashboard.tabs.analiticos import render_tab_analiticos
+from src.dashboard.tabs.campanha import render_tab_campanha
 from src.dashboard.tabs.chat_ia import limpar_cache_chat_ia, render_tab_chat_ia
 from src.dashboard.tabs.detalhes import render_tab_detalhes
 from src.dashboard.tabs.em_analise import render_tab_em_analise
@@ -1062,6 +1063,15 @@ def main():
                 "Gestao",
                 "filter_alt",
                 _render_gestao,
+            ),
+            # A aba carrega a propria janela (01/07-31/12/2026) — nao usa
+            # `df_f`, que e do periodo da sidebar. So `df_sup` viaja, para
+            # tirar supervisor do ranking de consultor.
+            _AbaNav(
+                "tab_campanha",
+                "Campanha",
+                "trophy",
+                lambda: render_tab_campanha(df_sup_f),
             ),
             # `chat_context` so existe se o bloco `cards_gerenciais`
             # rodou. Sem ele a aba avisa, em vez de quebrar.

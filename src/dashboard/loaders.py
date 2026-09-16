@@ -2162,6 +2162,73 @@ def _executar_consolidacao(
 
 
 # ══════════════════════════════════════════════════════
+# Carga consolidada por intervalo (campanhas)
+# ══════════════════════════════════════════════════════
+
+
+def carregar_consolidado_intervalo(
+    data_ini,
+    data_fim,
+) -> Tuple[pd.DataFrame, str]:
+    """Contratos pagos COM pontuacao, num intervalo livre de datas.
+
+    Irma de :func:`carregar_contratos_pagos_intervalo`, com uma
+    diferenca que importa para campanha: devolve o frame **consolidado**
+    (com ``pontos`` e ``categoria_codigo`` ja resolvidos), nao os
+    contratos crus.
+
+    Por que consolidar mes a mes em vez de concatenar e pontuar de uma
+    vez: o multiplicador ``PTS`` vem de ``obter_pontuacao_periodo(mes,
+    ano)`` e **muda por competencia**. Pontuar o semestre inteiro com a
+    tabela de um mes so daria o numero errado para os outros cinco.
+    Cada mes e consolidado com a tabela dele e so depois somado.
+
+    Custo no Supabase: **zero adicional**. Chama exatamente os mesmos
+    wrappers cacheados que ``consolidar_dados`` usa para o mes
+    selecionado (mesma funcao, mesmos argumentos, mesmo
+    ``cache_version``), entao mes que o dashboard de vendas ja abriu sai
+    do cache. E o mesmo motivo pelo qual
+    ``carregar_contratos_pagos_intervalo`` compoe em vez de consultar.
+
+    Nao usa ``consolidar_dados`` (o wrapper publico) de proposito: ele
+    escreve o diagnostico de pontuacao em ``st.session_state``, e chamar
+    seis vezes sobrescreveria o diagnostico do periodo selecionado pelo
+    do ultimo mes do intervalo — a campanha mexendo no dashboard de
+    vendas pela porta dos fundos. Aqui o ``diag`` e descartado.
+
+    Args:
+        data_ini, data_fim: limites inclusivos (``datetime.date``).
+
+    Returns:
+        ``(df, aviso)``. ``aviso`` traz o motivo quando o resultado vem
+        vazio ou limitado — nunca devolvemos vazio silencioso.
+    """
+    meses = meses_do_intervalo(data_ini, data_fim, CAMPO_PAGAMENTO)
+    if not meses:
+        return pd.DataFrame(), "Intervalo invalido: fim anterior ao inicio."
+    if len(meses) > MAX_MESES_INTERVALO:
+        return (
+            pd.DataFrame(),
+            f"Intervalo exige varrer {len(meses)} meses (maximo "
+            f"{MAX_MESES_INTERVALO}). Reduza a faixa de datas.",
+        )
+
+    partes = []
+    for mes, ano in meses:
+        if _eh_mes_atual(mes, ano):
+            df_mes, _, _, _ = _consolidar_atual(mes, ano, cache_version=4)
+        else:
+            df_mes, _, _, _ = _consolidar_historico(mes, ano, cache_version=4)
+        if not df_mes.empty:
+            partes.append(df_mes)
+
+    if not partes:
+        return pd.DataFrame(), "Nenhum contrato pago nos meses do intervalo."
+
+    return pd.concat(partes, ignore_index=True), ""
+
+
+# ══════════════════════════════════════════════════════
 # Carga do periodo do dashboard
 # ══════════════════════════════════════════════════════
 
