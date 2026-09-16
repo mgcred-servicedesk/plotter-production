@@ -49,9 +49,13 @@ from src.dashboard.kpis.campanha import (
     CAMPANHAS,
     SEMESTRAL_2026H2 as CAMP,
     Campanha,
+    COLUNA_PREMIADO,
+    Condicao,
     apurar,
     apurar_por_familia,
     campanha_padrao,
+    contemplacao,
+    marcar_contemplados,
     campanha_por_slug,
     filtrar_elegiveis,
     filtrar_janela,
@@ -444,9 +448,17 @@ class TestRegistro:
         assert rotulo_desempate(outra) == "FGTS (desempate)"
 
     def test_campanha_alternativa_muda_a_elegibilidade(self):
-        """Prova que a regra vem da campanha, nao de constante global."""
+        """Prova que a regra vem da campanha, nao de constante global.
+
+        ``condicoes=()`` nao e detalhe: as da CAMP apontam para CNC e
+        CLT, que somem quando as familias sao trocadas — e a guarda de
+        ``__post_init__`` recusa condicao orfa.
+        """
         so_fgts = replace(
-            CAMP, familias={"FGTS": ("FGTS",)}, familia_desempate="FGTS"
+            CAMP,
+            familias={"FGTS": ("FGTS",)},
+            familia_desempate="FGTS",
+            condicoes=(),
         )
         out = filtrar_elegiveis(_frame(), so_fgts)
         assert set(out["categoria_codigo"]) == {"FGTS"}
@@ -525,3 +537,163 @@ class TestCssDosCards:
             f".st-key-{campanhas_page._CHAVE_CARDS}"
             in campanhas_page._CSS_CARDS
         )
+
+
+# ══════════════════════════════════════════════════════
+# Condicoes de premiacao (cascata)
+# ══════════════════════════════════════════════════════
+
+
+def _producao(cnc=0.0, clt=0.0, outros=0.0) -> pd.DataFrame:
+    """Frame com producao dirigida por familia, dentro da janela."""
+    return pd.DataFrame(
+        {
+            "categoria_codigo": ["CNC", "CONSIG_PRIV", "CONSIG_BMG"],
+            "VALOR": [cnc, clt, outros],
+            "pontos": [0.0, 0.0, 0.0],
+            "CONSULTOR": ["A", "B", "C"],
+            "LOJA": ["L1", "L2", "L3"],
+            "DATA": [pd.Timestamp("2026-08-01")] * 3,
+        }
+    )
+
+
+class TestCascataDePremiacao:
+    """A regra que decide quem recebe — nenhuma outra suite a cobre.
+
+    Degraus (usuario, 09/2026): global R$ 75 mi -> 8c/4l; + CNC
+    R$ 23 mi -> 12c/6l; + CLT R$ 7,5 mi -> 16c/8l. **Cumulativos**.
+    """
+
+    def test_sem_meta_global_ninguem_e_contemplado(self):
+        """Mesmo com CNC e CLT batidos: a global trava tudo."""
+        df = preparar(_producao(cnc=23e6, clt=7.5e6, outros=1e6), CAMP)
+        r = contemplacao(df, CAMP)
+        assert r["consultores"] == 0
+        assert r["lojas"] == 0
+        assert r["atual"] is None
+
+    def test_so_a_global_da_8_e_4(self):
+        df = preparar(_producao(cnc=20e6, clt=5e6, outros=50e6), CAMP)
+        r = contemplacao(df, CAMP)
+        assert (r["consultores"], r["lojas"]) == (8, 4)
+
+    def test_global_mais_cnc_da_12_e_6(self):
+        df = preparar(_producao(cnc=23e6, clt=5e6, outros=47e6), CAMP)
+        r = contemplacao(df, CAMP)
+        assert (r["consultores"], r["lojas"]) == (12, 6)
+
+    def test_clt_sem_cnc_nao_promove(self):
+        """O caso que a cascata existe para impedir."""
+        df = preparar(_producao(cnc=20e6, clt=7.5e6, outros=47.5e6), CAMP)
+        r = contemplacao(df, CAMP)
+        assert (r["consultores"], r["lojas"]) == (8, 4)
+        clt = r["degraus"][2]
+        assert clt["atingida"] is True     # a meta de CLT foi batida
+        assert clt["liberada"] is False    # mas a cascata parou no CNC
+
+    def test_cascata_completa_da_16_e_8(self):
+        df = preparar(_producao(cnc=23e6, clt=7.5e6, outros=44.5e6), CAMP)
+        r = contemplacao(df, CAMP)
+        assert (r["consultores"], r["lojas"]) == (16, 8)
+        assert all(d["liberada"] for d in r["degraus"])
+
+    def test_meta_exata_conta_como_atingida(self):
+        """>= e nao >: bater a meta na mosca premia."""
+        df = preparar(_producao(cnc=23e6, clt=7.5e6, outros=44.5e6), CAMP)
+        assert contemplacao(df, CAMP)["degraus"][0]["atingida"] is True
+
+    def test_um_centavo_a_menos_nao_atinge(self):
+        df = preparar(_producao(cnc=23e6, clt=7.5e6, outros=44.5e6 - 0.01), CAMP)
+        assert contemplacao(df, CAMP)["consultores"] == 0
+
+    def test_escopo_global_soma_todas_as_familias(self):
+        df = preparar(_producao(cnc=1e6, clt=2e6, outros=3e6), CAMP)
+        assert contemplacao(df, CAMP)["degraus"][0]["realizado"] == 6e6
+
+    def test_escopo_de_familia_nao_soma_as_outras(self):
+        df = preparar(_producao(cnc=1e6, clt=2e6, outros=3e6), CAMP)
+        degraus = contemplacao(df, CAMP)["degraus"]
+        assert degraus[1]["realizado"] == 1e6   # CNC
+        assert degraus[2]["realizado"] == 2e6   # CLT
+
+    def test_frame_vazio_nao_contempla(self):
+        r = contemplacao(pd.DataFrame(), CAMP)
+        assert (r["consultores"], r["lojas"]) == (0, 0)
+
+    def test_campanha_sem_condicoes_nao_contempla(self):
+        sem = replace(CAMP, condicoes=())
+        r = contemplacao(preparar(_frame(), CAMP), sem)
+        assert (r["consultores"], r["lojas"]) == (0, 0)
+        assert r["degraus"] == []
+
+
+class TestGuardasDasCondicoes:
+    def test_condicao_para_familia_inexistente_e_recusada(self):
+        """Mediria zero e nunca seria atingida — falharia calada."""
+        with pytest.raises(ValueError, match="nao esta em familias"):
+            replace(
+                CAMP,
+                condicoes=(Condicao("X", "NAO_EXISTE", 1.0, 1, 1),),
+            )
+
+    def test_degrau_que_contempla_menos_que_o_anterior_e_recusado(self):
+        with pytest.raises(ValueError, match="cumulativos"):
+            replace(
+                CAMP,
+                condicoes=(
+                    Condicao("A", None, 1.0, 8, 4),
+                    Condicao("B", "CNC", 2.0, 4, 2),
+                ),
+            )
+
+    def test_condicao_global_dispensa_familia(self):
+        c = replace(CAMP, condicoes=(Condicao("G", None, 1.0, 1, 1),))
+        assert c.condicoes[0].familia is None
+
+
+class TestMarcacaoDeContemplados:
+    def _rk(self):
+        df = pd.DataFrame(
+            {
+                "categoria_codigo": ["CNC"] * 4,
+                "VALOR": [10.0, 10.0, 10.0, 10.0],
+                "pontos": [40.0, 30.0, 20.0, 10.0],
+                "CONSULTOR": ["A", "B", "C", "D"],
+                "DATA": [pd.Timestamp("2026-08-01")] * 4,
+            }
+        )
+        return ranking(preparar(df, CAMP), "CONSULTOR", CAMP)
+
+    def test_marca_os_n_primeiros(self):
+        out = marcar_contemplados(self._rk(), 2)
+        assert out[COLUNA_PREMIADO].tolist() == ["Sim", "Sim", "—", "—"]
+
+    def test_zero_vagas_nao_marca_ninguem(self):
+        out = marcar_contemplados(self._rk(), 0)
+        assert set(out[COLUNA_PREMIADO]) == {"—"}
+
+    def test_empate_na_fronteira_contempla_os_dois(self):
+        """Corta por POSICAO densa, nao por linha.
+
+        A e B empatam em pontos E na producao de desempate: dividem a
+        posicao 1. Com uma vaga, cortar por linha escolheria um pela
+        ordem que o sort deixou por acaso.
+        """
+        df = pd.DataFrame(
+            {
+                "categoria_codigo": ["CNC"] * 3,
+                "VALOR": [10.0, 10.0, 5.0],
+                "pontos": [40.0, 40.0, 10.0],
+                "CONSULTOR": ["A", "B", "C"],
+                "DATA": [pd.Timestamp("2026-08-01")] * 3,
+            }
+        )
+        out = marcar_contemplados(ranking(preparar(df, CAMP), "CONSULTOR", CAMP), 1)
+        assert out["#"].tolist() == [1, 1, 3]
+        assert out[COLUNA_PREMIADO].tolist() == ["Sim", "Sim", "—"]
+
+    def test_ranking_vazio_ganha_a_coluna(self):
+        out = marcar_contemplados(ranking(pd.DataFrame(), "CONSULTOR", CAMP), 5)
+        assert COLUNA_PREMIADO in out.columns
+        assert out.empty

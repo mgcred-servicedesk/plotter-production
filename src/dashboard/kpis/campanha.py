@@ -37,6 +37,34 @@ import pandas as pd
 
 
 @dataclass(frozen=True)
+class Condicao:
+    """Um degrau de premiacao.
+
+    Os degraus sao **cumulativos e ordenados**: o enesimo so vale se
+    todos os anteriores tambem foram atingidos. Bater o CLT sem bater o
+    CNC nao promove ninguem — e a regra que o usuario definiu em
+    09/2026, e o motivo de :func:`contemplacao` parar no primeiro degrau
+    que falha em vez de contar os atingidos.
+
+    Campos:
+        rotulo: nome exibido do degrau.
+        familia: familia de ``Campanha.familias`` cuja producao e
+            medida. ``None`` mede a producao **total** da campanha
+            (a meta global).
+        meta: alvo em R$ de producao (``VALOR``).
+        consultores: quantos consultores passam a ser contemplados
+            quando este degrau (e os anteriores) sao atingidos.
+        lojas: idem, para o ranking de lojas/supervisores.
+    """
+
+    rotulo: str
+    familia: Optional[str]
+    meta: float
+    consultores: int
+    lojas: int
+
+
+@dataclass(frozen=True)
 class Campanha:
     """Uma campanha e o conjunto fechado das suas regras.
 
@@ -58,6 +86,8 @@ class Campanha:
         excluidas_notaveis: codigos que alguem esperaria ver e nao
             estao — exibidos no rodape para quem audita. Documentacao,
             nao regra: a regra e ``familias``.
+        condicoes: degraus de premiacao, **em ordem**. Ver
+            :class:`Condicao` e :func:`contemplacao`.
     """
 
     slug: str
@@ -69,6 +99,7 @@ class Campanha:
     familia_desempate: str
     excluidas_notaveis: tuple[str, ...] = ()
     descricao: str = ""
+    condicoes: tuple[Condicao, ...] = ()
 
     def __post_init__(self) -> None:
         # Desempate apontando para familia inexistente daria ranking
@@ -84,6 +115,28 @@ class Campanha:
             raise ValueError(
                 f"Campanha {self.slug!r}: fim anterior ao inicio."
             )
+        for cond in self.condicoes:
+            # Condicao apontando para familia inexistente mediria
+            # producao zero e nunca seria atingida — falharia calada.
+            if cond.familia is not None and cond.familia not in self.familias:
+                raise ValueError(
+                    f"Campanha {self.slug!r}: condicao {cond.rotulo!r} "
+                    f"referencia familia {cond.familia!r}, que nao esta "
+                    f"em familias ({list(self.familias)})."
+                )
+        # Os degraus sao cumulativos: um degrau que contemplasse MENOS
+        # que o anterior nao teria como ser alcancado (a cascata so
+        # avanca) e indicaria erro de cadastro.
+        for antes, depois in zip(self.condicoes, self.condicoes[1:]):
+            if (
+                depois.consultores < antes.consultores
+                or depois.lojas < antes.lojas
+            ):
+                raise ValueError(
+                    f"Campanha {self.slug!r}: condicao {depois.rotulo!r} "
+                    f"contempla menos que {antes.rotulo!r}. Os degraus "
+                    "sao cumulativos."
+                )
 
     @property
     def categorias_elegiveis(self) -> frozenset:
@@ -147,6 +200,21 @@ SEMESTRAL_2026H2 = Campanha(
         "Meta de R$ 75 milhoes em producao (valor, nao pontos) entre "
         "01/07/2026 e 31/12/2026. Ranking de consultores e de lojas "
         "por pontos; desempate pela producao de CNC."
+    ),
+    # Degraus de premiacao definidos pelo usuario em 09/2026.
+    # CUMULATIVOS: o CLT so promove se o CNC tambem tiver sido batido,
+    # e nenhum deles vale sem a meta global. Sem a global, ninguem e
+    # contemplado — mesmo com CNC e CLT atingidos.
+    #
+    # Os valores de CNC e CLT vem da arte oficial da campanha
+    # (assets/campanhas/semestral-2026h2/rodape-2.png), que quebra os
+    # R$ 75 mi em 44,5 + 23 + 7,5. O bloco de R$ 44,5 mi
+    # (Consignado + Antecipacao + FGTS) NAO e condicao de premiacao —
+    # aparece na arte, mas o usuario nao o listou entre os degraus.
+    condicoes=(
+        Condicao("Meta global", None, 75_000_000.0, 8, 4),
+        Condicao("Meta de CNC", "CNC", 23_000_000.0, 12, 6),
+        Condicao("Meta de CLT", "CLT", 7_500_000.0, 16, 8),
     ),
 )
 
@@ -311,6 +379,101 @@ def apurar_por_familia(df: pd.DataFrame, camp: Campanha) -> pd.DataFrame:
     total = out["Valor"].sum()
     out["% do Total"] = (out["Valor"] / total * 100) if total else 0.0
     return out.sort_values("Valor", ascending=False).reset_index(drop=True)
+
+
+# ══════════════════════════════════════════════════════
+# Condicoes de premiacao
+# ══════════════════════════════════════════════════════
+
+
+def valor_da_familia(df: pd.DataFrame, familia: Optional[str],
+                     camp: Campanha) -> float:
+    """Producao de uma familia, ou a total quando ``familia`` e ``None``."""
+    if familia is None:
+        return _soma(df, "VALOR")
+    if df.empty or "categoria_codigo" not in df.columns:
+        return 0.0
+    codigos = camp.familias.get(familia, ())
+    return _soma(df[df["categoria_codigo"].isin(codigos)], "VALOR")
+
+
+def avaliar_condicoes(df: pd.DataFrame, camp: Campanha) -> list[dict]:
+    """Estado de cada degrau, na ordem do cadastro.
+
+    ``atingida`` olha so a meta do proprio degrau. ``liberada`` aplica a
+    cascata: so e ``True`` se este degrau **e todos os anteriores**
+    foram atingidos. Sao coisas diferentes e a UI precisa das duas —
+    bater o CLT sem o CNC deixa ``atingida=True`` e ``liberada=False``,
+    e e exatamente esse caso que a rede precisa enxergar.
+    """
+    linhas: list[dict] = []
+    cascata_viva = True
+    for cond in camp.condicoes:
+        realizado = valor_da_familia(df, cond.familia, camp)
+        atingida = realizado >= cond.meta
+        cascata_viva = cascata_viva and atingida
+        linhas.append(
+            {
+                "condicao": cond,
+                "realizado": realizado,
+                "atingida": atingida,
+                "liberada": cascata_viva,
+                "falta": max(cond.meta - realizado, 0.0),
+                "atingimento": (
+                    realizado / cond.meta if cond.meta else 0.0
+                ),
+            }
+        )
+    return linhas
+
+
+COLUNA_PREMIADO = "Premiado"
+
+
+def marcar_contemplados(rk: pd.DataFrame, quantos: int) -> pd.DataFrame:
+    """Acrescenta ao ranking a coluna de quem seria premiado hoje.
+
+    Corta pela POSICAO (``#``), nao pela linha: a posicao e densa, entao
+    um empate exato — mesmos pontos **e** mesma producao de desempate —
+    na fronteira contempla os dois. Cortar por linha escolheria um
+    vencedor pela ordem que o sort deixou por acaso, que e o que a
+    posicao densa existe para evitar.
+
+    Coluna em vez de destaque visual de proposito: ela viaja no CSV
+    exportado, e a lista de premiados e justamente o que sai da tela
+    para virar pagamento.
+    """
+    out = rk.copy()
+    if out.empty:
+        out[COLUNA_PREMIADO] = []
+        return out
+    if quantos <= 0 or "#" not in out.columns:
+        out[COLUNA_PREMIADO] = "—"
+        return out
+    out[COLUNA_PREMIADO] = out["#"].le(quantos).map({True: "Sim", False: "—"})
+    return out
+
+
+def contemplacao(df: pd.DataFrame, camp: Campanha) -> dict:
+    """Quantos consultores e lojas seriam premiados com o dado de hoje.
+
+    Vale o **ultimo degrau liberado** — o mais alto cuja cascata inteira
+    fechou. Nenhum degrau liberado significa zero contemplados, nao o
+    primeiro degrau: sem a meta global nao ha premiacao.
+
+    Returns:
+        dict com ``consultores``, ``lojas``, ``degraus`` (a avaliacao
+        completa) e ``atual`` (a ``Condicao`` vigente, ou ``None``).
+    """
+    degraus = avaliar_condicoes(df, camp)
+    liberados = [linha for linha in degraus if linha["liberada"]]
+    atual = liberados[-1]["condicao"] if liberados else None
+    return {
+        "consultores": atual.consultores if atual else 0,
+        "lojas": atual.lojas if atual else 0,
+        "degraus": degraus,
+        "atual": atual,
+    }
 
 
 # ══════════════════════════════════════════════════════

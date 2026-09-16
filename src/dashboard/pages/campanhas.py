@@ -41,6 +41,7 @@ from datetime import date
 from pathlib import Path
 from typing import List, Optional
 
+import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 import streamlit_antd_components as sac
@@ -58,6 +59,8 @@ from src.dashboard.kpis.campanha import (
     CAMPANHAS,
     Campanha,
     apurar,
+    contemplacao,
+    marcar_contemplados,
     apurar_por_familia,
     campanha_padrao,
     preparar,
@@ -176,6 +179,71 @@ def _render_rodape(camp: Campanha) -> None:
 # ══════════════════════════════════════════════════════
 # Termometro
 # ══════════════════════════════════════════════════════
+
+
+def _render_condicoes(camp: Campanha, premio: dict) -> None:
+    """Os degraus de premiacao e onde a campanha esta neles.
+
+    Mostra ``atingida`` e ``liberada`` separadas porque elas divergem, e
+    a divergencia e a informacao mais acionavel da pagina: um degrau
+    pode estar batido e nao valer, porque a cascata parou antes. Quem ve
+    "CNC 100%" sem esse aviso conclui que ja ganhou.
+    """
+    sac.divider(label="Condições de premiação", align="left", color="gray")
+
+    atual = premio["atual"]
+    if atual is None:
+        st.warning(
+            f"**Nenhuma condição atingida.** Com o resultado de hoje, "
+            f"ninguém é contemplado — a premiação começa na "
+            f"{camp.condicoes[0].rotulo.lower()}."
+        )
+    else:
+        st.success(
+            f"**{atual.rotulo} atingida.** Com o resultado de hoje: "
+            f"**{premio['consultores']} consultores** e "
+            f"**{premio['lojas']} lojas** contemplados."
+        )
+
+    linhas = []
+    for i, d in enumerate(premio["degraus"], start=1):
+        cond = d["condicao"]
+        if d["liberada"]:
+            situacao = "Liberada"
+        elif d["atingida"]:
+            # Batida mas travada por um degrau anterior — o caso que a
+            # rede mais confunde.
+            situacao = "Atingida, mas travada"
+        else:
+            situacao = "Não atingida"
+        linhas.append(
+            {
+                "#": i,
+                "Condição": cond.rotulo,
+                "Escopo": cond.familia or "Produção total",
+                "Realizado": d["realizado"],
+                "Meta": cond.meta,
+                "% da Meta": d["atingimento"] * 100,
+                "Falta": d["falta"],
+                "Situação": situacao,
+                "Consultores": cond.consultores,
+                "Lojas": cond.lojas,
+            }
+        )
+
+    exibir_tabela(
+        pd.DataFrame(linhas),
+        colunas_moeda=["Realizado", "Meta", "Falta"],
+        colunas_percentual=["% da Meta"],
+        colunas_numero=["#", "Consultores", "Lojas"],
+    )
+    st.caption(
+        "Os degraus são cumulativos: cada um exige todos os anteriores. "
+        "Bater o CLT sem bater o CNC não promove ninguém — por isso uma "
+        "condição pode aparecer atingida e ainda assim travada. "
+        "“Consultores” e “Lojas” são quantos passam a ser contemplados "
+        "quando aquele degrau é liberado."
+    )
 
 
 def _cor_do_ritmo(atingimento: float, pct_tempo: float) -> str:
@@ -392,6 +460,11 @@ def _render_painel(camp: Campanha, hoje: date) -> None:
         "linear do ritmo até hoje — não considera sazonalidade."
     )
 
+    # ── Condicoes de premiacao ─────────────────────
+    premio = contemplacao(df, camp)
+    if camp.condicoes:
+        _render_condicoes(camp, premio)
+
     # ── Producao por familia ───────────────────────
     sac.divider(label="Produção por família", align="left", color="gray")
     exibir_tabela(
@@ -439,9 +512,24 @@ def _render_painel(camp: Campanha, hoje: date) -> None:
             # 110) precisa sair do ranking de consultor.
             rk = ranking(excluir_supervisores(df, df_sup), "CONSULTOR", camp)
             nome_csv = f"{camp.slug}_ranking_consultores"
+            vagas = premio["consultores"]
         else:
             rk = ranking(df, "LOJA", camp)
             nome_csv = f"{camp.slug}_ranking_lojas"
+            vagas = premio["lojas"]
+
+        if camp.condicoes:
+            rk = marcar_contemplados(rk, vagas)
+            if vagas:
+                st.caption(
+                    f"**{vagas}** primeiros são contemplados pelo degrau "
+                    f"vigente ({premio['atual'].rotulo})."
+                )
+            else:
+                st.caption(
+                    "Nenhuma condição atingida — o ranking mostra as "
+                    "posições, mas ainda não há contemplados."
+                )
 
         if rk.empty:
             st.info("Sem dados para este ranking.")
