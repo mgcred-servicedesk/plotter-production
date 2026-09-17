@@ -50,6 +50,7 @@ from src.dashboard.kpis.campanha import (
     SEMESTRAL_2026H2 as CAMP,
     Campanha,
     COLUNA_LOJA_CONSULTOR,
+    MARCA_MULTIPLAS_LOJAS,
     COLUNA_MEDIA_DU,
     COLUNA_PREMIADO,
     Condicao,
@@ -1158,3 +1159,48 @@ class TestDestaqueDoEscopo(TestRlsSoNoAnalitico):
         self._perfil(monkeypatch, {"perfil": "supervisor", "escopo": ["L1"]})
         t = self._renderizar_painel(monkeypatch, "Consultores")
         assert "Ana" not in self._destacados(t, self._CONS, "CONSULTOR")
+
+
+class TestLegendaDoAsterisco:
+    """O `*` da coluna Loja precisa se explicar na tela.
+
+    Sem legenda a marca e ruido: quem le nao sabe que o consultor
+    produziu em outra loja nem que essa producao continua la no ranking
+    de lojas.
+    """
+
+    def test_aparece_quando_alguem_tem_a_marca(self):
+        rk = pd.DataFrame(
+            {COLUNA_LOJA_CONSULTOR: ["L1", f"L2{MARCA_MULTIPLAS_LOJAS}"]}
+        )
+        legenda = campanhas_page.legenda_multiplas_lojas(rk)
+        assert legenda and "mais de uma loja" in legenda
+
+    def test_some_quando_ninguem_tem_a_marca(self):
+        rk = pd.DataFrame({COLUNA_LOJA_CONSULTOR: ["L1", "L2"]})
+        assert campanhas_page.legenda_multiplas_lojas(rk) is None
+
+    def test_ranking_de_lojas_nao_tem_legenda(self):
+        """A marca so existe no ranking de consultores."""
+        assert campanhas_page.legenda_multiplas_lojas(
+            pd.DataFrame({"LOJA": ["L1 *"]})
+        ) is None
+
+    def test_marca_da_legenda_e_a_mesma_da_coluna(self):
+        """Mudar a marca num lugar e nao no outro quebraria a legenda."""
+        rk = ranking(
+            preparar(
+                pd.DataFrame({
+                    "categoria_codigo": ["CNC", "CNC"],
+                    "VALOR": [100.0, 100.0],
+                    "pontos": [10.0, 10.0],
+                    "CONSULTOR": ["Ana", "Ana"],
+                    "LOJA": ["L1", "L2"],
+                    "DATA": [pd.Timestamp("2026-08-01"),
+                             pd.Timestamp("2026-09-01")],
+                }),
+                CAMP,
+            ),
+            "CONSULTOR", CAMP, com_loja=True,
+        )
+        assert campanhas_page.legenda_multiplas_lojas(rk) is not None

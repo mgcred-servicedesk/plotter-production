@@ -343,6 +343,31 @@ def mascara_destaque(
     return fn(vista)
 
 
+def legenda_multiplas_lojas(rk: pd.DataFrame) -> Optional[str]:
+    """Explica o ``*`` da coluna Loja — so quando alguem o carrega.
+
+    O ranking de consultores soma a producao pelo NOME, onde quer que
+    ela tenha sido feita, mas a coluna mostra uma loja so: a atual. A
+    marca avisa que houve outra; sem a legenda, ninguem sabe o que ela
+    quer dizer.
+    """
+    if COLUNA_LOJA_CONSULTOR not in rk.columns:
+        return None
+    marcados = (
+        rk[COLUNA_LOJA_CONSULTOR]
+        .astype(str)
+        .str.endswith(MARCA_MULTIPLAS_LOJAS)
+    )
+    if not marcados.any():
+        return None
+    return (
+        f"`{MARCA_MULTIPLAS_LOJAS.strip()}` Produziu em mais de uma loja "
+        "durante a campanha. A coluna mostra a loja atual (do pagamento "
+        "mais recente); a produção feita em cada loja continua contando "
+        "para aquela loja no ranking de lojas."
+    )
+
+
 def _render_analitico(df: pd.DataFrame, camp: Campanha) -> None:
     """Renderiza ``tabela_analitico`` — o recorte de RLS acontece la."""
     sac.divider(
@@ -612,9 +637,7 @@ def _render_painel(camp: Campanha, hoje: date) -> None:
     st.caption(
         f"Pagos de {camp.inicio.strftime('%d/%m/%Y')} a "
         f"{camp.fim.strftime('%d/%m/%Y')} · elegíveis: "
-        f"{', '.join(camp.familias)} · fora: "
-        f"{', '.join(camp.excluidas_notaveis)}. Projeção é extrapolação "
-        "linear do ritmo até hoje — não considera sazonalidade."
+        f"{', '.join(camp.familias)}."
     )
 
     # ── Condicoes de premiacao ─────────────────────
@@ -717,6 +740,9 @@ def _render_painel(camp: Campanha, hoje: date) -> None:
                 paginacao=100,
                 key=f"tab_{nome_csv}",
             )
+            legenda = legenda_multiplas_lojas(rk)
+            if legenda:
+                st.caption(legenda)
             botao_exportar_csv(rk, nome_csv, key=f"csv_{nome_csv}")
 
     if col_arte is not None:
