@@ -64,7 +64,9 @@ from src.dashboard.kpis.campanha import (
     CAMPANHAS,
     Campanha,
     apurar,
+    COLUNA_LOJA_CONSULTOR,
     COLUNA_MEDIA_DU,
+    MARCA_MULTIPLAS_LOJAS,
     contemplacao,
     dias_uteis_campanha,
     marcar_contemplados,
@@ -77,7 +79,9 @@ from src.dashboard.kpis.campanha import (
 )
 from src.dashboard.kpis.gerais import excluir_supervisores
 from src.dashboard.loaders import carregar_consolidado_intervalo
+from src.dashboard import rls as _rls
 from src.dashboard.rls import aplicar_rls
+from src.dashboard.tabs.rankings import _make_highlight_fn
 from src.dashboard.ui.theme import CHART_COLORS
 
 _RAIZ_ASSETS = Path("assets/campanhas")
@@ -301,6 +305,42 @@ def tabela_analitico(df: pd.DataFrame) -> pd.DataFrame:
         .sort_values("Data Pagamento", ascending=False)
         .reset_index(drop=True)
     )
+
+
+def mascara_destaque(
+    rk: pd.DataFrame, df: pd.DataFrame
+) -> Optional[pd.Series]:
+    """Linhas do ranking que pertencem ao escopo de quem esta logado.
+
+    Mesma regra dos rankings do dashboard de vendas — reusa
+    ``_make_highlight_fn`` em vez de reescreve-la: gerente comercial
+    destaca as lojas da regiao, supervisor a propria loja, consultor o
+    proprio nome; admin/gestor sem destaque. O escopo sai de
+    ``aplicar_rls(df)``, entao "visualizar como" e fail-closed valem
+    igual. Destaque e so visual: o ranking continua o da rede.
+
+    Adaptacao de colunas: o ranking da campanha usa ``LOJA`` e
+    ``CONSULTOR`` (maiusculas) e, no de consultores, a coluna ``Loja``
+    carrega ``MARCA_MULTIPLAS_LOJAS`` para quem mudou de loja. O
+    consultor e do grupo da loja ATUAL dele — a mesma que a coluna
+    mostra —, entao a marca e removida antes de comparar.
+    """
+    perfil = _rls._obter_perfil_efetivo()
+    role = perfil.get("perfil") if perfil else None
+    fn = _make_highlight_fn(aplicar_rls(df), role)
+    if fn is None or rk.empty:
+        return None
+
+    vista = rk.rename(columns={"CONSULTOR": "Consultor"})
+    if COLUNA_LOJA_CONSULTOR in vista.columns:
+        vista[COLUNA_LOJA_CONSULTOR] = (
+            vista[COLUNA_LOJA_CONSULTOR]
+            .astype(str)
+            .str.removesuffix(MARCA_MULTIPLAS_LOJAS)
+        )
+    elif "LOJA" in vista.columns:
+        vista = vista.rename(columns={"LOJA": "Loja"})
+    return fn(vista)
 
 
 def _render_analitico(df: pd.DataFrame, camp: Campanha) -> None:
@@ -659,8 +699,15 @@ def _render_painel(camp: Campanha, hoje: date) -> None:
             # Paginado como as demais tabelas longas do projeto: o
             # ranking de consultores passa de 300 linhas no semestre e
             # empurrava o rodape para muito longe.
+            mascara = mascara_destaque(rk, df)
+            if mascara is not None and mascara.any():
+                st.caption(
+                    "Linhas destacadas: o seu escopo (região, loja ou "
+                    "você). As posições são da rede inteira."
+                )
             exibir_tabela(
                 rk,
+                highlight_mask=mascara,
                 colunas_moeda=["Valor", COLUNA_MEDIA_DU],
                 # O desempate e em PONTOS — formatar como moeda diria
                 # que o criterio e valor, que e exatamente a confusao

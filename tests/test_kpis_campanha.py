@@ -1023,8 +1023,9 @@ class TestRlsSoNoAnalitico:
         """Roda `_render_painel` capturando cada tabela exibida."""
         tabelas = {}
 
-        def exibir(df, *a, key=None, **kw):
+        def exibir(df, *a, key=None, highlight_mask=None, **kw):
             tabelas[key or f"sem_key_{len(tabelas)}"] = df
+            tabelas[f"mask:{key}"] = highlight_mask
 
         pg = campanhas_page
         monkeypatch.setattr(
@@ -1070,3 +1071,90 @@ class TestRlsSoNoAnalitico:
             df for df in t.values() if "Família" in getattr(df, "columns", [])
         )
         assert fam["Valor"].sum() == pytest.approx(2300.0)
+
+
+class TestDestaqueDoEscopo(TestRlsSoNoAnalitico):
+    """Destaque visual do escopo nos rankings da rede.
+
+    Mesma regra do dashboard de vendas (`_make_highlight_fn`). Herda o
+    frame e o render de `TestRlsSoNoAnalitico` — os testes de la rodam
+    de novo aqui, o que e barato e confirma que o destaque nao mexe no
+    recorte.
+    """
+
+    _LOJAS = f"tab_{CAMP.slug}_ranking_lojas"
+    _CONS = f"tab_{CAMP.slug}_ranking_consultores"
+
+    def _destacados(self, t, chave, coluna):
+        mask = t[f"mask:{chave}"]
+        if mask is None:
+            return set()
+        return set(t[chave].loc[mask, coluna])
+
+    def test_supervisor_destaca_a_propria_loja(self, monkeypatch):
+        self._perfil(monkeypatch, {"perfil": "supervisor", "escopo": ["L2"]})
+        t = self._renderizar_painel(monkeypatch, "Lojas")
+        assert self._destacados(t, self._LOJAS, "LOJA") == {"L2"}
+
+    def test_gerente_destaca_as_lojas_da_regiao(self, monkeypatch):
+        self._perfil(
+            monkeypatch, {"perfil": "gerente_comercial", "escopo": ["R1"]}
+        )
+        t = self._renderizar_painel(monkeypatch, "Lojas")
+        assert self._destacados(t, self._LOJAS, "LOJA") == {"L1", "L2"}
+
+    def test_gerente_destaca_consultores_das_suas_lojas(self, monkeypatch):
+        self._perfil(
+            monkeypatch, {"perfil": "gerente_comercial", "escopo": ["R2"]}
+        )
+        t = self._renderizar_painel(monkeypatch, "Consultores")
+        assert self._destacados(t, self._CONS, "CONSULTOR") == {"Duda"}
+
+    def test_consultor_destaca_o_proprio_nome(self, monkeypatch):
+        self._perfil(monkeypatch, {"perfil": "consultor", "escopo": ["Bia"]})
+        t = self._renderizar_painel(monkeypatch, "Consultores")
+        assert self._destacados(t, self._CONS, "CONSULTOR") == {"Bia"}
+
+    def test_admin_nao_tem_destaque(self, monkeypatch):
+        self._perfil(monkeypatch, {"perfil": "admin", "escopo": []})
+        t = self._renderizar_painel(monkeypatch, "Lojas")
+        assert t[f"mask:{self._LOJAS}"] is None
+
+    def test_consultor_que_mudou_de_loja_e_do_grupo_da_loja_atual(
+        self, monkeypatch
+    ):
+        """A coluna Loja sai com a marca de multiplas lojas.
+
+        Sem remover a marca, "L2 *" nao casa com "L2" e quem foi
+        transferido para a loja do supervisor some do destaque — calado.
+        O grupo e o da loja ATUAL (a que a coluna mostra); a loja de
+        origem nao destaca, mesmo tendo producao dele.
+        """
+        extra = pd.DataFrame({
+            "categoria_codigo": ["CNC"],
+            "VALOR": [50.0],
+            "pontos": [5.0],
+            "CONSULTOR": ["Ana"],
+            "LOJA": ["L3"],
+            "REGIAO": ["R2"],
+            "DATA": [pd.Timestamp("2026-09-01")],   # depois de L1
+            "DATA_CADASTRO": [pd.Timestamp("2026-08-30")],
+            "BANCO": ["B"],
+            "TIPO_PRODUTO": ["X"],
+            "NUM_PROPOSTA": ["5"],
+            "CONTRATO_ID": [5],
+        })
+        base = self._df()
+        monkeypatch.setattr(
+            TestRlsSoNoAnalitico, "_df",
+            staticmethod(lambda: pd.concat([base, extra], ignore_index=True)),
+        )
+        self._perfil(monkeypatch, {"perfil": "supervisor", "escopo": ["L3"]})
+        t = self._renderizar_painel(monkeypatch, "Consultores")
+        rk = t[self._CONS]
+        assert rk.loc[rk["CONSULTOR"] == "Ana", "Loja"].item().endswith("*")
+        assert self._destacados(t, self._CONS, "CONSULTOR") == {"Ana", "Duda"}
+
+        self._perfil(monkeypatch, {"perfil": "supervisor", "escopo": ["L1"]})
+        t = self._renderizar_painel(monkeypatch, "Consultores")
+        assert "Ana" not in self._destacados(t, self._CONS, "CONSULTOR")

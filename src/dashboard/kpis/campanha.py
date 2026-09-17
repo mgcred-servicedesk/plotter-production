@@ -503,6 +503,8 @@ def rotulo_desempate(camp: Campanha) -> str:
 
 
 COLUNA_LOJA_CONSULTOR = "Loja"
+# Sufixo de quem produziu em mais de uma loja na janela (`_loja_do_consultor`).
+MARCA_MULTIPLAS_LOJAS = " *"
 COLUNA_MEDIA_DU = "Média/DU"
 
 
@@ -560,7 +562,11 @@ def _loja_do_consultor(df: pd.DataFrame, coluna: str) -> dict:
     )
     multiplas = base.groupby(coluna)["LOJA"].nunique()
     return {
-        nome: (f"{loja} *" if multiplas.get(nome, 1) > 1 else loja)
+        nome: (
+            f"{loja}{MARCA_MULTIPLAS_LOJAS}"
+            if multiplas.get(nome, 1) > 1
+            else loja
+        )
         for nome, loja in recentes.items()
     }
 
