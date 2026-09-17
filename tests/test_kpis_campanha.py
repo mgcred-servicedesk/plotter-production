@@ -1257,6 +1257,31 @@ class TestDesligadosForaDoRanking(TestRlsSoNoAnalitico):
         )
         assert fam["Valor"].sum() == pytest.approx(2300.0)
 
+    def test_global_e_condicoes_somam_desligados(self, monkeypatch):
+        """Card Realizado, termometro e premiacao usam o frame completo.
+
+        Espiona `apurar` e `contemplacao` na pagina: se alguem passar a
+        eles o frame sem desligados, o global cai e um degrau pode
+        deixar de ser liberado — sem nenhum erro na tela.
+        """
+        pg = campanhas_page
+        vistos = {}
+        for nome in ("apurar", "contemplacao"):
+            real = getattr(pg, nome)
+
+            def espiao(df, camp, _real=real, _nome=nome):
+                vistos[_nome] = df["VALOR"].sum()
+                return _real(df, camp)
+
+            monkeypatch.setattr(pg, nome, espiao)
+        self._desligados = ["Ana"]
+        self._perfil(monkeypatch, self._ADMIN)
+        self._renderizar_painel(monkeypatch, "Consultores")
+        assert vistos == {
+            "apurar": pytest.approx(2300.0),
+            "contemplacao": pytest.approx(2300.0),
+        }
+
     def test_tela_nao_menciona_desligamento(self, monkeypatch):
         """Regra interna (usuario, 09/2026): o filtro age calado.
 
