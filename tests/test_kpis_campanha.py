@@ -954,3 +954,119 @@ class TestMediaDuNasTabelas:
         assert fam[COLUNA_MEDIA_DU].sum() == pytest.approx(
             apurar(df, CAMP)["valor"] / 10
         )
+
+
+# ══════════════════════════════════════════════════════
+# RLS so no analitico
+# ══════════════════════════════════════════════════════
+
+
+class TestRlsSoNoAnalitico:
+    """Rankings e posicoes sao da rede; RLS so recorta o analitico.
+
+    Decisao do usuario (09/2026). Os dois lados quebram calados:
+    ranking recortado mostra um supervisor em 1º da propria loja
+    (posicao falsa) e contemplacao contra os R$ 75 mi com a producao de
+    uma loja so; analitico sem recorte expoe ADE/banco/valor da rede
+    inteira a quem nao responde por ela.
+    """
+
+    @staticmethod
+    def _df() -> pd.DataFrame:
+        return pd.DataFrame({
+            "categoria_codigo": ["CNC", "CNC", "FGTS", "CONSIG_PRIV"],
+            "VALOR": [1000.0, 800.0, 300.0, 200.0],
+            "pontos": [100.0, 80.0, 30.0, 20.0],
+            "CONSULTOR": ["Ana", "Bia", "Caio", "Duda"],
+            "LOJA": ["L1", "L2", "L2", "L3"],
+            "REGIAO": ["R1", "R1", "R1", "R2"],
+            "DATA": [pd.Timestamp("2026-08-15")] * 4,
+            "DATA_CADASTRO": [pd.Timestamp("2026-08-10")] * 4,
+            "BANCO": ["B"] * 4,
+            "TIPO_PRODUTO": ["X"] * 4,
+            "NUM_PROPOSTA": ["1", "2", "3", "4"],
+            "CONTRATO_ID": [1, 2, 3, 4],
+        })
+
+    @staticmethod
+    def _perfil(monkeypatch, perfil):
+        import src.dashboard.rls as rls_mod
+
+        monkeypatch.setattr(rls_mod, "_obter_perfil_efetivo", lambda: perfil)
+
+    # ── o analitico recorta ────────────────────────
+
+    def test_supervisor_ve_so_as_proprias_lojas(self, monkeypatch):
+        self._perfil(monkeypatch, {"perfil": "supervisor", "escopo": ["L2"]})
+        out = campanhas_page.tabela_analitico(self._df())
+        assert set(out["Loja"]) == {"L2"}
+        assert len(out) == 2
+
+    def test_gerente_ve_so_as_proprias_regioes(self, monkeypatch):
+        self._perfil(
+            monkeypatch, {"perfil": "gerente_comercial", "escopo": ["R2"]}
+        )
+        out = campanhas_page.tabela_analitico(self._df())
+        assert out["Nº ADE"].tolist() == ["4"]
+
+    def test_sem_perfil_nao_expoe_nada(self, monkeypatch):
+        self._perfil(monkeypatch, None)
+        assert campanhas_page.tabela_analitico(self._df()).empty
+
+    def test_admin_ve_tudo(self, monkeypatch):
+        self._perfil(monkeypatch, {"perfil": "admin", "escopo": []})
+        assert len(campanhas_page.tabela_analitico(self._df())) == 4
+
+    # ── o painel NAO recorta ───────────────────────
+
+    def _renderizar_painel(self, monkeypatch, aba):
+        """Roda `_render_painel` capturando cada tabela exibida."""
+        tabelas = {}
+
+        def exibir(df, *a, key=None, **kw):
+            tabelas[key or f"sem_key_{len(tabelas)}"] = df
+
+        pg = campanhas_page
+        monkeypatch.setattr(
+            pg,
+            "carregar_consolidado_intervalo",
+            lambda ini, fim: (self._df(), pd.DataFrame(), None),
+        )
+        monkeypatch.setattr(pg, "exibir_tabela", exibir)
+        monkeypatch.setattr(pg, "botao_exportar_csv", lambda *a, **k: None)
+        monkeypatch.setattr(pg, "assets_da_campanha", lambda *a: [])
+        # calendario de feriados vem do Supabase; aqui so importa o recorte
+        monkeypatch.setattr(pg, "dias_uteis_campanha", lambda c, h: (127, 55))
+        monkeypatch.setattr(pg.st, "radio", lambda *a, **k: aba)
+        monkeypatch.setattr(pg.st, "plotly_chart", lambda *a, **k: None)
+        monkeypatch.setattr(pg.sac, "divider", lambda *a, **k: None)
+        pg._render_painel(CAMP, date(2026, 9, 16))
+        return tabelas
+
+    def test_ranking_de_lojas_e_da_rede_para_supervisor(self, monkeypatch):
+        self._perfil(monkeypatch, {"perfil": "supervisor", "escopo": ["L2"]})
+        t = self._renderizar_painel(monkeypatch, "Lojas")
+        rk = t[f"tab_{CAMP.slug}_ranking_lojas"]
+        assert set(rk["LOJA"]) == {"L1", "L2", "L3"}
+        # posicao na rede: L2 (110 pts) na frente de L1 (100)
+        assert rk.iloc[0]["LOJA"] == "L2"
+        # e o analitico, na mesma pagina, continua recortado
+        assert set(t["tab_campanha_analitico"]["Loja"]) == {"L2"}
+
+    def test_ranking_de_consultores_e_da_rede_para_consultor(
+        self, monkeypatch
+    ):
+        self._perfil(monkeypatch, {"perfil": "consultor", "escopo": ["Duda"]})
+        t = self._renderizar_painel(monkeypatch, "Consultores")
+        rk = t[f"tab_{CAMP.slug}_ranking_consultores"]
+        assert set(rk["CONSULTOR"]) == {"Ana", "Bia", "Caio", "Duda"}
+        assert rk.loc[rk["CONSULTOR"] == "Duda", "#"].item() == 4
+        assert t["tab_campanha_analitico"]["Consultor"].tolist() == ["Duda"]
+
+    def test_familias_somam_a_rede_para_supervisor(self, monkeypatch):
+        self._perfil(monkeypatch, {"perfil": "supervisor", "escopo": ["L1"]})
+        t = self._renderizar_painel(monkeypatch, "Lojas")
+        fam = next(
+            df for df in t.values() if "Família" in getattr(df, "columns", [])
+        )
+        assert fam["Valor"].sum() == pytest.approx(2300.0)

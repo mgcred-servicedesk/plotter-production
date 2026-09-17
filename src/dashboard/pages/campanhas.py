@@ -11,8 +11,13 @@ Vendas (contratos do mes, metas, supervisores, analise, cancelados,
 reconquista, KPIs). Pontuacao nao pode fazer isso porque depende de
 ``kpis``; Campanhas pode, e no compute Nano isso importa.
 
-RLS: a secao carrega dados proprios, logo aplica ``aplicar_rls`` ela
-mesma, antes de qualquer agregacao ou render.
+RLS: **so no analitico de propostas.** Apuracao, condicoes, familias
+e rankings sao da REDE e todo perfil os ve inteiros (decisao do
+usuario, 09/2026): posicao num ranking so faz sentido contra todos os
+concorrentes, e meta/contemplacao sao globais — recortadas, um
+supervisor veria a propria loja contra os R$ 75 mi. O analitico e o
+unico bloco com linha crua (ADE, banco, valor), e esse passa por
+``aplicar_rls`` dentro de ``tabela_analitico``.
 
 ## Assets
 
@@ -248,29 +253,26 @@ def _render_condicoes(camp: Campanha, premio: dict) -> None:
     )
 
 
-def _render_analitico(df: pd.DataFrame, camp: Campanha) -> None:
-    """Propostas da campanha, linha a linha, para auditoria.
+def tabela_analitico(df: pd.DataFrame) -> pd.DataFrame:
+    """Propostas da campanha, linha a linha, **recortadas pelo RLS**.
 
-    **RLS:** o frame chega aqui ja recortado — ``_render_painel`` aplica
-    ``aplicar_rls`` logo apos a carga, antes de qualquer agregacao. Isto
-    importa mais aqui do que em qualquer outro bloco da pagina: e o
-    unico que expoe **linha crua**, entao um gerente ve so as regioes
-    dele e um supervisor so as lojas dele — que e justamente o que torna
-    o numero auditavel por quem responde por ele.
+    Recebe o frame GLOBAL da campanha (o mesmo dos rankings) e aplica
+    ``aplicar_rls`` aqui, no unico bloco da pagina que expoe linha crua:
+    um gerente ve so as regioes dele e um supervisor so as lojas dele —
+    que e o que torna o numero auditavel por quem responde por ele. O
+    recorte mora DENTRO desta funcao, e nao no chamador, para que
+    nenhum caminho monte o analitico sem ele. Fail-closed como
+    ``aplicar_rls``: sem perfil, vazio.
 
-    Por isso LOJA, REGIÃO e CONSULTOR entram na tabela mesmo sendo
-    redundantes para quem tem escopo estreito: sem elas, quem audita nao
-    consegue conferir de quem e cada proposta.
+    LOJA, REGIÃO e CONSULTOR entram mesmo sendo redundantes para quem
+    tem escopo estreito: sem elas, quem audita nao confere de quem e
+    cada proposta.
     """
-    sac.divider(
-        label="Analítico de propostas", align="left", color="gray"
-    )
+    det = aplicar_rls(df)
+    if det.empty:
+        return pd.DataFrame()
 
-    if df.empty:
-        st.info("Sem propostas no seu escopo.")
-        return
-
-    det = df.copy()
+    det = det.copy()
     # NUM_PROPOSTA preferido, CONTRATO_ID como fallback — mesmo criterio
     # da aba Analiticos (`_nr_ade`), para o mesmo ADE aparecer igual nas
     # duas telas.
@@ -293,12 +295,24 @@ def _render_analitico(df: pd.DataFrame, camp: Campanha) -> None:
         ("REGIAO", "Região"),
     ]
     presentes = [(orig, novo) for orig, novo in cols if orig in det.columns]
-    tabela = (
+    return (
         det[[o for o, _ in presentes]]
         .rename(columns=dict(presentes))
         .sort_values("Data Pagamento", ascending=False)
         .reset_index(drop=True)
     )
+
+
+def _render_analitico(df: pd.DataFrame, camp: Campanha) -> None:
+    """Renderiza ``tabela_analitico`` — o recorte de RLS acontece la."""
+    sac.divider(
+        label="Analítico de propostas", align="left", color="gray"
+    )
+
+    tabela = tabela_analitico(df)
+    if tabela.empty:
+        st.info("Sem propostas no seu escopo.")
+        return
 
     st.caption(
         f"{formatar_numero(len(tabela))} propostas pagas entre "
@@ -477,12 +491,9 @@ def _render_painel(camp: Campanha, hoje: date) -> None:
         st.info("Nenhum contrato pago na janela da campanha.")
         return
 
-    # RLS antes de qualquer agregacao ou render.
-    bruto = aplicar_rls(bruto)
-    if bruto.empty:
-        st.info("Sem dados da campanha no seu escopo.")
-        return
-
+    # SEM RLS aqui, de proposito: apuracao, condicoes, familias e
+    # rankings sao da rede inteira para todo perfil (ver docstring do
+    # modulo). O recorte acontece so em `tabela_analitico`.
     df = preparar(bruto, camp)
     if df.empty:
         st.info("Nenhum contrato de produto elegível na janela.")
