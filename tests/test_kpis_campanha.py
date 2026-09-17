@@ -1240,7 +1240,13 @@ class TestDesligadosForaDoRanking(TestRlsSoNoAnalitico):
         self._desligados = ["Ana"]
         self._perfil(monkeypatch, self._ADMIN)
         rk = self._renderizar_painel(monkeypatch, "Lojas")[self._LOJAS]
-        assert "L1" in set(rk["LOJA"])      # L1 so tem producao da Ana
+        # L1 so tem producao da Ana: sem ela a loja sumiria ou zeraria.
+        # Confere VALOR e PONTOS, nao so presenca — e os pontos que
+        # decidem a posicao da loja.
+        l1 = rk.loc[rk["LOJA"] == "L1"].iloc[0]
+        assert l1["Valor"] == pytest.approx(1000.0)
+        assert l1["Pontos"] == pytest.approx(100.0)
+        assert rk["Valor"].sum() == pytest.approx(2300.0)
 
     def test_totais_da_campanha_nao_mudam(self, monkeypatch):
         self._desligados = ["Ana"]
