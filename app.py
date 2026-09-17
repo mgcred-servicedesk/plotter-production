@@ -44,6 +44,7 @@ from src.dashboard.kpis.gerais import (
     peso_headcount_escopo,
     serie_diaria_pago,
 )
+from src.dashboard.pages.campanhas import render_pagina_campanhas
 from src.dashboard.pages.config import render_pagina_config
 from src.dashboard.pages.dashboard_pontuacao import (
     render_dashboard_pontuacao,
@@ -271,11 +272,26 @@ def main():
             titulo="Dashboard de Pontuação",
             subtitulo="Apuração de pontuação e atingimento - MGCred",
         )
+    elif _view == "campanhas":
+        # SEM mes/ano de proposito: campanha tem janela propria e o
+        # seletor da sidebar nao a governa. Passar o periodo punha
+        # "Setembro 2026" no breadcrumb de uma pagina que apura o
+        # semestre inteiro — sugeria um recorte que nao existe.
+        render_header(
+            titulo="Campanhas",
+            subtitulo="Apuração de campanhas — MGCred",
+        )
     else:
         render_header(mes=mes, ano=ano)
 
     # Segmented control logo abaixo do header — centralizado.
-    _toggle_cols = st.columns([3, 4, 3])
+    _ROTULOS_VIEW = {
+        "Dashboard de Vendas": "vendas",
+        "Dashboard de Pontuação": "pontuacao",
+        "Campanhas": "campanhas",
+    }
+    _VIEW_PARA_INDICE = {v: i for i, v in enumerate(_ROTULOS_VIEW.values())}
+    _toggle_cols = st.columns([2, 6, 2])
     with _toggle_cols[1]:
         _sel = sac.segmented(
             items=[
@@ -287,13 +303,17 @@ def main():
                     label="Dashboard de Pontuação",
                     icon="award-fill",
                 ),
+                sac.SegmentedItem(
+                    label="Campanhas",
+                    icon="trophy-fill",
+                ),
             ],
-            index=1 if _view == "pontuacao" else 0,
+            index=_VIEW_PARA_INDICE.get(_view, 0),
             align="center",
             color="blue",
             key="sel_dashboard_view",
         )
-    _nova_view = "pontuacao" if _sel == "Dashboard de Pontuação" else "vendas"
+    _nova_view = _ROTULOS_VIEW.get(_sel, "vendas")
     if _nova_view != _view:
         st.session_state["dashboard_view"] = _nova_view
         st.rerun()
@@ -301,6 +321,17 @@ def main():
     # ── Config: renderiza sem carregar contratos ──────
     if st.session_state.get("mostrar_config"):
         render_pagina_config()
+        return
+
+    # ── Dispatch: Campanhas ───────────────────────────
+    # ANTES de carregar o periodo, e nao junto do dispatch de Pontuacao
+    # (que precisa de `kpis`): campanha tem janela propria e nao usa nada
+    # do mes da sidebar. Despachar aqui faz abrir Campanhas nao pagar a
+    # carga de Vendas — contratos do mes, metas, supervisores, analise,
+    # cancelados, reconquista e os seis grupos de KPI. No compute Nano
+    # isso e a diferenca entre a secao ser barata e ser mais uma carga.
+    if st.session_state.get("dashboard_view") == "campanhas":
+        render_pagina_campanhas()
         return
 
     # ── Dashboard: carrega contratos apenas aqui ──────

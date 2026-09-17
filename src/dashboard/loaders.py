@@ -1659,6 +1659,49 @@ def carregar_consultores_ativos() -> pd.DataFrame:
     return df
 
 
+def _status_consultor_desligado(status) -> bool:
+    """True so para desligamento ("Desligado (a)").
+
+    NAO e o complemento de ``_status_consultor_ativo``: afastamentos
+    como "Licença Maternidade" nao sao ativos para o universo de
+    controle, mas tambem nao sao desligamento — quem recorta por
+    desligado precisa deixa-los de fora do recorte.
+    """
+    return (status or "").strip().lower().startswith("desligad")
+
+
+@st.cache_data(ttl=1800)
+def carregar_consultores_desligados() -> list[str]:
+    """Nomes de consultores cujo registro MAIS RECENTE e desligamento.
+
+    Mesma tabela, paginacao e colapso de duplicados de
+    ``carregar_consultores_ativos`` — o desligamento registrado em
+    linha nova vence o 'Ativo (a)' antigo, e o recontratado (linha
+    ativa mais nova) nao entra. Nao filtra loja ativa: desligado de
+    loja fechada continua desligado.
+
+    Usado para tirar desligados do ranking de consultores da campanha
+    sem tirar quem esta afastado (ver ``_status_consultor_desligado``).
+    Falha de I/O levanta (``_paginar_keyset``); lista vazia significa
+    que nao ha desligados. TTL 30min, como os demais de cadastro.
+    """
+    def _pagina(limite: int):
+        return (
+            _sb()
+            .table("consultores")
+            .select("id, nome, status, updated_at")
+            .order("id")
+            .limit(limite)
+        )
+
+    return sorted({
+        (row.get("nome") or "").strip()
+        for row in _colapsar_cadastro_recente(_paginar_keyset(_pagina, "id"))
+        if _status_consultor_desligado(row.get("status"))
+        and (row.get("nome") or "").strip()
+    })
+
+
 @st.cache_data(ttl=1800)
 def carregar_headcount_ponderado(mes: int, ano: int) -> pd.DataFrame:
     """Headcount PONDERADO da competencia, por loja (migration 091).
@@ -2159,6 +2202,94 @@ def _executar_consolidacao(
 
     df, diag = consolidar_pontuacao(df, df_pontos, carregar_categorias)
     return df, df_metas, df_supervisores, diag
+
+
+# ══════════════════════════════════════════════════════
+# Carga consolidada por intervalo (campanhas)
+# ══════════════════════════════════════════════════════
+
+
+def carregar_consolidado_intervalo(
+    data_ini,
+    data_fim,
+) -> Tuple[pd.DataFrame, pd.DataFrame, str]:
+    """Contratos pagos COM pontuacao, num intervalo livre de datas.
+
+    Irma de :func:`carregar_contratos_pagos_intervalo`, com uma
+    diferenca que importa para campanha: devolve o frame **consolidado**
+    (com ``pontos`` e ``categoria_codigo`` ja resolvidos), nao os
+    contratos crus.
+
+    Por que consolidar mes a mes em vez de concatenar e pontuar de uma
+    vez: o multiplicador ``PTS`` vem de ``obter_pontuacao_periodo(mes,
+    ano)`` e **muda por competencia**. Pontuar o semestre inteiro com a
+    tabela de um mes so daria o numero errado para os outros cinco.
+    Cada mes e consolidado com a tabela dele e so depois somado.
+
+    Custo no Supabase: **zero adicional**. Chama exatamente os mesmos
+    wrappers cacheados que ``consolidar_dados`` usa para o mes
+    selecionado (mesma funcao, mesmos argumentos, mesmo
+    ``cache_version``), entao mes que o dashboard de vendas ja abriu sai
+    do cache. E o mesmo motivo pelo qual
+    ``carregar_contratos_pagos_intervalo`` compoe em vez de consultar.
+
+    Nao usa ``consolidar_dados`` (o wrapper publico) de proposito: ele
+    escreve o diagnostico de pontuacao em ``st.session_state``, e chamar
+    seis vezes sobrescreveria o diagnostico do periodo selecionado pelo
+    do ultimo mes do intervalo — a campanha mexendo no dashboard de
+    vendas pela porta dos fundos. Aqui o ``diag`` e descartado.
+
+    Devolve tambem os **supervisores do intervalo** (uniao dos meses).
+    Quem consome campanha nao tem o ``df_sup`` do periodo da sidebar —
+    e nem deveria usar: a campanha atravessa meses, e supervisor muda no
+    caminho (ha promocao de consultor a supervisor dentro da janela de
+    2026-H2, migration 110). A uniao e o recorte correto para "quem foi
+    supervisor em algum momento do intervalo".
+
+    Args:
+        data_ini, data_fim: limites inclusivos (``datetime.date``).
+
+    Returns:
+        ``(df, df_supervisores, aviso)``. ``aviso`` traz o motivo quando
+        o resultado vem vazio ou limitado — nunca devolvemos vazio
+        silencioso.
+    """
+    vazio = pd.DataFrame()
+    meses = meses_do_intervalo(data_ini, data_fim, CAMPO_PAGAMENTO)
+    if not meses:
+        return vazio, vazio, "Intervalo invalido: fim anterior ao inicio."
+    if len(meses) > MAX_MESES_INTERVALO:
+        return (
+            vazio,
+            vazio,
+            f"Intervalo exige varrer {len(meses)} meses (maximo "
+            f"{MAX_MESES_INTERVALO}). Reduza a faixa de datas.",
+        )
+
+    partes, sups = [], []
+    for mes, ano in meses:
+        if _eh_mes_atual(mes, ano):
+            df_mes, _, df_sup_mes, _ = _consolidar_atual(
+                mes, ano, cache_version=4
+            )
+        else:
+            df_mes, _, df_sup_mes, _ = _consolidar_historico(
+                mes, ano, cache_version=4
+            )
+        if not df_mes.empty:
+            partes.append(df_mes)
+        if df_sup_mes is not None and not df_sup_mes.empty:
+            sups.append(df_sup_mes)
+
+    if not partes:
+        return vazio, vazio, "Nenhum contrato pago nos meses do intervalo."
+
+    df_sup = (
+        pd.concat(sups, ignore_index=True).drop_duplicates()
+        if sups
+        else vazio
+    )
+    return pd.concat(partes, ignore_index=True), df_sup, ""
 
 
 # ══════════════════════════════════════════════════════
