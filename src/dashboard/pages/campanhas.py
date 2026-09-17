@@ -69,6 +69,7 @@ from src.dashboard.kpis.campanha import (
     MARCA_MULTIPLAS_LOJAS,
     contemplacao,
     dias_uteis_campanha,
+    excluir_desligados,
     marcar_contemplados,
     apurar_por_familia,
     campanha_padrao,
@@ -78,7 +79,10 @@ from src.dashboard.kpis.campanha import (
     rotulo_desempate,
 )
 from src.dashboard.kpis.gerais import excluir_supervisores
-from src.dashboard.loaders import carregar_consolidado_intervalo
+from src.dashboard.loaders import (
+    carregar_consolidado_intervalo,
+    carregar_consultores_desligados,
+)
 from src.dashboard import rls as _rls
 from src.dashboard.rls import aplicar_rls
 from src.dashboard.tabs.rankings import _make_highlight_fn
@@ -689,8 +693,22 @@ def _render_painel(camp: Campanha, hoje: date) -> None:
             # `df_sup` vem dos MESES DA CAMPANHA (uniao), nao do mes da
             # sidebar: quem foi promovido no meio da janela (migration
             # 110) precisa sair do ranking de consultor.
-            rk = ranking(
+            # Desligados saem ANTES do ranking: posicoes recalculadas, e
+            # ninguem desligado ocupa vaga de premiacao. A producao deles
+            # segue no ranking de lojas (frame completo). Afastado
+            # (licenca) NAO e desligado e fica.
+            base_cons, n_desligados = excluir_desligados(
                 excluir_supervisores(df, df_sup),
+                carregar_consultores_desligados(),
+            )
+            if n_desligados:
+                st.caption(
+                    f"{n_desligados} consultor(es) desligado(s) fora do "
+                    "ranking — a produção deles continua no ranking de "
+                    "lojas."
+                )
+            rk = ranking(
+                base_cons,
                 "CONSULTOR",
                 camp,
                 com_loja=True,

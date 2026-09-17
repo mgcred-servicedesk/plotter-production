@@ -1659,6 +1659,49 @@ def carregar_consultores_ativos() -> pd.DataFrame:
     return df
 
 
+def _status_consultor_desligado(status) -> bool:
+    """True so para desligamento ("Desligado (a)").
+
+    NAO e o complemento de ``_status_consultor_ativo``: afastamentos
+    como "Licença Maternidade" nao sao ativos para o universo de
+    controle, mas tambem nao sao desligamento — quem recorta por
+    desligado precisa deixa-los de fora do recorte.
+    """
+    return (status or "").strip().lower().startswith("desligad")
+
+
+@st.cache_data(ttl=1800)
+def carregar_consultores_desligados() -> list[str]:
+    """Nomes de consultores cujo registro MAIS RECENTE e desligamento.
+
+    Mesma tabela, paginacao e colapso de duplicados de
+    ``carregar_consultores_ativos`` — o desligamento registrado em
+    linha nova vence o 'Ativo (a)' antigo, e o recontratado (linha
+    ativa mais nova) nao entra. Nao filtra loja ativa: desligado de
+    loja fechada continua desligado.
+
+    Usado para tirar desligados do ranking de consultores da campanha
+    sem tirar quem esta afastado (ver ``_status_consultor_desligado``).
+    Falha de I/O levanta (``_paginar_keyset``); lista vazia significa
+    que nao ha desligados. TTL 30min, como os demais de cadastro.
+    """
+    def _pagina(limite: int):
+        return (
+            _sb()
+            .table("consultores")
+            .select("id, nome, status, updated_at")
+            .order("id")
+            .limit(limite)
+        )
+
+    return sorted({
+        (row.get("nome") or "").strip()
+        for row in _colapsar_cadastro_recente(_paginar_keyset(_pagina, "id"))
+        if _status_consultor_desligado(row.get("status"))
+        and (row.get("nome") or "").strip()
+    })
+
+
 @st.cache_data(ttl=1800)
 def carregar_headcount_ponderado(mes: int, ano: int) -> pd.DataFrame:
     """Headcount PONDERADO da competencia, por loja (migration 091).

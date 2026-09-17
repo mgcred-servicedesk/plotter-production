@@ -46,8 +46,10 @@ def _sem_cache():
     não recebe argumentos: sem limpar, o resultado do primeiro teste
     serviria todos os outros."""
     loaders.carregar_consultores_ativos.clear()
+    loaders.carregar_consultores_desligados.clear()
     yield
     loaders.carregar_consultores_ativos.clear()
+    loaders.carregar_consultores_desligados.clear()
 
 
 def _carregar(monkeypatch, linhas):
@@ -139,6 +141,44 @@ class TestConsultoresAtivosPaginado:
         fechada["lojas"]["ativo"] = False
         df, _ = _carregar(monkeypatch, [_consultor(0), fechada])
         assert len(df) == 1
+
+
+@pytest.mark.unit
+class TestConsultoresDesligados:
+    """Recorte do ranking da campanha: desligado sai, afastado fica."""
+
+    def _carregar(self, monkeypatch, linhas):
+        cliente = ClienteFakePaginado(linhas, tabela="consultores")
+        monkeypatch.setattr(loaders, "_sb", lambda: cliente)
+        return loaders.carregar_consultores_desligados()
+
+    def test_so_desligado_entra(self, monkeypatch):
+        deslig = _consultor(1, nome="BIA")
+        deslig["status"] = "Desligado (a)"
+        licenca = _consultor(2, nome="CAIO")
+        licenca["status"] = "Licença Maternidade"
+        out = self._carregar(monkeypatch, [_consultor(0), deslig, licenca])
+        assert out == ["BIA"]
+
+    def test_recontratado_nao_conta_como_desligado(self, monkeypatch):
+        antiga = _consultor(0, nome="ANA")
+        antiga["status"] = "Desligado (a)"
+        nova = _consultor(1, nome="ANA")
+        nova["updated_at"] = "2026-09-10T00:00:00+00:00"
+        assert self._carregar(monkeypatch, [antiga, nova]) == []
+
+    def test_desligamento_mais_recente_vence(self, monkeypatch):
+        antiga = _consultor(0, nome="ANA")
+        nova = _consultor(1, nome="ANA")
+        nova["status"] = "Desligado (a)"
+        nova["updated_at"] = "2026-09-10T00:00:00+00:00"
+        assert self._carregar(monkeypatch, [antiga, nova]) == ["ANA"]
+
+    def test_pagina_alem_da_primeira(self, monkeypatch):
+        linhas = [_consultor(i) for i in range(loaders._PAGE_SIZE + 3)]
+        for linha in linhas:
+            linha["status"] = "Desligado (a)"
+        assert len(self._carregar(monkeypatch, linhas)) == len(linhas)
 
 
 @pytest.mark.unit

@@ -50,6 +50,7 @@ from src.dashboard.kpis.campanha import (
     SEMESTRAL_2026H2 as CAMP,
     Campanha,
     COLUNA_LOJA_CONSULTOR,
+    excluir_desligados,
     MARCA_MULTIPLAS_LOJAS,
     COLUNA_MEDIA_DU,
     COLUNA_PREMIADO,
@@ -1037,6 +1038,10 @@ class TestRlsSoNoAnalitico:
         monkeypatch.setattr(pg, "exibir_tabela", exibir)
         monkeypatch.setattr(pg, "botao_exportar_csv", lambda *a, **k: None)
         monkeypatch.setattr(pg, "assets_da_campanha", lambda *a: [])
+        monkeypatch.setattr(
+            pg, "carregar_consultores_desligados",
+            lambda: list(getattr(self, "_desligados", [])),
+        )
         # calendario de feriados vem do Supabase; aqui so importa o recorte
         monkeypatch.setattr(pg, "dias_uteis_campanha", lambda c, h: (127, 55))
         monkeypatch.setattr(pg.st, "radio", lambda *a, **k: aba)
@@ -1204,3 +1209,59 @@ class TestLegendaDoAsterisco:
             "CONSULTOR", CAMP, com_loja=True,
         )
         assert campanhas_page.legenda_multiplas_lojas(rk) is not None
+
+
+class TestDesligadosForaDoRanking(TestRlsSoNoAnalitico):
+    """Desligado nao aparece no ranking de consultores.
+
+    Em 17/09/2026 eram 17 pessoas (R$ 915 mil), todas com status
+    "Desligado (a)" no cadastro — nenhuma por grafia divergente.
+    """
+
+    _LOJAS = f"tab_{CAMP.slug}_ranking_lojas"
+    _CONS = f"tab_{CAMP.slug}_ranking_consultores"
+    _ADMIN = {"perfil": "admin", "escopo": []}
+
+    def test_some_do_ranking_de_consultores(self, monkeypatch):
+        self._desligados = ["Ana"]
+        self._perfil(monkeypatch, self._ADMIN)
+        rk = self._renderizar_painel(monkeypatch, "Consultores")[self._CONS]
+        assert "Ana" not in set(rk["CONSULTOR"])
+
+    def test_posicoes_sao_recalculadas(self, monkeypatch):
+        """Ana era 1ª; sem ela, Bia vira 1ª — desligado nao ocupa vaga."""
+        self._desligados = ["Ana"]
+        self._perfil(monkeypatch, self._ADMIN)
+        rk = self._renderizar_painel(monkeypatch, "Consultores")[self._CONS]
+        assert rk.iloc[0]["CONSULTOR"] == "Bia"
+        assert rk.iloc[0]["#"] == 1
+
+    def test_producao_continua_no_ranking_de_lojas(self, monkeypatch):
+        self._desligados = ["Ana"]
+        self._perfil(monkeypatch, self._ADMIN)
+        rk = self._renderizar_painel(monkeypatch, "Lojas")[self._LOJAS]
+        assert "L1" in set(rk["LOJA"])      # L1 so tem producao da Ana
+
+    def test_totais_da_campanha_nao_mudam(self, monkeypatch):
+        self._desligados = ["Ana"]
+        self._perfil(monkeypatch, self._ADMIN)
+        t = self._renderizar_painel(monkeypatch, "Lojas")
+        fam = next(
+            df for df in t.values() if "Família" in getattr(df, "columns", [])
+        )
+        assert fam["Valor"].sum() == pytest.approx(2300.0)
+
+    def test_match_ignora_caixa_e_acento(self):
+        df = pd.DataFrame({"CONSULTOR": ["Érica Souza", "Bia"]})
+        out, n = excluir_desligados(df, ["ERICA SOUZA "])
+        assert out["CONSULTOR"].tolist() == ["Bia"]
+        assert n == 1
+
+    def test_conta_pessoas_e_nao_contratos(self):
+        df = pd.DataFrame({"CONSULTOR": ["Ana", "Ana", "Bia"]})
+        assert excluir_desligados(df, ["Ana"])[1] == 1
+
+    def test_sem_desligados_nao_mexe(self):
+        df = pd.DataFrame({"CONSULTOR": ["Ana"]})
+        out, n = excluir_desligados(df, [])
+        assert len(out) == 1 and n == 0

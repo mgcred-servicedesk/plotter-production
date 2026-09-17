@@ -30,6 +30,8 @@ from typing import Mapping, Optional
 
 import pandas as pd
 
+from src.shared.texto import normalizar_nome
+
 
 # ══════════════════════════════════════════════════════
 # Definicao de campanha
@@ -569,6 +571,28 @@ def _loja_do_consultor(df: pd.DataFrame, coluna: str) -> dict:
         )
         for nome, loja in recentes.items()
     }
+
+
+def excluir_desligados(
+    df: pd.DataFrame, desligados
+) -> tuple[pd.DataFrame, int]:
+    """Tira do frame os contratos de consultores desligados.
+
+    Para o ranking de CONSULTORES: aplicado ANTES do `ranking`, as
+    posicoes sao recalculadas e desligado nao ocupa vaga de premiacao.
+    O ranking de LOJAS nao passa por aqui — a producao foi feita na
+    loja e continua dela.
+
+    Match por ``normalizar_nome`` (cadastro e contratos divergem na
+    grafia). Devolve tambem QUANTAS pessoas sairam, para a tela dizer
+    — filtro que some com gente sem avisar parece bug.
+    """
+    if df.empty or "CONSULTOR" not in df.columns or not len(desligados):
+        return df.copy(), 0
+    chaves = set(normalizar_nome(pd.Series(list(desligados), dtype=object)))
+    nomes = normalizar_nome(df["CONSULTOR"])
+    fora = nomes.isin(chaves)
+    return df[~fora].copy(), int(nomes[fora].nunique())
 
 
 def ranking(
