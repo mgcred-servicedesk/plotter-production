@@ -1251,6 +1251,27 @@ class TestDesligadosForaDoRanking(TestRlsSoNoAnalitico):
         )
         assert fam["Valor"].sum() == pytest.approx(2300.0)
 
+    def test_tela_nao_menciona_desligamento(self, monkeypatch):
+        """Regra interna (usuario, 09/2026): o filtro age calado.
+
+        Varre todo texto que a pagina escreve — caption, info, warning,
+        markdown, metric — nos dois rankings.
+        """
+        pg = campanhas_page
+        textos = []
+
+        def grava(*a, **k):
+            textos.extend(str(x) for x in (*a, *k.values()))
+
+        for nome in ("caption", "info", "warning", "markdown", "write"):
+            monkeypatch.setattr(pg.st, nome, grava)
+        self._desligados = ["Ana"]
+        self._perfil(monkeypatch, self._ADMIN)
+        for aba in ("Consultores", "Lojas"):
+            self._renderizar_painel(monkeypatch, aba)
+        assert textos, "a varredura nao capturou nada"
+        assert not [t for t in textos if "deslig" in t.lower()]
+
     def test_match_ignora_caixa_e_acento(self):
         df = pd.DataFrame({"CONSULTOR": ["Érica Souza", "Bia"]})
         out, n = excluir_desligados(df, ["ERICA SOUZA "])

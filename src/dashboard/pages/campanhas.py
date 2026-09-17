@@ -696,17 +696,12 @@ def _render_painel(camp: Campanha, hoje: date) -> None:
             # Desligados saem ANTES do ranking: posicoes recalculadas, e
             # ninguem desligado ocupa vaga de premiacao. A producao deles
             # segue no ranking de lojas (frame completo). Afastado
-            # (licenca) NAO e desligado e fica.
-            base_cons, n_desligados = excluir_desligados(
+            # (licenca) NAO e desligado e fica. Regra INTERNA: nada na
+            # tela menciona desligamento (decisao do usuario, 09/2026).
+            base_cons, _ = excluir_desligados(
                 excluir_supervisores(df, df_sup),
                 carregar_consultores_desligados(),
             )
-            if n_desligados:
-                st.caption(
-                    f"{n_desligados} consultor(es) desligado(s) fora do "
-                    "ranking — a produção deles continua no ranking de "
-                    "lojas."
-                )
             rk = ranking(
                 base_cons,
                 "CONSULTOR",

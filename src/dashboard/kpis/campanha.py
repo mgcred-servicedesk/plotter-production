@@ -584,8 +584,9 @@ def excluir_desligados(
     loja e continua dela.
 
     Match por ``normalizar_nome`` (cadastro e contratos divergem na
-    grafia). Devolve tambem QUANTAS pessoas sairam, para a tela dizer
-    — filtro que some com gente sem avisar parece bug.
+    grafia). Devolve tambem QUANTAS pessoas sairam, para auditoria e
+    teste — a tela NAO menciona desligamento (regra interna, decisao do
+    usuario 09/2026).
     """
     if df.empty or "CONSULTOR" not in df.columns or not len(desligados):
         return df.copy(), 0
