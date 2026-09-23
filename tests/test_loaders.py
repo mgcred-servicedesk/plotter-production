@@ -565,6 +565,24 @@ class TestMarcarVigenciaReconquista:
             4: "09/2026",
         }
 
+    def test_ref_label_e_o_mes_do_fim_de_relacionamento(self):
+        # Eixo do analitico: a data do lead, sem a defasagem. E o que o
+        # Detalhamento lista por padrao (Setembro lista Setembro).
+        df = _marcar_vigencia_reconquista(_base_reconquista(), 8, 2026)
+        rotulos = dict(zip(df["co_adesao"], df["ref_label"]))
+        assert rotulos == {
+            1: "12/2025",
+            2: "06/2026",
+            3: "07/2026",
+            4: "08/2026",
+        }
+
+    def test_ref_key_ordena_cronologicamente(self):
+        df = _marcar_vigencia_reconquista(_base_reconquista(), 8, 2026)
+        assert df.sort_values("ref_key")["co_adesao"].tolist() == [1, 2, 3, 4]
+        # Um mes atras da apuracao, sempre — os dois eixos andam juntos.
+        assert (df["apuracao_key"] - df["ref_key"] == 1).all()
+
     def test_rotulos_por_posicao_frente_ao_mes_selecionado(self):
         df = _marcar_vigencia_reconquista(_base_reconquista(), 8, 2026)
         vigencia = dict(zip(df["co_adesao"], df["vigencia"]))
@@ -598,6 +616,7 @@ class TestMarcarVigenciaReconquista:
         df = _marcar_vigencia_reconquista(base, 8, 2026)
         assert df.loc[0, "vigencia"] == VIGENCIA_SEM_REF
         assert df.loc[0, "apuracao_ref"] == "—"
+        assert df.loc[0, "ref_label"] == "—"
 
     def test_base_vazia_nao_quebra(self):
         assert _marcar_vigencia_reconquista(pd.DataFrame(), 8, 2026).empty

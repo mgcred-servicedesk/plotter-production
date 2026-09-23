@@ -153,6 +153,13 @@ def _chave_apuracao(ano: int, mes: int) -> int:
     return int(ano) * 12 + int(mes)
 
 
+def _rotulo_mes(chave: pd.Series) -> pd.Series:
+    """`ano*12+mes` -> rotulo ``MM/AAAA`` (vetorizado)."""
+    mes = ((chave - 1) % 12) + 1
+    ano = (chave - mes) // 12
+    return mes.astype(str).str.zfill(2) + "/" + ano.astype(str)
+
+
 def _marcar_vigencia_reconquista(
     clientes: pd.DataFrame, mes: int, ano: int
 ) -> pd.DataFrame:
@@ -163,11 +170,18 @@ def _marcar_vigencia_reconquista(
     (business-rules.md), entao ``apuracao = ref + 1``. Aqui isso so vira
     rotulo, por linha:
 
+      * ``ref_key``      — ano*12+mes do fim de relacionamento;
+      * ``ref_label``    — rotulo ``MM/AAAA`` do fim de relacionamento;
       * ``apuracao_key`` — ano*12+mes da apuracao (ordenacao);
       * ``apuracao_ref`` — rotulo ``MM/AAAA`` da apuracao;
       * ``vigencia``     — posicao frente ao (mes, ano) selecionado:
         VIGENTE (a que os KPIs apuram), PROXIMA (esteira ja acumulando,
         a mesma da previa), HISTORICO, FUTURA.
+
+    Os dois eixos convivem de proposito: a campanha apura por
+    ``apuracao_*`` (defasada), o analitico lista por ``ref_*`` (a data
+    do lead — Setembro lista quem encerrou em Setembro). Ver
+    ``_render_reconquista_detalhamento``.
 
     Colunas derivadas, nao existem na view. Nenhum KPI le daqui.
     """
@@ -176,24 +190,24 @@ def _marcar_vigencia_reconquista(
 
     df = clientes.copy()
     if "ref_ano" not in df.columns or "ref_mes" not in df.columns:
+        df["ref_key"] = -1
+        df["ref_label"] = "—"
         df["apuracao_key"] = -1
         df["apuracao_ref"] = "—"
         df["vigencia"] = VIGENCIA_SEM_REF
         return df
 
-    apuracao = (
+    ref = (
         pd.to_numeric(df["ref_ano"], errors="coerce") * 12
         + pd.to_numeric(df["ref_mes"], errors="coerce")
-        + 1  # defasagem de 1 mes: dt_fim em M -> apuracao em M+1
     )
-    valido = apuracao.notna()
+    valido = ref.notna()
+    apuracao = ref + 1  # defasagem: dt_fim em M -> apuracao em M+1
 
+    df["ref_key"] = ref.fillna(-1).astype(int)
     df["apuracao_key"] = apuracao.fillna(-1).astype(int)
-    mes_ap = ((df["apuracao_key"] - 1) % 12) + 1
-    ano_ap = (df["apuracao_key"] - mes_ap) // 12
-    df["apuracao_ref"] = (
-        mes_ap.astype(str).str.zfill(2) + "/" + ano_ap.astype(str)
-    ).where(valido, "—")
+    df["ref_label"] = _rotulo_mes(df["ref_key"]).where(valido, "—")
+    df["apuracao_ref"] = _rotulo_mes(df["apuracao_key"]).where(valido, "—")
 
     selecionada = _chave_apuracao(ano, mes)
     vigencia = pd.Series(VIGENCIA_FUTURA, index=df.index)
@@ -263,6 +277,18 @@ def _totais_reconquista(clientes: pd.DataFrame) -> Dict:
     }
 
 
+def _coagir_numerico(df: pd.DataFrame, colunas) -> None:
+    """Coage colunas a numerico in-place (NaN no lugar de None).
+
+    Coluna inteira nula chega do export como `object`, e `mean()` de
+    object devolve `None` — a tabela imprimia "None" onde devia ficar
+    vazio. Nao muda media nenhuma: so troca o tipo do vazio.
+    """
+    for col in colunas:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors="coerce")
+
+
 def _por_loja_reconquista(clientes: pd.DataFrame) -> pd.DataFrame:
     """Quebra por loja/regiao sobre a base ELEGIVEL: 3 estados +
     conversao (EFETIVADA / elegiveis da loja) + faixa."""
@@ -272,6 +298,7 @@ def _por_loja_reconquista(clientes: pd.DataFrame) -> pd.DataFrame:
     df = clientes[_mask_elegivel(clientes)].copy()  # so elegiveis na apuracao
     if df.empty:
         return pd.DataFrame()
+    _coagir_numerico(df, ("saldo_contabil", "dias_atraso"))
     df["_efet"] = (df["status"] == "EFETIVADA").astype(int)
     df["_prom"] = (df["status"] == "PROMESSA").astype(int)
     df["_sem"] = (df["status"] == "SEM RECONQUISTA").astype(int)
@@ -310,6 +337,7 @@ def _por_consultor_reconquista(clientes: pd.DataFrame) -> pd.DataFrame:
     df = clientes[_mask_elegivel(clientes)].copy()  # so elegiveis na apuracao
     if df.empty:
         return pd.DataFrame()
+    _coagir_numerico(df, ("saldo_contabil", "dias_atraso"))
     df["_efet"] = (df["status"] == "EFETIVADA").astype(int)
     df["_prom"] = (df["status"] == "PROMESSA").astype(int)
     df["_sem"] = (df["status"] == "SEM RECONQUISTA").astype(int)

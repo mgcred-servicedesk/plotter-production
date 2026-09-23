@@ -830,27 +830,64 @@ ELEGIVEL entram na apuração/conversão** (numerador e denominador); os
 apenas fora da conta. **NULL / sem flag ⇒ ELEGIVEL** (interim, até o
 arquivo com a flag ser importado). Helper: `_mask_elegivel` (loaders).
 
-### Analítico: apuração vigente × lista completa
+### Dois eixos: apuração da campanha × mês do analítico
 
-A **apuração é mensal** — KPIs, conversão, faixa de prêmio, quebra por
-loja e acelerador leem só a apuração vigente (`clientes`, o corte de
+A **apuração é mensal e defasada** — KPIs, conversão, faixa de prêmio e
+acelerador leem só a apuração vigente (`clientes`, o corte de
 `dt_fim_relacionamento` em `M-1`). Somar apurações produziria uma
 conversão que não corresponde a prêmio nenhum.
 
-O **analítico de leads (Detalhamento)** não tem essa restrição: recebe
-`clientes_todos` — a mesma base sem o filtro de mês, com o mesmo recorte
-de RLS — e alterna entre os dois escopos por pill, abrindo no vigente.
+O **analítico inteiro** (Por Loja **e** Detalhamento) roda no **outro
+eixo**: o mês de `dt_fim_relacionamento` **selecionado** — Agosto mostra
+Agosto, Setembro mostra Setembro. É a data do lead, não o mês de prêmio;
+quem trabalha a esteira quer ver quem encerrou agora, não quem encerrou
+no mês passado. (Decisão de 23/09/2026 — antes os dois seguiam a
+apuração vigente, `M-1`.)
+
+| Chave do loader | Recorte | Quem lê |
+|---|---|---|
+| `clientes` | `dt_fim` em `M-1` (apuração) | KPIs, conversão, faixa, acelerador |
+| `por_loja` | idem, agregado por loja | **ninguém na UI** — exposto para o eixo de prêmio |
+| `clientes_prox` → `por_loja_mes` | `dt_fim` no mês selecionado | **Por Loja** do analítico |
+| `clientes_todos` | todos os meses, marcados | **Detalhamento** (abre no mês selecionado) |
+
+Consequência esperada: com Setembro selecionado, o analítico mostra
+`dt_fim` de 09/2026 (apuração 10/2026, `vigencia = Próxima`) enquanto os
+cards acima seguem em `dt_fim` 08/2026. **Não é divergência** — os
+captions explicitam os dois eixos.
+
+⚠️ **Conversão e faixa dentro do Por Loja do analítico são prévia**, não
+prêmio: no mês corrente a maciça ainda não virou, EFETIVADA tende a 0 e
+a faixa cai no piso para quase toda loja. O caption da tabela diz isso;
+a faixa que vale é a da apuração, no caption do topo da sub-aba.
+
+O Detalhamento recebe `clientes_todos` — a mesma base sem o filtro de mês, com o
+mesmo recorte de RLS — e alterna por pill entre
+`Fim de relacionamento · MM/AAAA` e `Todos os meses · <cobertura>`; no
+escopo completo há multiselect de **Fim de Relacionamento** e a linha do
+mês selecionado fica destacada.
+
+**Labels carregam o período**, porque os dois eixos convivem na mesma
+sub-aba: a sub-nav mostra `Por Loja · 09/2026` e `Detalhamento ·
+09/2026` — o mês de `dt_fim_relacionamento` que os dois cobrem —
+enquanto o caption do topo declara "**KPIs acima** — apuração 09/2026 …
+fim de relacionamento em 08/2026". O escopo do Detalhamento **não** usa
+a palavra "vigente": ela colidiria com a coluna `Vigência`, que no
+recorte padrão marca todo lead como `Próxima`.
+
 Cada linha carrega a marcação, derivada de `ref_ano`/`ref_mes` +
-defasagem (`_marcar_vigencia_reconquista`, loaders):
+defasagem (`_marcar_vigencia_reconquista`, `kpis/reconquista.py`):
 
 | Coluna | Conteúdo |
 |---|---|
+| `ref_label` → "Mês Fim Relac." | `MM/AAAA` do fim de relacionamento — **o eixo da listagem** |
+| `ref_key` | `ano*12+mes` do fim de relacionamento (ordenação/filtro) |
 | `apuracao_ref` → "Apuração" | `MM/AAAA` da apuração do lead (= ref + 1) |
 | `vigencia` → "Vigência" | `Vigente` (a que os KPIs apuram) · `Próxima` (esteira do mês seguinte, a mesma da prévia) · `Histórico` · `Futura` · `Sem referência` (sem `dt_fim`) |
 
-As duas colunas aparecem **nos dois escopos** e vão no CSV: lista
-completa e recorte do mês nunca se confundem. Nenhum KPI lê
-`clientes_todos`.
+As colunas de apuração/vigência aparecem **nos dois escopos** e vão no
+CSV: é o que impede o eixo do analítico de ser lido como o da campanha.
+Nenhum KPI lê `clientes_todos`.
 
 ### KPI — conversão e faixa de prêmio (substitui a meta fixa)
 

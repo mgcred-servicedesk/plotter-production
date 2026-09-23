@@ -183,8 +183,9 @@ tipo = "loja" if sel == "Lojas" else "consultor"
 
 `sac.segmented` continua o padrão para sub-seleção de rótulo **curto e
 fixo** (Pagas/Em Análise/Cancelados, Lojas/Consultores). Quando o rótulo
-carrega dado — o escopo do Detalhamento de Reconquista mostra o período
-("Vigente · 08/2026", "Todas as apurações · 02/2026 a 09/2026") — use
+carrega dado — a sub-nav e o escopo do Detalhamento de Reconquista
+mostram o período ("Detalhamento · 09/2026", "Fim de relacionamento ·
+09/2026", "Todos os meses · 02/2026 a 09/2026") — use
 `st.pills`, pelo mesmo motivo que tirou o `sac.tabs` das sub-navs: o
 `sac` roda em iframe, o que não cabe fica **inacessível** e o CSS do
 documento pai não atravessa. Rótulo que cresce com o dado não tem

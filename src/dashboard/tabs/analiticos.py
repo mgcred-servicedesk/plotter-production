@@ -35,7 +35,6 @@ from src.dashboard.kpis.produtos import (
     calcular_distribuicao_produtos_por_loja,
     opcoes_banco,
 )
-from src.dashboard.loaders import VIGENCIA_VIGENTE
 
 
 # Compat: alias local mantido — implementação canônica em
@@ -801,10 +800,31 @@ def _render_aceleradores(
     _render_expander_super_conta(df, df_analise, df_cancelados, status_sel)
 
 
-def _render_reconquista_por_loja(por_loja: pd.DataFrame) -> None:
+def _render_reconquista_por_loja(
+    por_loja: pd.DataFrame,
+    mes_label: str,
+    ref_apuracao_label: str,
+) -> None:
+    """Quebra por loja no eixo do analitico: fim de relacionamento no
+    mes selecionado (`por_loja_mes`), o mesmo recorte do Detalhamento.
+
+    Conversao e faixa daqui sao PREVIA da esteira, nao o premio: no mes
+    corrente a macica ainda nao virou e EFETIVADA tende a 0 (ver
+    business-rules.md). O premio sai da apuracao defasada, no caption do
+    topo da sub-aba — por isso o caption abaixo diz de qual e qual.
+    """
     if por_loja.empty:
-        st.warning("Sem dados por loja no escopo atual.")
+        st.warning(
+            f"Sem leads com fim de relacionamento em {mes_label} no "
+            f"escopo atual."
+        )
         return
+
+    st.caption(
+        f"Fim de relacionamento em **{mes_label}** — mesmo recorte do "
+        f"Detalhamento. Conversão e faixa aqui são **prévia da esteira** "
+
+    )
     cols = [
         "loja", "regiao", "total_clientes", "efetivadas", "promessas",
         "sem_reconquista", "conversao_pct", "faixa",
@@ -827,6 +847,10 @@ def _render_reconquista_por_loja(por_loja: pd.DataFrame) -> None:
     exibir_tabela(
         df_view,
         colunas_moeda=["Saldo Medio"],
+        # "Conversão %" nao casa nenhuma keyword de `_classificar_coluna`
+        # (sao "% Ating"/"% Proj"/"Atingimento %"), entao sem a lista
+        # explicita a coluna saia crua: 58.800000 em vez de 58,8%.
+        colunas_percentual=["Conversão %"],
         colunas_numero=[
             "Elegíveis", "Efetivadas", "Promessas",
             "Sem Reconquista", "Dias Atraso Medio",
@@ -837,67 +861,80 @@ def _render_reconquista_por_loja(por_loja: pd.DataFrame) -> None:
 
 def _render_reconquista_detalhamento(
     clientes: pd.DataFrame,
-    apuracao_label: str,
-    ref_label: str,
+    mes_label: str,
+    ref_apuracao_label: str,
 ) -> None:
     """Listagem analitica — 1 linha por cliente (co_adesao) + link.
 
-    Recebe TODAS as apuracoes ja marcadas pelo loader (`vigencia` e
-    `apuracao_ref`, derivadas de ref_ano/ref_mes + a defasagem de 1
-    mes) e abre no recorte vigente, como antes. Trocar de escopo e
-    filtro em pandas sobre o frame que ja veio — nao ha fetch novo.
+    Recebe TODAS as apuracoes ja marcadas pelo loader (`ref_key`/
+    `ref_label` do fim de relacionamento; `apuracao_ref`/`vigencia` da
+    apuracao) e abre no **mes selecionado, pelo fim de relacionamento**:
+    Setembro lista quem encerrou em Setembro.
 
-    As colunas de apuracao/vigencia aparecem nos DOIS escopos e vao no
-    CSV: a referencia nunca sai da linha, entao lista completa e recorte
-    do mes nunca se confundem.
+    Esse NAO e o recorte da campanha: a apuracao segue defasada em 1 mes
+    e e ela que os KPIs e o Por Loja mostram (business-rules.md). Sao
+    dois eixos de proposito — o analitico lista pela data do lead, a
+    campanha premia pelo mes de apuracao — e as colunas
+    Apuracao/Vigencia ficam na linha nos DOIS escopos (e no CSV) para
+    que um nunca seja lido como o outro.
+
+    Trocar de escopo e filtro em pandas sobre o frame que ja veio — nao
+    ha fetch novo.
     """
     if clientes is None or clientes.empty:
         st.warning("Sem clientes no escopo atual.")
         return
 
-    # Cobertura da base (mais antiga → mais recente): o rotulo do
-    # escopo precisa dizer o que "todas" significa nesta carga, ja que
+    # Cobertura da base (mais antiga → mais recente), pelo mes de FIM DE
+    # RELACIONAMENTO — o mesmo eixo do recorte padrao. O rotulo do
+    # escopo precisa dizer o que "todos" significa nesta carga, ja que
     # a tabela e truncada e realimentada a cada import.
-    rotulos_apuracao = (
-        clientes[["apuracao_key", "apuracao_ref"]]
+    rotulos_ref = (
+        clientes[["ref_key", "ref_label"]]
         .drop_duplicates()
-        .sort_values("apuracao_key", ascending=False)["apuracao_ref"]
+        .sort_values("ref_key", ascending=False)["ref_label"]
         .tolist()
     )
     cobertura = (
-        f"{rotulos_apuracao[-1]} a {rotulos_apuracao[0]}"
-        if len(rotulos_apuracao) > 1
-        else (rotulos_apuracao[0] if rotulos_apuracao else "—")
+        f"{rotulos_ref[-1]} a {rotulos_ref[0]}"
+        if len(rotulos_ref) > 1
+        else (rotulos_ref[0] if rotulos_ref else "—")
     )
 
     # Escopo em st.pills: dois estados exclusivos que se alternam o
     # tempo todo. Chave FORA do padrao `nav_*` de proposito — isto e
     # filtro de tabela, nao sub-navegacao, e nao deve herdar o CSS de
     # sub-nav (assets/dashboard_style.css).
+    # O rotulo NAO diz "vigente": a coluna Vigencia marca a posicao
+    # frente a apuracao da campanha (todo lead do mes selecionado sai
+    # como "Próxima"), e as duas palavras juntas se contradiziam na
+    # tela. O escopo fala do eixo que ele filtra — fim de
+    # relacionamento —, o mesmo nome do multiselect do escopo completo.
     escopo = st.pills(
         "Escopo do detalhamento",
-        options=["Vigente", "Todas"],
-        default="Vigente",
+        options=["Mês selecionado", "Todos"],
+        default="Mês selecionado",
         required=True,
         format_func=lambda e: (
-            f":material/event_available: Vigente · {apuracao_label}"
-            if e == "Vigente"
-            else f":material/history: Todas as apurações · {cobertura}"
+            f":material/event_available: Fim de relacionamento · "
+            f"{mes_label}"
+            if e == "Mês selecionado"
+            else f":material/history: Todos os meses · {cobertura}"
         ),
         label_visibility="collapsed",
         key="rec_det_escopo",
     )
 
-    todas = escopo == "Todas"
+    todas = escopo == "Todos"
     base = (
         clientes if todas
-        else clientes[clientes["vigencia"] == VIGENCIA_VIGENTE]
+        else clientes[clientes["ref_label"] == mes_label]
     )
     if base.empty:
         st.warning(
-            f"Sem leads na apuração vigente ({apuracao_label} · fim de "
-            f"relacionamento em {ref_label}). Troque o escopo para "
-            f"consultar as demais apurações."
+            f"Sem leads com fim de relacionamento em {mes_label}. "
+            f"Troque o escopo para 'Todos os meses' e consulte os "
+            f"demais períodos."
         )
         return
 
@@ -940,14 +977,14 @@ def _render_reconquista_detalhamento(
             "Elegibilidade", eleg_opts, key="rec_det_eleg"
         )
 
-    # So no escopo completo: no vigente ha uma unica apuracao e o
-    # filtro seria inerte.
-    filt_apuracao = []
+    # So no escopo completo: no mes selecionado ha um unico mes de fim
+    # de relacionamento e o filtro seria inerte.
+    filt_ref = []
     if todas:
         with colunas[4]:
-            filt_apuracao = st.multiselect(
-                "Apuração", rotulos_apuracao, key="rec_det_apuracao",
-                placeholder="Todas",
+            filt_ref = st.multiselect(
+                "Fim de Relacionamento", rotulos_ref, key="rec_det_ref_mes",
+                placeholder="Todos",
             )
 
     df_f = base.copy()
@@ -959,23 +996,26 @@ def _render_reconquista_detalhamento(
         df_f = df_f[df_f["consultor"] == filt_cons]
     if filt_eleg != "Todos" and "flag_elegibilidade" in df_f.columns:
         df_f = df_f[df_f["flag_elegibilidade"] == filt_eleg]
-    if filt_apuracao:
-        df_f = df_f[df_f["apuracao_ref"].isin(filt_apuracao)]
+    if filt_ref:
+        df_f = df_f[df_f["ref_label"].isin(filt_ref)]
     if todas:
-        # Apuracao mais recente primeiro; dentro dela a ordem do fetch
-        # (co_adesao), para a lista nao "dancar" entre reruns.
+        # Fim de relacionamento mais recente primeiro; dentro do mes a
+        # ordem do fetch (co_adesao), para a lista nao "dancar" entre
+        # reruns.
         df_f = df_f.sort_values(
-            ["apuracao_key", "co_adesao"], ascending=[False, True]
+            ["ref_key", "co_adesao"], ascending=[False, True]
         )
 
     st.caption(
         f"{formatar_numero(len(df_f))} de {formatar_numero(len(base))} "
-        f"leads (após filtros) · **Vigente** = apuração "
-        f"{apuracao_label}, fim de relacionamento em {ref_label}."
+        f"leads (após filtros) · lista pelo **fim de relacionamento** em "
+        f"{mes_label}. Os KPIs acima seguem a apuração da campanha, com "
+        f"defasagem de 1 mês: a apuração {mes_label} lê fim de "
+        f"relacionamento em {ref_apuracao_label}."
     )
 
     cols = [
-        "co_adesao", "apuracao_ref", "vigencia", "status",
+        "co_adesao", "ref_label", "apuracao_ref", "vigencia", "status",
         "flag_elegibilidade", "loja", "regiao",
         "consultor", "subproduto",
         "dt_fim_relacionamento", "dt_macica", "dt_dna",
@@ -985,6 +1025,7 @@ def _render_reconquista_detalhamento(
     df_view = df_f[[c for c in cols if c in df_f.columns]].rename(
         columns={
             "co_adesao": "Cod ADE",
+            "ref_label": "Mês Fim Relac.",
             "apuracao_ref": "Apuração",
             "vigencia": "Vigência",
             "status": "Status",
@@ -993,7 +1034,7 @@ def _render_reconquista_detalhamento(
             "regiao": "Regiao",
             "consultor": "Consultor",
             "subproduto": "Subproduto",
-            "dt_fim_relacionamento": "Fim Relac.",
+            "dt_fim_relacionamento": "Dt Fim Relac.",
             "dt_macica": "Dt Maciça",
             "dt_dna": "Dt DNA",
             "banco_origem": "Banco Origem",
@@ -1010,10 +1051,10 @@ def _render_reconquista_detalhamento(
         df_view,
         colunas_moeda=["Saldo"],
         colunas_numero=["Dias Atraso"],
-        # Destaque so faz sentido quando ha mistura de apuracoes: no
-        # escopo vigente toda linha e vigente e o realce viraria ruido.
+        # Destaque so faz sentido quando ha mistura de meses: no escopo
+        # do mes selecionado toda linha e do mes e o realce vira ruido.
         highlight_mask=(
-            (df_f["vigencia"] == VIGENCIA_VIGENTE) if todas else None
+            (df_f["ref_label"] == mes_label) if todas else None
         ),
         paginacao=100,
         key="rec_det_tabela",
@@ -1021,20 +1062,24 @@ def _render_reconquista_detalhamento(
     _exportar_csv(
         df_view,
         (
-            "reconquista_clientes_todas_apuracoes" if todas
-            else f"reconquista_clientes_{apuracao_label.replace('/', '-')}"
+            "reconquista_clientes_todos_os_meses" if todas
+            else f"reconquista_clientes_{mes_label.replace('/', '-')}"
         ),
         "exp_rec_clientes",
     )
 
 
 def _render_reconquista(reconquista: dict | None):
-    """Sub-aba Reconquista (v2): apuração mensal por dt_fim_relacionamento.
+    """Sub-aba Reconquista (v2): dois eixos, declarados na tela.
 
-    Defasagem de 1 mes ja resolvida no loader. O bloco de KPIs e o Por
-    Loja seguem na apuracao VIGENTE (a apuracao da campanha e mensal);
-    so o Detalhamento navega o historico inteiro, com a apuracao de
-    cada lead marcada na linha.
+    O caption do topo e os KPIs da campanha ficam na apuracao VIGENTE
+    (defasada em 1 mes, resolvida no loader) — e dela que sai o premio.
+
+    O ANALITICO inteiro (Por Loja e Detalhamento) roda no outro eixo: o
+    fim de relacionamento do mes SELECIONADO — Setembro mostra Setembro
+    —, com os demais meses a um pill de distancia no Detalhamento. Por
+    isso os dois recebem `apur_label` (o proprio (mes, ano) da tela)
+    como recorte, e `ref_label` so para explicar a diferenca no caption.
     """
     if not reconquista:
         st.info("Sem dados de reconquista para este período.")
@@ -1045,7 +1090,10 @@ def _render_reconquista(reconquista: dict | None):
     ref_ano = reconquista.get("ref_ano")
     apur_mes = reconquista.get("apuracao_mes")
     apur_ano = reconquista.get("apuracao_ano")
-    por_loja = reconquista.get("por_loja", pd.DataFrame())
+    # Eixo do analitico: fim de relacionamento do mes selecionado. A
+    # chave `por_loja` (apuracao defasada) continua no dict, para o eixo
+    # de premio, mas nao e o que esta tela mostra.
+    por_loja = reconquista.get("por_loja_mes", pd.DataFrame())
     clientes = reconquista.get("clientes", pd.DataFrame())
     clientes_todos = reconquista.get("clientes_todos", pd.DataFrame())
 
@@ -1055,8 +1103,9 @@ def _render_reconquista(reconquista: dict | None):
     _nao_eleg = int(totais.get("nao_elegivel", 0))
     _nao_eleg_txt = f" ({_nao_eleg} não elegíveis)" if _nao_eleg else ""
     st.caption(
-        f"Apuração com defasagem de 1 mês · fim de relacionamento em "
-        f"**{ref_label}** · {totais.get('total', 0)} elegíveis"
+        f"**KPIs acima** — apuração {apur_label}, com defasagem de "
+        f"1 mês: fim de relacionamento em **{ref_label}** · "
+        f"{totais.get('total', 0)} elegíveis"
         f"{_nao_eleg_txt} · "
         f"Conversão: **{totais.get('conversao', 0.0):.1f}%** ({_faixa}) · "
         f"Efetivadas: {totais.get('efetivadas', 0)} · "
@@ -1066,7 +1115,9 @@ def _render_reconquista(reconquista: dict | None):
 
     if clientes is None or clientes.empty:
         st.info(
-            f"Sem contratos com fim de relacionamento em {ref_label}."
+            f"Apuração {apur_label} sem contratos (fim de relacionamento "
+            f"em {ref_label}) — KPIs acima zerados. O analítico abaixo "
+            f"segue no mês selecionado."
         )
         # Apuracao vigente vazia nao encerra a sub-aba: o historico
         # segue consultavel no Detalhamento (escopo "Todas"). So encerra
@@ -1078,18 +1129,24 @@ def _render_reconquista(reconquista: dict | None):
     # render_tab_analiticos): sac.tabs esconde o que nao cabe. Aqui sao
     # so dois itens curtos — migrado por uniformidade, ja que este e o
     # terceiro nivel de navegacao e herda o mesmo estilo.
+    # Os dois rodam no MESMO eixo (fim de relacionamento no mes
+    # selecionado); o rotulo carrega o periodo para nao se confundir com
+    # o caption do topo, que fala da apuracao defasada.
+    _periodo_sub = {"Por Loja": apur_label, "Detalhamento": apur_label}
     menu = st.pills(
         "Sub-navegacao de Reconquista",
         options=list(_ICONES_RECONQUISTA),
         default="Por Loja",
         required=True,
-        format_func=lambda r: f":material/{_ICONES_RECONQUISTA[r]}: {r}",
+        format_func=lambda r: (
+            f":material/{_ICONES_RECONQUISTA[r]}: {r} · {_periodo_sub[r]}"
+        ),
         label_visibility="collapsed",
         key="nav_reconquista",
     )
 
     if menu == "Por Loja":
-        _render_reconquista_por_loja(por_loja)
+        _render_reconquista_por_loja(por_loja, apur_label, ref_label)
     elif menu == "Detalhamento":
         _render_reconquista_detalhamento(
             clientes_todos, apur_label, ref_label

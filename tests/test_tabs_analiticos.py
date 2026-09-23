@@ -6,7 +6,7 @@ detalhamento: precisa ignorar NaN (pagos) e "" (em analise/cancelados,
 onde o join de produto nao resolveu) sem quebrar o ``sorted``.
 
 O Detalhamento de Reconquista tem, alem disso, um render testado via
-``AppTest``: o escopo (vigente x todas as apuracoes) e um widget, e
+``AppTest``: o escopo (mes selecionado x todos os meses) e um widget, e
 widget fora de um script run real devolve sempre o valor padrao.
 """
 import numpy as np
@@ -70,8 +70,10 @@ def _script_render_detalhamento(clientes):
 def _clientes_reconquista() -> pd.DataFrame:
     """Um lead por mes de referencia, ja marcado como o loader marca.
 
-    Selecionando a apuracao 08/2026: ref 07 e a vigente, ref 08 e a
-    proxima, ref 05 e 06 sao historico.
+    Mes selecionado 08/2026. Pelo eixo da CAMPANHA (defasado), ref 07 e
+    a apuracao vigente e ref 08 e a proxima; pelo eixo do ANALITICO (fim
+    de relacionamento), o recorte padrao e ref 08 — os dois se cruzam de
+    proposito, para o teste distinguir um do outro.
     """
     df = pd.DataFrame([
         {
@@ -111,20 +113,27 @@ def _rodar(escopo: str) -> AppTest:
 
 @pytest.mark.unit
 class TestRenderReconquistaDetalhamento:
-    """O analitico deixou de ficar preso a apuracao vigente: o mesmo
-    frame (todas as apuracoes) serve os dois escopos, e a referencia
-    de cada lead fica na linha em ambos.
+    """O analitico lista pelo FIM DE RELACIONAMENTO do mes selecionado
+    (Agosto lista Agosto), nao pela apuracao defasada da campanha; o
+    mesmo frame (todos os meses) serve os dois escopos, e a apuracao de
+    cada lead fica na linha em ambos.
     """
 
-    def test_escopo_vigente_lista_so_a_apuracao_do_mes(self):
-        df = _tabela(_rodar("Vigente"))
-        assert df["Cod ADE"].tolist() == [3]
-        assert df["Apuração"].tolist() == ["08/2026"]
+    def test_escopo_do_mes_lista_o_fim_de_relacionamento_do_mes(self):
+        df = _tabela(_rodar("Mês selecionado"))
+        # Lead 4 (ref 08/2026) — e NAO o 3, que e a apuracao vigente da
+        # campanha (ref 07/2026). E exatamente a mudanca de eixo.
+        assert df["Cod ADE"].tolist() == [4]
+        assert df["Mês Fim Relac."].tolist() == ["08/2026"]
+        assert df["Apuração"].tolist() == ["09/2026"]
 
-    def test_escopo_todas_lista_o_historico_inteiro(self):
-        df = _tabela(_rodar("Todas"))
+    def test_escopo_todos_lista_o_historico_inteiro(self):
+        df = _tabela(_rodar("Todos"))
         assert len(df) == 4
-        # Apuracao mais recente primeiro.
+        # Fim de relacionamento mais recente primeiro.
+        assert df["Mês Fim Relac."].tolist() == [
+            "08/2026", "07/2026", "06/2026", "05/2026",
+        ]
         assert df["Apuração"].tolist() == [
             "09/2026", "08/2026", "07/2026", "06/2026",
         ]
@@ -133,21 +142,100 @@ class TestRenderReconquistaDetalhamento:
         ]
 
     def test_referencia_aparece_nos_dois_escopos(self):
-        for escopo in ("Vigente", "Todas"):
+        for escopo in ("Mês selecionado", "Todos"):
             df = _tabela(_rodar(escopo))
-            assert {"Apuração", "Vigência"} <= set(df.columns)
+            assert {"Mês Fim Relac.", "Apuração", "Vigência"} <= set(
+                df.columns
+            )
 
-    def test_filtro_de_apuracao_so_no_escopo_completo(self):
-        # 4 filtros no vigente (a apuracao seria inerte) e 5 em todas.
-        assert len(_rodar("Vigente").multiselect) == 1   # so Loja
-        assert len(_rodar("Todas").multiselect) == 2     # Loja + Apuracao
+    def test_filtro_de_mes_so_no_escopo_completo(self):
+        # 4 filtros no mes selecionado (o mes seria inerte) e 5 em todos.
+        assert len(_rodar("Mês selecionado").multiselect) == 1  # so Loja
+        assert len(_rodar("Todos").multiselect) == 2  # Loja + Fim Relac.
 
-    def test_caption_evidencia_a_vigencia(self):
-        for escopo in ("Vigente", "Todas"):
+    def test_caption_separa_os_dois_eixos(self):
+        for escopo in ("Mês selecionado", "Todos"):
             caption = _rodar(escopo).caption[0].value
-            assert "08/2026" in caption   # apuracao vigente
-            assert "07/2026" in caption   # fim de relacionamento
+            # Mes vigente do analitico = fim de relacionamento 08/2026;
+            # a apuracao 08/2026 da campanha le 07/2026.
+            assert "08/2026" in caption
+            assert "07/2026" in caption
+            assert "defasagem" in caption
 
+
+
+# ── Sub-aba Reconquista: qual quebra por loja chega na tela ──────────
+#
+# A tela mostra o eixo do ANALITICO (`por_loja_mes`, fim de
+# relacionamento no mes selecionado), nao o da apuracao defasada
+# (`por_loja`). Os dois vem no mesmo dict do loader, entao o unico jeito
+# de provar qual foi lido e povoar as duas chaves com lojas diferentes.
+
+def _script_render_reconquista(reconquista):
+    import streamlit as st  # noqa: F401  (necessario no script isolado)
+
+    from src.dashboard.tabs.analiticos import _render_reconquista
+
+    _render_reconquista(reconquista)
+
+
+def _quebra_por_loja(loja: str) -> pd.DataFrame:
+    return pd.DataFrame([{
+        "loja": loja,
+        "regiao": "R1",
+        "total_clientes": 2,
+        "efetivadas": 1,
+        "promessas": 1,
+        "sem_reconquista": 0,
+        "saldo_medio": 100.0,
+        "dias_atraso_medio": 3.0,
+        "conversao_pct": 50.0,
+        "faixa": "+20% sobre prêmio CNC",
+    }])
+
+
+def _dict_reconquista() -> dict:
+    """Mes selecionado 09/2026; apuracao vigente le fim relac. 08/2026."""
+    return {
+        "ref_mes": 8, "ref_ano": 2026,
+        "apuracao_mes": 9, "apuracao_ano": 2026,
+        "totais": {
+            "total": 2, "efetivadas": 1, "promessas": 1,
+            "sem_reconquista": 0, "conversao": 50.0,
+            "faixa": {"rotulo": "+20% sobre prêmio CNC"},
+        },
+        "por_loja": _quebra_por_loja("LOJA DA APURACAO"),
+        "por_loja_mes": _quebra_por_loja("LOJA DO MES"),
+        "clientes": _clientes_reconquista(),
+        "clientes_todos": _clientes_reconquista(),
+    }
+
+
+@pytest.mark.unit
+class TestRenderReconquistaPorLoja:
+    def test_por_loja_usa_o_mes_selecionado_nao_a_apuracao(self):
+        at = AppTest.from_function(
+            _script_render_reconquista,
+            kwargs=dict(reconquista=_dict_reconquista()),
+        )
+        at.session_state["nav_reconquista"] = "Por Loja"
+        at.run()
+        assert not at.exception
+        lojas = _tabela(at)["Loja"].tolist()
+        assert lojas == ["LOJA DO MES"]
+
+    def test_caption_avisa_que_a_faixa_e_previa(self):
+        at = AppTest.from_function(
+            _script_render_reconquista,
+            kwargs=dict(reconquista=_dict_reconquista()),
+        )
+        at.session_state["nav_reconquista"] = "Por Loja"
+        at.run()
+        captions = " ".join(c.value for c in at.caption)
+        # O mes do recorte, a apuracao que vale pro premio e o aviso.
+        assert "09/2026" in captions
+        assert "08/2026" in captions
+        assert "prévia" in captions
 
 
 # ── Seletor de banco da Distribuicao de Produtos (AppTest) ───────────

@@ -2799,7 +2799,11 @@ def carregar_reconquista(mes: int, ano: int) -> Dict:
                                      # + cobranca_consignavel do mes,
                                      # faixa_agregada e acelerador_perfil
             "apuracao_mes": int, "apuracao_ano": int,  # (mes, ano) pedido
-            "por_loja": DataFrame,   # quebra por loja (elegiveis)
+            "por_loja": DataFrame,   # quebra por loja da APURACAO
+                                     # (elegiveis do ref defasado)
+            "por_loja_mes": DataFrame,  # quebra por loja do MES
+                                     # SELECIONADO (dt_fim em mes/ano) —
+                                     # eixo do analitico, e o que a UI le
             "por_consultor": DataFrame,  # acelerador combinado por consultor
             "clientes": DataFrame,   # detalhe (TODOS os clientes + flag)
             "clientes_todos": DataFrame,  # TODAS as apuracoes, marcadas
@@ -2817,6 +2821,11 @@ def carregar_reconquista(mes: int, ano: int) -> Dict:
     saem os KPIs. `clientes_todos` e a MESMA base sem o filtro de mes,
     para o analitico poder navegar o historico inteiro; nenhum KPI le
     dessa chave (a apuracao da campanha e mensal por definicao).
+
+    O ANALITICO roda no outro eixo: lista/agrega o fim de relacionamento
+    do mes SELECIONADO (`clientes_prox` -> `por_loja_mes`), nao a
+    apuracao defasada. `por_loja` (apuracao) segue exposto para quem
+    precisar do eixo de premio. Ver business-rules.md § "Dois eixos".
 
     O acelerador combinado e apurado sobre o proprio (mes, ano) — sem a
     defasagem, que so vale para a esteira de reconquista. Dois gates
@@ -2939,6 +2948,11 @@ def carregar_reconquista(mes: int, ano: int) -> Dict:
         "apuracao_ano": ano,
         "totais": totais,
         "por_loja": _por_loja_reconquista(clientes),
+        # Eixo do analitico: a quebra por loja acompanha o Detalhamento
+        # (fim de relacionamento no mes selecionado), nao a apuracao
+        # defasada. Sai do MESMO frame ja cacheado e RLS'd que alimenta
+        # a previa — nenhum fetch novo.
+        "por_loja_mes": _por_loja_reconquista(clientes_prox),
         "por_consultor": por_consultor,
         "clientes": clientes,
         "clientes_todos": clientes_todos,

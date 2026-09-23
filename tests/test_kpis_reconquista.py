@@ -189,6 +189,24 @@ class TestQuebrasPorLojaEConsultor:
         assert g.loc["L1", "saldo_medio"] == pytest.approx(150.0)
         assert g.loc["L1", "dias_atraso_medio"] == pytest.approx(15.0)
 
+    def test_media_de_coluna_toda_nula_e_nan_nao_none(self):
+        # Export com a coluna inteira vazia chega como `object`, e
+        # `mean()` de object devolve None — a tabela imprimia "None" no
+        # lugar de vazio (visto em producao, 09/2026). Coagido, vira NaN,
+        # que os formatadores de `exibir_tabela` ja tratam.
+        clientes = _clientes()
+        clientes["saldo_contabil"] = None
+        for quebra, chave in (
+            (_por_loja_reconquista, "loja"),
+            (_por_consultor_reconquista, "consultor"),
+        ):
+            g = quebra(clientes)
+            # dtype e o teste de verdade: `isna()` diz True tanto para
+            # NaN quanto para o None de object, mas so o float chega
+            # formatado como vazio na tabela.
+            assert pd.api.types.is_float_dtype(g["saldo_medio"]), chave
+            assert g["saldo_medio"].isna().all(), chave
+
     def test_por_loja_ordena_por_efetivadas_desc(self):
         clientes = _clientes(status=[
             "PROMESSA", "PROMESSA", "EFETIVADA", "EFETIVADA",
