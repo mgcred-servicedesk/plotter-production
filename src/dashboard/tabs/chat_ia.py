@@ -11,17 +11,33 @@ Contrato do tab renderer (docs/agents/ui-components.md): recebe tudo
 pronto (aqui, empacotado num ``ChatContext``), nao executa query e nao
 aplica RLS.
 """
+import logging
+
 import streamlit as st
 import streamlit_antd_components as sac
 
+from src.config.chat_ia_provider import (
+    PROVIDERS_COM_CATALOGO,
+    provider_por_perfil,
+)
+from src.config.openrouter_client import (
+    OPENROUTER_MODEL,
+    listar_modelos_com_tools,
+)
 from src.dashboard.chat_ia import agent
 from src.dashboard.chat_ia.tools import ChatContext
 from src.dashboard.rls import _obter_perfil_efetivo
+
+logger = logging.getLogger(__name__)
 
 # Estado desta aba (dono: este modulo).
 CHAVE_HISTORICO = "chat_ia_historico"
 CHAVE_ESCOPO = "chat_ia_chave"
 CHAVE_AVISO = "chat_ia_aviso"
+# Modelo escolhido no seletor. Deliberadamente FORA das tres chaves
+# acima: e preferencia de quem usa, nao conteudo derivado do recorte de
+# dados — trocar de mes nao deve desfazer a escolha de modelo.
+CHAVE_MODELO = "chat_ia_modelo"
 
 
 def limpar_cache_chat_ia() -> None:
@@ -44,6 +60,86 @@ def limpar_cache_chat_ia() -> None:
     st.session_state.pop(CHAVE_HISTORICO, None)
     st.session_state.pop(CHAVE_ESCOPO, None)
     st.session_state.pop(CHAVE_AVISO, None)
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def _catalogo_modelos() -> list[dict[str, str]]:
+    """Catalogo de modelos da OpenRouter com tool calling.
+
+    TTL de 1h: o catalogo muda em escala de dias, e esta aba
+    rerenderiza a cada mensagem do chat — sem cache seria uma
+    requisicao HTTP por interacao.
+
+    A excecao sobe de proposito (``st.cache_data`` nao guarda falha):
+    quem chama transforma em aviso na tela. Devolver lista vazia aqui
+    apareceria como "nenhum modelo disponivel", que e uma falha de rede
+    disfarcada de resposta valida.
+    """
+    return listar_modelos_com_tools()
+
+
+def _render_seletor_modelo(contexto: ChatContext) -> str | None:
+    """Seletor de modelo, quando o provider do perfil tem catalogo.
+
+    Devolve o id escolhido, ou ``None`` para o agent seguir com o
+    modelo da configuracao. Providers diretos (Anthropic/OpenAI) nao
+    tem catalogo publico aqui e usam modelo fixo — nesse caso a aba nao
+    mostra seletor nenhum.
+    """
+    if provider_por_perfil(contexto.role) not in PROVIDERS_COM_CATALOGO:
+        return None
+
+    try:
+        catalogo = _catalogo_modelos()
+    except Exception:
+        logger.exception(
+            "Chat IA: falha ao carregar o catalogo de modelos da OpenRouter"
+        )
+        st.warning(
+            "Nao consegui carregar a lista de modelos da OpenRouter. "
+            f"Seguindo com o modelo configurado ({OPENROUTER_MODEL})."
+        )
+        return None
+
+    ids = [modelo["id"] for modelo in catalogo]
+    rotulos = {modelo["id"]: modelo["nome"] for modelo in catalogo}
+
+    escolha_atual = st.session_state.get(CHAVE_MODELO)
+    if escolha_atual in ids:
+        indice = ids.index(escolha_atual)
+    else:
+        # Escolha ausente ou fora do catalogo atual (modelo saiu do ar
+        # ou perdeu tool calling). Limpa ANTES de instanciar o widget:
+        # o selectbox levanta se o valor em session_state nao estiver
+        # em `options`, e a chave de um widget nao pode ser alterada
+        # depois que ele existe.
+        st.session_state.pop(CHAVE_MODELO, None)
+        if OPENROUTER_MODEL in ids:
+            indice = ids.index(OPENROUTER_MODEL)
+        else:
+            indice = 0
+            st.warning(
+                f"O modelo configurado ({OPENROUTER_MODEL}) nao esta no "
+                "catalogo de modelos com tool calling da OpenRouter. "
+                f"Usando {ids[0]} — revise OPENROUTER_MODEL."
+            )
+
+    coluna, _ = st.columns([2, 1])
+    with coluna:
+        escolhido = st.selectbox(
+            "Modelo (OpenRouter)",
+            options=ids,
+            index=indice,
+            key=CHAVE_MODELO,
+            format_func=lambda id_: f"{rotulos.get(id_, id_)} · {id_}",
+            help=(
+                "Somente modelos com tool calling: o assistente responde "
+                "atraves das tools do dashboard, nunca calculando por "
+                "conta propria."
+            ),
+        )
+    st.caption(f"{len(ids)} modelos com tool calling disponiveis.")
+    return escolhido
 
 
 def _chave_escopo(contexto: ChatContext) -> tuple:
@@ -150,6 +246,8 @@ def render_tab_chat_ia(contexto: ChatContext) -> None:
             "antigo."
         )
 
+    modelo = _render_seletor_modelo(contexto)
+
     historico = st.session_state[CHAVE_HISTORICO]
     _render_historico(historico)
 
@@ -174,7 +272,7 @@ def render_tab_chat_ia(contexto: ChatContext) -> None:
     turnos_antes = len(historico)
     with st.spinner(":shimmer[Analisando...]"):
         texto, novo_historico = agent.responder(
-            pergunta, contexto, historico
+            pergunta, contexto, historico, modelo=modelo
         )
 
     st.session_state[CHAVE_HISTORICO] = novo_historico

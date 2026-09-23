@@ -67,6 +67,31 @@ def _fake_client(*respostas):
     return client
 
 
+def _resposta_openai(texto: str = "", tool_calls=None):
+    """Resposta no formato Chat Completions (OpenAI **e** OpenRouter)."""
+    mensagem = types.SimpleNamespace(
+        content=texto or None, tool_calls=tool_calls or [],
+    )
+    return types.SimpleNamespace(
+        choices=[types.SimpleNamespace(message=mensagem)],
+    )
+
+
+def _fake_client_openai(*respostas):
+    """Cliente fake no formato ``.chat.completions.create``.
+
+    Serve tanto para OpenAI quanto para OpenRouter: o agent usa o mesmo
+    adapter para os dois, e é justamente isso que estes testes travam.
+    """
+    client = types.SimpleNamespace()
+    client.chat = types.SimpleNamespace(
+        completions=types.SimpleNamespace(
+            create=Mock(side_effect=list(respostas)),
+        ),
+    )
+    return client
+
+
 def _forcar_cadeia_provider(monkeypatch, providers):
     monkeypatch.setattr(
         agent_mod,
@@ -300,3 +325,215 @@ class TestResponderFallbackEntreProviders:
         assert novo_historico[-1]["content"] == [
             {"type": "text", "text": "Resposta fallback."}
         ]
+
+
+@pytest.mark.unit
+class TestProviderOpenRouter:
+    """A OpenRouter fala Chat Completions: adapter reusado, client próprio."""
+
+    def test_usa_o_adapter_da_openai_com_o_client_da_openrouter(
+        self, monkeypatch,
+    ):
+        _forcar_cadeia_provider(monkeypatch, ["openrouter"])
+        monkeypatch.setattr(
+            agent_mod, "construir_dispatch", lambda contexto: {},
+        )
+
+        client = _fake_client_openai(_resposta_openai("Resposta OpenRouter."))
+        monkeypatch.setattr(
+            agent_mod, "get_openrouter_client", lambda: client,
+        )
+        # Se o agent resolvesse o client errado, este Mock estouraria.
+        monkeypatch.setattr(
+            agent_mod,
+            "get_openai_client",
+            Mock(side_effect=AssertionError("client da OpenAI direto")),
+        )
+
+        texto, novo_historico = responder("pergunta", _contexto_dummy(), [])
+
+        assert texto == "Resposta OpenRouter."
+        assert client.chat.completions.create.call_count == 1
+        assert novo_historico[-1]["content"] == [
+            {"type": "text", "text": "Resposta OpenRouter."}
+        ]
+
+    def test_tool_call_da_openrouter_vira_tool_use_canonico(
+        self, monkeypatch,
+    ):
+        _forcar_cadeia_provider(monkeypatch, ["openrouter"])
+
+        tool_mock = Mock(return_value={"ok": True})
+        monkeypatch.setattr(
+            agent_mod,
+            "construir_dispatch",
+            lambda contexto: {"minha_tool": tool_mock},
+        )
+
+        tool_call = types.SimpleNamespace(
+            id="call_abc",
+            function=types.SimpleNamespace(
+                name="minha_tool", arguments='{"x": 1}',
+            ),
+        )
+        client = _fake_client_openai(
+            _resposta_openai(tool_calls=[tool_call]),
+            _resposta_openai("Pronto."),
+        )
+        monkeypatch.setattr(
+            agent_mod, "get_openrouter_client", lambda: client,
+        )
+
+        texto, novo_historico = responder("pergunta", _contexto_dummy(), [])
+
+        tool_mock.assert_called_once_with({"x": 1})
+        assert texto == "Pronto."
+        assert novo_historico[2]["content"][0]["tool_use_id"] == "call_abc"
+
+    def test_sem_chave_devolve_mensagem_citando_openrouter_api_key(
+        self, monkeypatch,
+    ):
+        _forcar_cadeia_provider(monkeypatch, ["openrouter"])
+        monkeypatch.setattr(agent_mod, "construir_dispatch", Mock())
+        monkeypatch.setattr(
+            agent_mod,
+            "get_openrouter_client",
+            Mock(side_effect=ValueError("OPENROUTER_API_KEY ausente")),
+        )
+
+        historico_original = [{"role": "user", "content": "oi"}]
+        texto, novo_historico = responder(
+            "pergunta", _contexto_dummy(), historico_original,
+        )
+
+        assert "OPENROUTER_API_KEY" in texto
+        assert novo_historico is historico_original
+
+
+@pytest.mark.unit
+class TestOverrideDeModelo:
+    """O modelo escolhido na aba só pode chegar a quem tem catálogo."""
+
+    def _modelo_usado(self, client) -> str:
+        return client.chat.completions.create.call_args.kwargs["model"]
+
+    def test_override_chega_na_api_quando_o_provider_e_openrouter(
+        self, monkeypatch,
+    ):
+        _forcar_cadeia_provider(monkeypatch, ["openrouter"])
+        monkeypatch.setattr(
+            agent_mod, "construir_dispatch", lambda contexto: {},
+        )
+
+        client = _fake_client_openai(_resposta_openai("ok"))
+        monkeypatch.setattr(
+            agent_mod, "get_openrouter_client", lambda: client,
+        )
+
+        responder(
+            "pergunta",
+            _contexto_dummy(),
+            [],
+            modelo="qwen/qwen3.8-27b:free",
+        )
+
+        assert self._modelo_usado(client) == "qwen/qwen3.8-27b:free"
+
+    def test_override_e_ignorado_no_provider_direto(self, monkeypatch):
+        """Um id de gateway não existe na API direta da OpenAI: mandá-lo
+        adiante viraria 404 em vez de resposta."""
+        _forcar_cadeia_provider(monkeypatch, ["openai"])
+        monkeypatch.setattr(
+            agent_mod, "construir_dispatch", lambda contexto: {},
+        )
+
+        client = _fake_client_openai(_resposta_openai("ok"))
+        monkeypatch.setattr(agent_mod, "get_openai_client", lambda: client)
+
+        responder(
+            "pergunta",
+            _contexto_dummy(),
+            [],
+            modelo="qwen/qwen3.8-27b:free",
+        )
+
+        assert self._modelo_usado(client) == agent_mod.OPENAI_MODEL
+
+    def test_sem_override_usa_o_modelo_da_configuracao(self, monkeypatch):
+        _forcar_cadeia_provider(monkeypatch, ["openrouter"])
+        monkeypatch.setattr(
+            agent_mod, "construir_dispatch", lambda contexto: {},
+        )
+
+        client = _fake_client_openai(_resposta_openai("ok"))
+        monkeypatch.setattr(
+            agent_mod, "get_openrouter_client", lambda: client,
+        )
+
+        responder("pergunta", _contexto_dummy(), [])
+
+        assert self._modelo_usado(client) == agent_mod.OPENROUTER_MODEL
+
+
+@pytest.mark.unit
+class TestMensagemDeFalhaVemDoProviderPrimario:
+    """Quando TUDO falha, a tela precisa apontar para o provider que o
+    admin configurou — não para o fallback."""
+
+    def test_erro_do_primario_nao_e_sobrescrito_pelo_fallback(
+        self, monkeypatch,
+    ):
+        # Cadeia real quando só a OpenRouter tem chave configurada.
+        _forcar_cadeia_provider(monkeypatch, ["openrouter", "anthropic"])
+        monkeypatch.setattr(agent_mod, "construir_dispatch", Mock())
+
+        monkeypatch.setattr(
+            agent_mod,
+            "get_openrouter_client",
+            Mock(side_effect=ValueError("OPENROUTER_API_KEY ausente")),
+        )
+        monkeypatch.setattr(
+            agent_mod,
+            "get_anthropic_client",
+            Mock(side_effect=ValueError("ANTHROPIC_API_KEY ausente")),
+        )
+
+        texto, _ = responder("pergunta", _contexto_dummy(), [])
+
+        assert "OPENROUTER_API_KEY" in texto
+        assert "ANTHROPIC_API_KEY" not in texto
+
+    def test_rate_limit_do_primario_cita_o_modelo_e_o_seletor(
+        self, monkeypatch,
+    ):
+        """429 no tier free foi o que quebrou em 23/09: a mensagem
+        genérica mandava insistir num modelo sem cota."""
+        _forcar_cadeia_provider(monkeypatch, ["openrouter", "anthropic"])
+        monkeypatch.setattr(
+            agent_mod, "construir_dispatch", lambda contexto: {},
+        )
+
+        erro = RuntimeError("Provider returned error")
+        erro.status_code = 429
+        client = _fake_client_openai(erro)
+        monkeypatch.setattr(
+            agent_mod, "get_openrouter_client", lambda: client,
+        )
+        monkeypatch.setattr(
+            agent_mod,
+            "get_anthropic_client",
+            Mock(side_effect=ValueError("ANTHROPIC_API_KEY ausente")),
+        )
+
+        texto, novo_historico = responder(
+            "pergunta",
+            _contexto_dummy(),
+            [],
+            modelo="qwen/qwen3.8-27b:free",
+        )
+
+        assert "qwen/qwen3.8-27b:free" in texto
+        assert "limite de uso" in texto
+        assert "seletor" in texto
+        assert "ANTHROPIC_API_KEY" not in texto
+        assert novo_historico == []

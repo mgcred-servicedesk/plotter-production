@@ -15,6 +15,8 @@ import pytest
 import src.dashboard.chat_ia.tools as tools_mod
 from src.dashboard.chat_ia.tools import (
     TOOLS_SCHEMA,
+    _LIMITE_MAXIMO,
+    _LIMITE_PADRAO,
     ChatContext,
     construir_dispatch,
     tool_comparar_entidades,
@@ -253,7 +255,8 @@ class TestToolRankingPeriodo:
         )
 
         assert resultado == {
-            "entidade": "loja", "criterio": "atingimento", "resultados": [],
+            "entidade": "loja", "criterio": "atingimento",
+            "total_disponivel": 0, "truncado": False, "resultados": [],
         }
 
 
@@ -343,7 +346,9 @@ class TestToolListarSemProducao:
         contexto = _contexto(df=self._df_producao())
         resultado = tool_listar_sem_producao(contexto, {"entidade": "loja"})
 
-        assert resultado == {"entidade": "loja", "total": 1, "nomes": ["C"]}
+        assert resultado == {
+            "entidade": "loja", "total": 1, "truncado": False, "nomes": ["C"],
+        }
 
     def test_consultores_sem_producao(self, monkeypatch):
         universo = pd.DataFrame({
@@ -474,7 +479,7 @@ class TestToolCompararEntidades:
         assert linha_b["variacao_pct"] is None
 
     def test_limite_nunca_excede_maximo(self, monkeypatch, sem_feriados):
-        n = 30
+        n = _LIMITE_MAXIMO + 5
         df_atual = pd.DataFrame({
             "LOJA": [f"LOJA {i:02d}" for i in range(n)],
             "VALOR": [1000.0 + i for i in range(n)],
@@ -488,7 +493,8 @@ class TestToolCompararEntidades:
         )
 
         assert resultado["total_comparadas"] == n
-        assert len(resultado["resultados"]) == 25
+        assert len(resultado["resultados"]) == _LIMITE_MAXIMO
+        assert resultado["truncado"] is True
 
     def test_excecao_ao_carregar_periodo_retorna_erro(self, monkeypatch):
         def _boom(mes, ano):
@@ -512,3 +518,167 @@ class TestToolsSchemaDispatchParidade:
 
         nomes_schema = {tool["name"] for tool in TOOLS_SCHEMA}
         assert nomes_schema == set(dispatch)
+
+
+@pytest.mark.unit
+class TestRankingInformaCoberturaAoTruncar:
+    """Um top N sem o total é indistinguível de "só existem estes N".
+
+    Bug observado em 23/09: sem ``total_disponivel``, o modelo somou
+    quatro rankings e inferiu por conta própria "~19 lojas de fora" —
+    número que nenhuma tool produziu.
+    """
+
+    def _df_lojas(self, n: int) -> pd.DataFrame:
+        """Uma venda por loja, pontuação decrescente (ranking estável)."""
+        return pd.DataFrame({
+            "LOJA":             [f"LOJA {i:03d}" for i in range(n)],
+            "REGIAO":           ["R1"] * n,
+            "CONSULTOR":        [f"CONS {i:03d}" for i in range(n)],
+            "grupo_dashboard":  ["CNC"] * n,
+            "categoria_codigo": ["CNC"] * n,
+            "VALOR":            [1000.0 + i for i in range(n)],
+            "pontos":           [float(n - i) for i in range(n)],
+            "TIPO_PRODUTO":     ["CNC"] * n,
+            "SUBTIPO":          [""] * n,
+            "is_bmg_med":       [False] * n,
+            "is_seguro_vida":   [False] * n,
+        })
+
+    def test_ranking_truncado_informa_o_total_real(self):
+        n = _LIMITE_MAXIMO + 12
+        contexto = _contexto(df=self._df_lojas(n))
+
+        resultado = tool_ranking_periodo(
+            contexto, {"entidade": "loja", "criterio": "pontos"},
+        )
+
+        # Sem `limite` na entrada vale o padrão, não o teto.
+        assert resultado["total_disponivel"] == n
+        assert resultado["truncado"] is True
+        assert len(resultado["resultados"]) == _LIMITE_PADRAO
+
+    def test_posicoes_seguem_contiguas_apos_o_corte(self):
+        """O corte é feito aqui, depois de ``_rankear`` numerar: as
+        posições precisam continuar 1..limite, sem buraco."""
+        contexto = _contexto(df=self._df_lojas(_LIMITE_MAXIMO + 12))
+
+        resultado = tool_ranking_periodo(
+            contexto,
+            {
+                "entidade": "loja",
+                "criterio": "pontos",
+                "limite": _LIMITE_MAXIMO,
+            },
+        )
+
+        posicoes = [linha["posicao"] for linha in resultado["resultados"]]
+        assert posicoes == list(range(1, _LIMITE_MAXIMO + 1))
+
+    def test_sem_truncamento_a_flag_fica_falsa(self):
+        n = 5
+        contexto = _contexto(df=self._df_lojas(n))
+
+        resultado = tool_ranking_periodo(
+            contexto, {"entidade": "loja", "criterio": "pontos", "limite": n},
+        )
+
+        assert resultado["truncado"] is False
+        assert resultado["total_disponivel"] == n
+        assert len(resultado["resultados"]) == n
+
+    def test_limite_acima_do_maximo_e_truncado_no_teto(self):
+        n = _LIMITE_MAXIMO + 12
+        contexto = _contexto(df=self._df_lojas(n))
+
+        resultado = tool_ranking_periodo(
+            contexto,
+            {"entidade": "loja", "criterio": "pontos", "limite": 500},
+        )
+
+        assert len(resultado["resultados"]) == _LIMITE_MAXIMO
+        assert resultado["total_disponivel"] == n
+        assert resultado["truncado"] is True
+
+
+@pytest.mark.unit
+class TestMarcaDeBackoffice:
+    """No eixo LOJA o Vai e Vem aparece **por regra** (a exclusão de
+    backoffice vale no eixo consultor — business-rules.md "Lojas de
+    backoffice"). Sem marca, o modelo lê a linha como loja de venda com
+    desempenho fraco; foi o que fez em 23/09.
+    """
+
+    def _df(self, lojas: list[str]) -> pd.DataFrame:
+        n = len(lojas)
+        return pd.DataFrame({
+            "LOJA":             lojas,
+            "REGIAO":           ["R1"] * n,
+            "CONSULTOR":        [f"CONS {i}" for i in range(n)],
+            "grupo_dashboard":  ["CNC"] * n,
+            "categoria_codigo": ["CNC"] * n,
+            "VALOR":            [1000.0 + i for i in range(n)],
+            "pontos":           [float(n - i) for i in range(n)],
+            "TIPO_PRODUTO":     ["CNC"] * n,
+            "SUBTIPO":          [""] * n,
+            "is_bmg_med":       [False] * n,
+            "is_seguro_vida":   [False] * n,
+        })
+
+    def test_ranking_de_lojas_marca_a_linha_e_anexa_a_nota(self):
+        contexto = _contexto(df=self._df(["LOJA A", "VAI E VEM", "LOJA B"]))
+
+        resultado = tool_ranking_periodo(
+            contexto, {"entidade": "loja", "criterio": "pontos"},
+        )
+
+        por_nome = {r["nome"]: r for r in resultado["resultados"]}
+        assert por_nome["VAI E VEM"]["natureza"] == "backoffice"
+        # Lojas de venda não carregam o campo — a marca só custa token
+        # onde ela muda a leitura.
+        assert "natureza" not in por_nome["LOJA A"]
+        assert resultado["nota_backoffice"]["entidades"] == ["VAI E VEM"]
+        assert "backoffice" in resultado["nota_backoffice"]["observacao"]
+
+    def test_sem_backoffice_no_resultado_nao_ha_nota(self):
+        contexto = _contexto(df=self._df(["LOJA A", "LOJA B"]))
+
+        resultado = tool_ranking_periodo(
+            contexto, {"entidade": "loja", "criterio": "pontos"},
+        )
+
+        assert "nota_backoffice" not in resultado
+        assert all("natureza" not in r for r in resultado["resultados"])
+
+    def test_match_normaliza_espacos_e_caixa(self):
+        """Mesma normalização de ``excluir_lojas_backoffice``: um
+        cadastro com espaço ou caixa diferente não pode escapar da
+        marca."""
+        contexto = _contexto(df=self._df(["LOJA A", "  vai e vem "]))
+
+        resultado = tool_ranking_periodo(
+            contexto, {"entidade": "loja", "criterio": "pontos"},
+        )
+
+        marcadas = [
+            r for r in resultado["resultados"]
+            if r.get("natureza") == "backoffice"
+        ]
+        assert len(marcadas) == 1
+        assert resultado["nota_backoffice"]["entidades"] == ["VAI E VEM"]
+
+    def test_listar_sem_producao_anexa_a_nota(self, monkeypatch):
+        universo = pd.DataFrame({
+            "LOJA": ["LOJA A", "VAI E VEM"], "REGIAO": ["R1", "R1"],
+        })
+        monkeypatch.setattr(
+            tools_mod, "carregar_universo_lojas", lambda mes, ano: universo,
+        )
+        monkeypatch.setattr(tools_mod, "aplicar_rls", lambda df: df)
+        monkeypatch.setattr(tools_mod, "aplicar_filtros_ui", lambda df: df)
+
+        contexto = _contexto(df=self._df(["LOJA A"]))
+        resultado = tool_listar_sem_producao(contexto, {"entidade": "loja"})
+
+        assert "VAI E VEM" in resultado["nomes"]
+        assert resultado["nota_backoffice"]["entidades"] == ["VAI E VEM"]

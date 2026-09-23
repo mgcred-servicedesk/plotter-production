@@ -19,8 +19,15 @@ from src.config.anthropic_client import (
     ANTHROPIC_MODEL,
     get_anthropic_client,
 )
-from src.config.chat_ia_provider import providers_para_tentativa
+from src.config.chat_ia_provider import (
+    PROVIDERS_COM_CATALOGO,
+    providers_para_tentativa,
+)
 from src.config.openai_client import OPENAI_MODEL, get_openai_client
+from src.config.openrouter_client import (
+    OPENROUTER_MODEL,
+    get_openrouter_client,
+)
 from src.dashboard.chat_ia.tools import (
     TOOLS_SCHEMA,
     ChatContext,
@@ -47,7 +54,11 @@ SYSTEM_PROMPT = (
     "ano anterior), diga que essa comparação não está disponível em vez "
     "de aproximar. Quando o resultado indicar produção de supervisor "
     "embutida, mencione essa ressalva em vez de atribuí-la a um "
-    "consultor."
+    "consultor. Quando uma tool retornar 'truncado' true, a lista é um "
+    "recorte: diga isso explicitamente, cite o total informado pela "
+    "própria tool e NUNCA deduza a cobertura combinando resultados de "
+    "chamadas diferentes — somar ou cruzar listas para estimar quantos "
+    "ficaram de fora é cálculo seu, não dado do dashboard."
 )
 
 
@@ -302,6 +313,15 @@ def _resolver_provider(
         )
     if provider == "openai":
         return get_openai_client, OPENAI_MODEL, _chamar_provider_openai
+    if provider == "openrouter":
+        # A OpenRouter fala o dialeto da Chat Completions da OpenAI:
+        # o adapter e literalmente o mesmo, so muda o client (base_url)
+        # e o modelo.
+        return (
+            get_openrouter_client,
+            OPENROUTER_MODEL,
+            _chamar_provider_openai,
+        )
     raise ValueError(f"provider de chat IA nao suportado: {provider}")
 
 
@@ -316,6 +336,11 @@ def _mensagem_configuracao(provider: str, detalhe: str) -> str:
         return (
             "O chat de IA não está configurado para OpenAI. "
             "Peça a um administrador para configurar OPENAI_API_KEY."
+        )
+    if provider == "openrouter":
+        return (
+            "O chat de IA não está configurado para OpenRouter. "
+            "Peça a um administrador para configurar OPENROUTER_API_KEY."
         )
     return (
         "O chat de IA não está configurado para o provider selecionado. "
@@ -376,9 +401,15 @@ def _rodar_loop_provider(
     pergunta: str,
     dispatch: dict,
     historico: list[dict],
+    modelo: str | None = None,
 ) -> tuple[str, str, list[dict]]:
     """
     Executa o loop de tool-use para um provider.
+
+    ``modelo`` e o override escolhido pelo usuario na aba. Vale apenas
+    para providers de ``PROVIDERS_COM_CATALOGO``: um id de gateway
+    (``qwen/qwen3.8-27b:free``) nao existe na API direta da Anthropic
+    nem da OpenAI, e mandar assim so produziria erro 404 do provider.
 
     Returns:
         status: ``ok`` | ``unavailable`` | ``api_error`` | ``turn_limit``
@@ -387,6 +418,8 @@ def _rodar_loop_provider(
     """
     try:
         get_client, model, chamar_provider = _resolver_provider(provider)
+        if modelo and provider in PROVIDERS_COM_CATALOGO:
+            model = modelo
         client = get_client()
     except ValueError as exc:
         logger.warning(
@@ -409,11 +442,29 @@ def _rodar_loop_provider(
                 model,
                 mensagens,
             )
-        except Exception:
+        except Exception as exc:
             logger.exception(
-                "Chat IA: falha na chamada da API provider=%s",
+                "Chat IA: falha na chamada da API provider=%s modelo=%s",
                 provider,
+                model,
             )
+            # 429 tem remedio que so quem usa pode aplicar (trocar de
+            # modelo). Dizer "tente novamente em instantes" para um
+            # modelo cronicamente sem cota manda a pessoa insistir num
+            # caminho que nao vai abrir.
+            if getattr(exc, "status_code", None) == 429:
+                remedio = (
+                    "Escolha outro modelo no seletor da aba"
+                    if provider in PROVIDERS_COM_CATALOGO
+                    else "Tente novamente"
+                )
+                return (
+                    "api_error",
+                    f"O modelo {model} está com o limite de uso estourado "
+                    f"no provider. {remedio} ou tente de novo em "
+                    "instantes.",
+                    historico,
+                )
             return (
                 "api_error",
                 "Não consegui falar com o assistente agora. Tente novamente "
@@ -459,9 +510,16 @@ def _rodar_loop_provider(
 
 
 def responder(
-    pergunta: str, contexto: ChatContext, historico: list[dict]
+    pergunta: str,
+    contexto: ChatContext,
+    historico: list[dict],
+    modelo: str | None = None,
 ) -> tuple[str, list[dict]]:
     """Responde ``pergunta`` usando o histórico e os dados de ``contexto``.
+
+    ``modelo`` (opcional) é o id escolhido no seletor da aba; vale só
+    para os providers com catálogo (ver ``_rodar_loop_provider``).
+    ``None`` mantém o modelo da configuração.
 
     Retorna ``(texto_da_resposta, novo_historico)``. Em qualquer erro
     (API indisponível, limite de turnos), devolve uma mensagem amigável
@@ -471,10 +529,12 @@ def responder(
     dispatch = construir_dispatch(contexto)
     tentativas = providers_para_tentativa(contexto.role)
 
-    ultimo_texto = (
-        "Não consegui falar com o assistente agora. "
-        "Tente novamente em instantes."
-    )
+    # Mensagem do provider PRIMARIO — nao a da ultima tentativa.
+    # Quando tudo falha, a do fallback sobrescreveria a do provider que
+    # o admin realmente configurou: um erro na OpenRouter viraria
+    # "configure ANTHROPIC_API_KEY" na tela, mandando investigar o
+    # provider errado. (Bug observado em 23/09.)
+    texto_primario: str | None = None
 
     for idx, provider in enumerate(tentativas):
         status, texto, novo_historico = _rodar_loop_provider(
@@ -482,12 +542,14 @@ def responder(
             pergunta=pergunta,
             dispatch=dispatch,
             historico=historico,
+            modelo=modelo,
         )
 
         if status == "ok":
             return texto, novo_historico
 
-        ultimo_texto = texto
+        if texto_primario is None:
+            texto_primario = texto
 
         if status == "turn_limit":
             return texto, historico
@@ -500,4 +562,8 @@ def responder(
                 status,
             )
 
-    return ultimo_texto, historico
+    return (
+        texto_primario
+        or "Não consegui falar com o assistente agora. "
+        "Tente novamente em instantes."
+    ), historico

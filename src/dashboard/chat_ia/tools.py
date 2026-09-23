@@ -13,6 +13,7 @@ from typing import Callable, NamedTuple, Optional
 import pandas as pd
 
 from src.dashboard.kpis.comparativos import calcular_evolucao_por_entidade
+from src.dashboard.kpis.gerais import LOJAS_BACKOFFICE
 from src.dashboard.kpis.rankings import (
     calcular_ranking_consultores,
     calcular_ranking_lojas,
@@ -37,8 +38,56 @@ from src.shared.dias_uteis import calcular_dias_uteis
 
 logger = logging.getLogger(__name__)
 
-_LIMITE_MAXIMO = 25
+# Teto de linhas que uma tool devolve ao modelo. Nao existe para
+# proteger o banco — rankings e comparativos sao pandas puro sobre
+# frames ja carregados (nenhuma query depende deste numero). Existe
+# porque cada linha vira token no prompt e concorre com o MAX_TOKENS
+# de saida do agent: 50 linhas em tabela markdown ja consomem boa
+# parte do orcamento de resposta.
+_LIMITE_MAXIMO = 50
 _LIMITE_PADRAO = 10
+
+# `top_n` que nao corta nada. `_rankear` (kpis/rankings.py) monta o
+# ranking inteiro e so depois faz `.head(top_n)`, entao pedir o ranking
+# completo aqui nao custa query nem calculo extra — so adia o corte
+# para este modulo, que precisa do total ANTES de truncar.
+_TOP_N_SEM_CORTE = 1_000_000
+
+# O modelo nao tem como deduzir isto dos numeros: no eixo LOJA o Vai e
+# Vem aparece por regra (a exclusao de backoffice vale no eixo
+# consultor — business-rules.md "Lojas de backoffice"), e sem contexto
+# ele le a linha como uma loja de venda com desempenho ruim. Em 23/09
+# listou "VAI E VEM | 0,00 (sem producao)" junto de lojas reais.
+_TEXTO_BACKOFFICE = (
+    "Setor de digitação de contratos do backoffice — NÃO é loja de "
+    "venda. Digita contratos impossíveis nas lojas e, quando a proposta "
+    "é paga, a produção é repassada ao consultor da loja que iniciou a "
+    "negociação. Aparece nas visões por loja por regra do dashboard (a "
+    "exclusão de backoffice vale no eixo consultor). Ao citá-lo, "
+    "explique essa natureza; não o compare com lojas de venda nem o "
+    "trate como loja de desempenho fraco."
+)
+
+
+def _eh_backoffice(nome) -> bool:
+    """Match normalizado, igual ao de ``excluir_lojas_backoffice``."""
+    return str(nome or "").strip().upper() in LOJAS_BACKOFFICE
+
+
+def _nota_backoffice(nomes) -> Optional[dict]:
+    """Nota explicativa quando alguma entidade de backoffice entrou.
+
+    Devolve ``None`` quando nenhuma entrou — a nota so custa token no
+    resultado onde ela realmente muda a leitura. No eixo consultor
+    nunca dispara: esses consultores ja saem em ``rankings.py`` e em
+    ``calcular_evolucao_por_entidade``.
+    """
+    presentes = sorted(
+        {str(n).strip().upper() for n in nomes if _eh_backoffice(n)}
+    )
+    if not presentes:
+        return None
+    return {"entidades": presentes, "observacao": _TEXTO_BACKOFFICE}
 
 
 class ChatContext(NamedTuple):
@@ -184,12 +233,21 @@ def tool_comparar_entidades(contexto: ChatContext, entrada: dict) -> dict:
             }
         )
 
-    return {
+    for linha in linhas:
+        if _eh_backoffice(linha.get("nome")):
+            linha["natureza"] = "backoffice"
+
+    payload = {
         "entidade": entidade,
         "periodo_comparacao": periodo_comparacao,
         "total_comparadas": total,
+        "truncado": total > len(linhas),
         "resultados": linhas,
     }
+    nota = _nota_backoffice(linha.get("nome") for linha in linhas)
+    if nota:
+        payload["nota_backoffice"] = nota
+    return payload
 
 
 def _sem_metas(entidade_plural: str) -> dict:
@@ -243,7 +301,7 @@ def tool_ranking_periodo(contexto: ChatContext, entrada: dict) -> dict:
                 if contexto.df_metas is None or contexto.df_metas.empty:
                     return _sem_metas("lojas")
                 ranking = calcular_ranking_lojas(
-                    contexto.df, contexto.df_metas, top_n=limite
+                    contexto.df, contexto.df_metas, top_n=_TOP_N_SEM_CORTE
                 )
             else:
                 # Meta do consultor e o alvo INDIVIDUAL da loja dele
@@ -260,7 +318,7 @@ def tool_ranking_periodo(contexto: ChatContext, entrada: dict) -> dict:
                 ranking = calcular_ranking_consultores(
                     contexto.df,
                     contexto.df_metas,
-                    top_n=limite,
+                    top_n=_TOP_N_SEM_CORTE,
                     df_supervisores=contexto.df_sup,
                     df_metas_consultor=_metas_cons,
                 )
@@ -268,21 +326,21 @@ def tool_ranking_periodo(contexto: ChatContext, entrada: dict) -> dict:
             ranking = calcular_ranking_pontos(
                 contexto.df,
                 tipo=entidade,
-                top_n=limite,
+                top_n=_TOP_N_SEM_CORTE,
                 df_supervisores=contexto.df_sup,
             )
         elif criterio == "ticket_medio":
             ranking = calcular_ranking_ticket_medio(
                 contexto.df,
                 tipo=entidade,
-                top_n=limite,
+                top_n=_TOP_N_SEM_CORTE,
                 df_supervisores=contexto.df_sup,
             )
         elif criterio == "media_du":
             ranking = calcular_ranking_media_du(
                 contexto.df,
                 tipo=entidade,
-                top_n=limite,
+                top_n=_TOP_N_SEM_CORTE,
                 du_decorridos=contexto.du_decorridos,
                 df_supervisores=contexto.df_sup,
             )
@@ -293,7 +351,20 @@ def tool_ranking_periodo(contexto: ChatContext, entrada: dict) -> dict:
         return {"erro": "Não consegui calcular o ranking pedido."}
 
     if ranking.empty:
-        return {"entidade": entidade, "criterio": criterio, "resultados": []}
+        return {
+            "entidade": entidade,
+            "criterio": criterio,
+            "total_disponivel": 0,
+            "truncado": False,
+            "resultados": [],
+        }
+
+    # Corte DEPOIS de conhecer o total. Sem `total_disponivel`, um top
+    # 25 de 49 lojas e indistinguivel de "so existem estas 25", e o
+    # modelo passa a estimar a cobertura por conta propria (observado
+    # em 23/09: somou quatro rankings e inferiu "~19 lojas de fora").
+    total_disponivel = len(ranking)
+    ranking = ranking.head(limite)
 
     label = "Loja" if entidade == "loja" else "Consultor"
     linhas = []
@@ -314,7 +385,21 @@ def tool_ranking_periodo(contexto: ChatContext, entrada: dict) -> dict:
             linha["media_du"] = round(float(row.get("Média DU", 0.0)), 2)
         linhas.append(linha)
 
-    return {"entidade": entidade, "criterio": criterio, "resultados": linhas}
+    for linha in linhas:
+        if _eh_backoffice(linha.get("nome")):
+            linha["natureza"] = "backoffice"
+
+    payload = {
+        "entidade": entidade,
+        "criterio": criterio,
+        "total_disponivel": total_disponivel,
+        "truncado": total_disponivel > len(linhas),
+        "resultados": linhas,
+    }
+    nota = _nota_backoffice(linha.get("nome") for linha in linhas)
+    if nota:
+        payload["nota_backoffice"] = nota
+    return payload
 
 
 def tool_listar_sem_producao(contexto: ChatContext, entrada: dict) -> dict:
@@ -340,15 +425,26 @@ def tool_listar_sem_producao(contexto: ChatContext, entrada: dict) -> dict:
         contexto.df, universo, tipo=entidade, df_supervisores=contexto.df_sup
     )
     if zerados.empty:
-        return {"entidade": entidade, "total": 0, "nomes": []}
+        return {
+            "entidade": entidade,
+            "total": 0,
+            "truncado": False,
+            "nomes": [],
+        }
 
     label = "Loja" if entidade == "loja" else "Consultor"
     nomes = zerados[label].tolist()
-    return {
+    exibidos = nomes[:_LIMITE_MAXIMO]
+    payload = {
         "entidade": entidade,
         "total": len(nomes),
-        "nomes": nomes[:_LIMITE_MAXIMO],
+        "truncado": len(nomes) > _LIMITE_MAXIMO,
+        "nomes": exibidos,
     }
+    nota = _nota_backoffice(exibidos)
+    if nota:
+        payload["nota_backoffice"] = nota
+    return payload
 
 
 def tool_resumo_kpis_periodo(contexto: ChatContext, _entrada: dict) -> dict:
@@ -433,7 +529,11 @@ TOOLS_SCHEMA: list[dict] = [
             "Retorna o ranking (top N) de lojas ou consultores no período "
             "atual, por atingimento de meta, pontos, ticket médio ou média "
             "diária de dias úteis. Use para perguntas como 'quais as "
-            "melhores lojas' ou 'top consultores por pontos'."
+            "melhores lojas' ou 'top consultores por pontos'. O retorno "
+            "traz 'total_disponivel' (quantos existem no total) e "
+            "'truncado': quando 'truncado' for true, diga que a lista é um "
+            "recorte dos 'total_disponivel' existentes e nunca estime "
+            "quantos ou quais ficaram de fora."
         ),
         "input_schema": {
             "type": "object",
@@ -461,7 +561,9 @@ TOOLS_SCHEMA: list[dict] = [
         "description": (
             "Lista lojas ou consultores ativos que não tiveram nenhuma "
             "venda no período atual. Use para perguntas como 'quem não "
-            "produziu nada esse mês' ou 'quais lojas estão zeradas'."
+            "produziu nada esse mês' ou 'quais lojas estão zeradas'. O "
+            "retorno traz 'total' e 'truncado': com 'truncado' true, os "
+            "nomes são um recorte do 'total'."
         ),
         "input_schema": {
             "type": "object",
