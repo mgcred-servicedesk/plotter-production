@@ -109,6 +109,73 @@ _PORTAB_BANCO_TO_CONSIG = {
 }
 
 
+# ── Saque no cartao Gov: taxa propria, nao a do cartao comum ──
+#
+# SAQUE e SAQUE_BENEFICIO nao pontuam pelo proprio codigo: aliasam
+# para CARTAO (`categoria_pts_id`, migration 013), hoje 2,5. O saque
+# feito no cartao Gov pontua 1 real = 1 ponto, e a migration 122 criou
+# CARTAO_GOV para carregar essa taxa. Faltava quem consumisse o alias.
+#
+# POR QUE EM CODIGO E NAO VIA `categoria_pts_id`
+# -----------------------------------------------
+# Pelo mesmo motivo da Portabilidade acima: o diferencial nao cabe na
+# categoria. `produtos.categoria_id` e resolvido por `tipo`/`subtipo`
+# da planilha de produtos (angry-man, `import-produtos.ts`), e Gov e
+# INSS compartilham tipo E nome de tabela — medido em 2026-09-25:
+#
+#   SAQUE COMPLEMENTAR - Digital Token - Não | INSS          | 4286
+#   SAQUE COMPLEMENTAR - Digital Token - Não | GOVERNO DO RJ |    9
+#
+# Apontar esse produto para uma categoria Gov levaria 4.286 saques
+# INSS junto. O unico campo que separa os dois e o CONVENIO, que vive
+# no contrato — granularidade maior que categoria, igual ao BANCO da
+# Portabilidade.
+#
+# VIGENCIA
+# --------
+# Decisao do usuario em 2026-09-25: a taxa nova vale de 09/2026 em
+# diante; mes fechado continua como foi apurado e comunicado. O corte
+# e por DATA (data_status_pagamento), que e de onde `periodo_id` e
+# derivado — logo "DATA >= 01/09/2026" e exatamente "competencia >=
+# 09/2026", e vale tambem na consolidacao por intervalo, que atravessa
+# meses. Medido: 0 de 17.304 linhas de saque tem DATA nula, entao o
+# corte nao deixa contrato de fora por dado ausente.
+#
+# PREMISSA A VALIDAR: SAQUE_BENEFICIO entra junto com SAQUE. Os dois
+# aliasam para CARTAO hoje, e os produtos Gov aparecem nos dois
+# (MFACIL CONSIG GOV RJ em SAQUE, CREDCESTA GOV RJ em
+# SAQUE_BENEFICIO) — "saque no cartao Gov" cobre ambos. Em 09/2026 nao
+# muda nada: nao ha SAQUE_BENEFICIO Gov pago no mes.
+_SAQUE_GOV_CATEGORIAS = frozenset({"SAQUE", "SAQUE_BENEFICIO"})
+_SAQUE_GOV_CONVENIOS = frozenset({"GOVERNO DO RJ"})
+_SAQUE_GOV_CATEGORIA_PTS = "CARTAO_GOV"
+_SAQUE_GOV_VIGENCIA = pd.Timestamp("2026-09-01")
+
+
+def _mascara_saque_gov(df: pd.DataFrame) -> pd.Series:
+    """Saques no cartao Gov sujeitos a taxa propria (``CARTAO_GOV``).
+
+    Combinados por AND: categoria de saque, ``CONVENIO`` na lista Gov
+    (normalizado, que a base nao e uniformemente maiuscula) e ``DATA``
+    a partir da vigencia. Coluna ausente -> nenhuma linha, pelo mesmo
+    criterio de ``eh_emissao``: criterio sem coluna nao classifica
+    ninguem.
+    """
+    if "CONVENIO" not in df.columns or "DATA" not in df.columns:
+        return pd.Series(False, index=df.index)
+    return (
+        df["categoria_codigo"].isin(_SAQUE_GOV_CATEGORIAS)
+        & (
+            df["CONVENIO"].astype(str).str.strip().str.upper()
+            .isin(_SAQUE_GOV_CONVENIOS)
+        )
+        & (
+            pd.to_datetime(df["DATA"], errors="coerce")
+            >= _SAQUE_GOV_VIGENCIA
+        )
+    )
+
+
 def aplicar_nomes_display_produto(frame: pd.DataFrame) -> pd.DataFrame:
     """Troca as chaves internas de ``grupo_dashboard`` pelo rotulo de UI.
 
@@ -243,6 +310,25 @@ def consolidar_pontuacao(
                 float
             )
 
+    # Saque no cartao Gov usa CARTAO_GOV, nao o alias CARTAO da
+    # categoria. Ver o bloco de comentario de `_SAQUE_GOV_CATEGORIAS`
+    # para o porque de morar aqui e nao em `categoria_pts_id`.
+    #
+    # Sem linha de CARTAO_GOV na pontuacao do periodo (planilha do mes
+    # nao atualizada), a taxa antiga PERMANECE e a contagem vai para o
+    # diagnostico. Cair para 0 apagaria producao paga em silencio, que
+    # e o pior dos dois erros; manter 2,5 preserva o numero anterior e
+    # o aviso diz que ele esta desatualizado.
+    mask_saque_gov = _mascara_saque_gov(df)
+    qtd_saque_gov = int(mask_saque_gov.sum())
+    pts_saque_gov = mapa_pontos.get(_SAQUE_GOV_CATEGORIA_PTS)
+    saque_gov_sem_taxa = 0
+    if qtd_saque_gov:
+        if pts_saque_gov is None:
+            saque_gov_sem_taxa = qtd_saque_gov
+        else:
+            df.loc[mask_saque_gov, "PONTOS"] = float(pts_saque_gov)
+
     # ── Diagnostico de mapeamento ──────────────────
     total = len(df)
     sem_cat = (df["categoria_codigo"] == "").sum()
@@ -272,6 +358,11 @@ def consolidar_pontuacao(
         "categorias_na_pontuacao": sorted(mapa_pontos.keys()),
         "mapa_pontos": mapa_pontos,
         "tipos_sem_categoria": tipos_sem_cat,
+        # Saque no cartao Gov: quantos foram reclassificados para a
+        # taxa de CARTAO_GOV e quantos ficaram com a taxa antiga por
+        # falta da linha na pontuacao do periodo.
+        "saque_gov_reclassificado": qtd_saque_gov - saque_gov_sem_taxa,
+        "saque_gov_sem_pontuacao": saque_gov_sem_taxa,
     }
     # ───────────────────────────────────────────────
 

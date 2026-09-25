@@ -395,3 +395,22 @@ def render_diagnostico_pontuacao(diag: Dict) -> None:
                 f"**{len(sem_match)} categorias sem pontuacao:** "
                 + ", ".join(sem_match)
             )
+
+        # Saque no cartao Gov — taxa propria (CARTAO_GOV) em vez do
+        # alias CARTAO. O aviso e o unico sinal de que a planilha do
+        # mes veio sem a linha: nesse caso a taxa antiga permanece, e
+        # os pontos desses contratos estao desatualizados.
+        reclass = diag.get("saque_gov_reclassificado", 0)
+        sem_taxa = diag.get("saque_gov_sem_pontuacao", 0)
+        if sem_taxa:
+            st.warning(
+                f"**{sem_taxa} saques no cartao Gov sem taxa propria** "
+                f"— CARTAO_GOV ausente da pontuacao do periodo; esses "
+                f"contratos seguem com a taxa do cartao comum. "
+                f"Importar a linha 'CARTAO GOV' da planilha do mes."
+            )
+        elif reclass:
+            st.caption(
+                f"{reclass} saque(s) no cartao Gov pontuando por "
+                f"CARTAO_GOV."
+            )

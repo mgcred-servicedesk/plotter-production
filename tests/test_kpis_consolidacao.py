@@ -161,6 +161,174 @@ class TestPortabilidade:
         assert df["PONTOS"].tolist() == [0.3, 0.1]
 
 
+def _saque_gov(**overrides):
+    """Um saque no cartão Gov: categoria de saque, convênio Gov e
+    pagamento dentro da vigência. Os overrides sabotam um critério
+    por vez."""
+    base = {
+        "categoria_codigo": ["SAQUE"],
+        "TIPO_PRODUTO": ["SAQUE"],
+        "CONVENIO": ["GOVERNO DO RJ"],
+        "DATA": pd.to_datetime(["2026-09-04"]),
+        "VALOR": [1000.0],
+        "conta_valor": [True],
+        "conta_pontuacao": [True],
+        "SUBTIPO": ["SAQUE"],
+        "TIPO OPER.": ["CARTÃO"],
+        "BANCO": ["BMG"],
+    }
+    base.update(overrides)
+    return pd.DataFrame(base)
+
+
+# A tabela de pontuação como ela chega da RPC depois da migration 122:
+# o saque alias para CARTAO (2,5) e CARTAO_GOV com taxa própria (1,0).
+_PTS_COM_GOV = {"SAQUE": 2.5, "SAQUE_BENEFICIO": 2.5, "CARTAO_GOV": 1.0}
+
+
+@pytest.mark.unit
+class TestSaqueCartaoGov:
+    """Saque no cartão Gov pontua por `CARTAO_GOV`, não pelo alias
+    `CARTAO` da categoria (decisão de 2026-09-25)."""
+
+    def test_usa_a_taxa_de_cartao_gov_e_nao_a_da_categoria(self):
+        df, _ = consolidar_pontuacao(
+            _saque_gov(), _pontos(_PTS_COM_GOV), _sem_categorias,
+        )
+        assert df["PONTOS"].tolist() == [1.0]
+
+    def test_o_efeito_chega_na_coluna_pontos(self):
+        """`PONTOS` é a taxa; o que soma no KPI é `pontos`."""
+        df, _ = consolidar_pontuacao(
+            _saque_gov(VALOR=[9081.80]),
+            _pontos(_PTS_COM_GOV),
+            _sem_categorias,
+        )
+        assert df["pontos"].tolist() == [9081.80]
+
+    def test_saque_beneficio_gov_entra_junto(self):
+        df, _ = consolidar_pontuacao(
+            _saque_gov(categoria_codigo=["SAQUE_BENEFICIO"]),
+            _pontos(_PTS_COM_GOV),
+            _sem_categorias,
+        )
+        assert df["PONTOS"].tolist() == [1.0]
+
+    def test_saque_inss_do_mesmo_produto_nao_e_afetado(self):
+        """A catraca da regra: Gov e INSS compartilham o produto
+        `SAQUE COMPLEMENTAR - Digital Token - Não` (4.286 INSS contra 9
+        Gov). Se um dia alguém trocar o convênio por produto/categoria,
+        este teste cai."""
+        df, _ = consolidar_pontuacao(
+            _saque_gov(CONVENIO=["INSS"]),
+            _pontos(_PTS_COM_GOV),
+            _sem_categorias,
+        )
+        assert df["PONTOS"].tolist() == [2.5]
+
+    @pytest.mark.parametrize("convenio", [
+        "SIAPE", "PREFEITURA RJ", "GOVERNO MG", "COMLURB",
+    ])
+    def test_outros_convenios_publicos_ficam_de_fora(self, convenio):
+        """Decisão do usuário: só GOVERNO DO RJ. SIAPE sozinho moveria
+        1,49 milhão de pontos no histórico."""
+        df, _ = consolidar_pontuacao(
+            _saque_gov(CONVENIO=[convenio]),
+            _pontos(_PTS_COM_GOV),
+            _sem_categorias,
+        )
+        assert df["PONTOS"].tolist() == [2.5]
+
+    def test_normaliza_espacos_e_caixa_do_convenio(self):
+        df, _ = consolidar_pontuacao(
+            _saque_gov(CONVENIO=["  governo do rj "]),
+            _pontos(_PTS_COM_GOV),
+            _sem_categorias,
+        )
+        assert df["PONTOS"].tolist() == [1.0]
+
+    def test_pagamento_antes_da_vigencia_mantem_a_taxa_antiga(self):
+        """Mês fechado não muda: 31/08/2026 fica como foi apurado."""
+        df, _ = consolidar_pontuacao(
+            _saque_gov(DATA=pd.to_datetime(["2026-08-31"])),
+            _pontos(_PTS_COM_GOV),
+            _sem_categorias,
+        )
+        assert df["PONTOS"].tolist() == [2.5]
+
+    def test_primeiro_dia_da_vigencia_ja_entra(self):
+        df, _ = consolidar_pontuacao(
+            _saque_gov(DATA=pd.to_datetime(["2026-09-01"])),
+            _pontos(_PTS_COM_GOV),
+            _sem_categorias,
+        )
+        assert df["PONTOS"].tolist() == [1.0]
+
+    def test_sem_linha_de_cartao_gov_mantem_a_taxa_antiga(self):
+        """Planilha do mês sem a linha: preserva o número anterior em
+        vez de zerar produção paga — e denuncia no diagnóstico."""
+        df, diag = consolidar_pontuacao(
+            _saque_gov(), _pontos({"SAQUE": 2.5}), _sem_categorias,
+        )
+        assert df["PONTOS"].tolist() == [2.5]
+        assert diag["saque_gov_sem_pontuacao"] == 1
+        assert diag["saque_gov_reclassificado"] == 0
+
+    def test_diagnostico_conta_os_reclassificados(self):
+        _, diag = consolidar_pontuacao(
+            _saque_gov(), _pontos(_PTS_COM_GOV), _sem_categorias,
+        )
+        assert diag["saque_gov_reclassificado"] == 1
+        assert diag["saque_gov_sem_pontuacao"] == 0
+
+    @pytest.mark.parametrize("coluna", ["CONVENIO", "DATA"])
+    def test_sem_a_coluna_do_criterio_a_regra_nao_roda(self, coluna):
+        contratos = _saque_gov()
+        df, _ = consolidar_pontuacao(
+            contratos.drop(columns=[coluna]),
+            _pontos(_PTS_COM_GOV),
+            _sem_categorias,
+        )
+        assert df["PONTOS"].tolist() == [2.5]
+
+    def test_nao_afeta_as_demais_linhas(self):
+        contratos = _saque_gov(
+            categoria_codigo=["SAQUE", "SAQUE", "CNC"],
+            TIPO_PRODUTO=["SAQUE", "SAQUE", "CNC"],
+            CONVENIO=["GOVERNO DO RJ", "INSS", "INSS"],
+            DATA=pd.to_datetime(["2026-09-04"] * 3),
+            VALOR=[1000.0, 1000.0, 1000.0],
+            conta_valor=[True] * 3,
+            conta_pontuacao=[True] * 3,
+            SUBTIPO=["SAQUE", "SAQUE", "NOVO"],
+            **{"TIPO OPER.": ["CARTÃO", "CARTÃO", "CONTRATO NOVO"]},
+            BANCO=["BMG"] * 3,
+        )
+        df, _ = consolidar_pontuacao(
+            contratos,
+            _pontos({**_PTS_COM_GOV, "CNC": 5.0}),
+            _sem_categorias,
+        )
+        assert df["PONTOS"].tolist() == [1.0, 2.5, 5.0]
+
+    def test_portabilidade_gov_nao_e_saque(self):
+        """O override anterior (Portabilidade/BANCO) não pode ser
+        sobrescrito por este: Portabilidade não é categoria de saque."""
+        df, _ = consolidar_pontuacao(
+            _saque_gov(
+                categoria_codigo=["PORTABILIDADE"],
+                TIPO_PRODUTO=["Portabilidade"],
+            ),
+            # CONSIG_BMG deliberadamente != CARTAO_GOV: com taxas
+            # iguais a asserção passaria mesmo se a regra do saque
+            # atropelasse a da Portabilidade.
+            _pontos({**_PTS_COM_GOV, "CONSIG_BMG": 0.7}),
+            _sem_categorias,
+        )
+        assert df["PONTOS"].tolist() == [0.7]
+        assert df["pontos"].tolist() == [700.0]
+
+
 @pytest.mark.unit
 class TestRegrasDeExclusao:
     def test_conta_valor_falso_zera_valor_e_por_consequencia_os_pontos(self):

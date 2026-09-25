@@ -33,6 +33,67 @@ e não via tabela `pontuacao` porque o diferencial é `BANCO`, granularidade
 maior que categoria. A migration 013 explicitamente deixou portabilidade
 fora do alias estrutural por causa dessa granularidade.
 
+### Saque no cartão Gov — alias por convênio (≥ 09/2026)
+
+`SAQUE` e `SAQUE_BENEFICIO` não pontuam pelo próprio código: aliasam para
+`CARTAO` (`categoria_pts_id`, migration 013), hoje **2,5**. O saque feito
+no **cartão Gov** pontua **1 real = 1 ponto**, pela categoria `CARTAO_GOV`
+(migration 122).
+
+| Critério (AND) | Regra |
+|---|---|
+| `categoria_codigo` | ∈ {`SAQUE`, `SAQUE_BENEFICIO`} |
+| `CONVENIO` | normalizado = `GOVERNO DO RJ` |
+| `DATA` (pagamento) | ≥ `2026-09-01` |
+
+**Por que convênio e não produto.** `produtos.categoria_id` é resolvido por
+`tipo`/`subtipo` da planilha de produtos (`angry-man`,
+`import-produtos.ts`), e Gov e INSS compartilham tipo **e** nome de tabela
+— medido em 2026-09-25:
+
+| `tabela` | `CONVENIO` | contratos |
+|---|---|---|
+| SAQUE COMPLEMENTAR - Digital Token - Não | INSS | 4.286 |
+| SAQUE COMPLEMENTAR - Digital Token - Não | GOVERNO DO RJ | 9 |
+| SAQUE COMPLEMENTAR | GOVERNO DO RJ | 105 |
+
+Apontar esse produto para uma categoria Gov levaria **4.286 saques INSS**
+junto. O único campo que separa os dois é o `CONVENIO`, que vive no
+contrato — mesma situação do `BANCO` na
+[Portabilidade](#portabilidade--alias-por-banco), e mesmo desfecho: vive em
+código, não em `categoria_pts_id`.
+
+- **Só `GOVERNO DO RJ`.** SIAPE, prefeituras, COMLURB e GOVERNO MG foram
+  oferecidos e **recusados** (decisão do usuário, 2026-09-25). SIAPE
+  sozinho moveria 1,49 milhão de pontos no histórico.
+- **Não é retroativo.** Mês fechado continua como foi apurado e
+  comunicado. Sem o corte de vigência, 615.968,95 pontos se moveriam de
+  05/2025 a 08/2026. O corte é por `DATA` porque `periodo_id` é derivado
+  de `data_status_pagamento` — logo `DATA >= 01/09/2026` é exatamente
+  "competência ≥ 09/2026", e vale também na consolidação por intervalo,
+  que atravessa meses. Medido: **0 de 17.304** linhas de saque têm `DATA`
+  nula, então o corte não deixa contrato de fora por dado ausente.
+- **Sem linha de `CARTAO_GOV` na pontuação do período, a taxa antiga
+  permanece** e a contagem vai para o diagnóstico
+  (`saque_gov_sem_pontuacao`, exibido no expander de admin). Cair para 0
+  apagaria produção paga em silêncio — o pior dos dois erros.
+- **`SAQUE_BENEFICIO` entra junto** (premissa): os dois aliasam para
+  `CARTAO` e há produto Gov nos dois (`MFACIL CONSIG GOV RJ` em `SAQUE`,
+  `CREDCESTA GOV RJ` em `SAQUE_BENEFICIO`). Sem efeito em 09/2026 — não há
+  `SAQUE_BENEFICIO` Gov pago no mês.
+- **Regra duplicada em duas superfícies, de propósito.** Python
+  ([`kpis/consolidacao.py`](../../src/dashboard/kpis/consolidacao.py),
+  `_mascara_saque_gov`) para o dashboard e SQL (migration 123, `CASE` de
+  `categoria_pontos`) para o Caderno. Mexer numa sem a outra faz o mês
+  fechar com dois números. Catraca: `tests/test_kpis_consolidacao.py::TestSaqueCartaoGov`.
+
+> **O que a migration 122 deixou pela metade.** Ela criou a categoria e
+> destravou o import (`Produto inválido: "CARTAO GOV"`), e a linha de 1,0
+> passou a chegar em `pontuacao`. Mas era **tarifa sem consumidor**:
+> nenhum produto aponta para `CARTAO_GOV` e nenhuma categoria a usa como
+> `categoria_pts_id`, então os saques Gov seguiam a 2,5 e nenhum número se
+> movia. Em 09/2026 isso valia 13.622,70 pontos (2 contratos, 9.081,80).
+
 ### Diagnóstico de categorias sem pontuação
 
 Categoria presente nos contratos mas **ausente** da tabela `pontuacao` do
