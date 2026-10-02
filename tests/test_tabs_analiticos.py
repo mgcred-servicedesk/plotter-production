@@ -53,9 +53,8 @@ class TestColsProduto:
 # ── Detalhamento de Reconquista (AppTest) ────────────────────────────
 #
 # ``AppTest.from_function`` roda o corpo da funcao abaixo como script de
-# verdade — unica forma de pre-setar o pill de escopo em
-# ``session_state`` antes do primeiro ``run()``. A funcao precisa ser
-# top-level e autocontida (imports no corpo).
+# verdade. A funcao precisa ser top-level e autocontida (imports no
+# corpo).
 
 def _script_render_detalhamento(clientes):
     import streamlit as st  # noqa: F401  (necessario no script isolado)
@@ -64,7 +63,7 @@ def _script_render_detalhamento(clientes):
         _render_reconquista_detalhamento,
     )
 
-    _render_reconquista_detalhamento(clientes, "08/2026", "07/2026")
+    _render_reconquista_detalhamento(clientes, "08/2026")
 
 
 def _clientes_reconquista() -> pd.DataFrame:
@@ -100,12 +99,11 @@ def _tabela(at: AppTest) -> pd.DataFrame:
     return valor.data if hasattr(valor, "data") else valor
 
 
-def _rodar(escopo: str) -> AppTest:
+def _rodar() -> AppTest:
     at = AppTest.from_function(
         _script_render_detalhamento,
         kwargs=dict(clientes=_clientes_reconquista()),
     )
-    at.session_state["rec_det_escopo"] = escopo
     at.run()
     assert not at.exception
     return at
@@ -113,55 +111,37 @@ def _rodar(escopo: str) -> AppTest:
 
 @pytest.mark.unit
 class TestRenderReconquistaDetalhamento:
-    """O analitico lista pelo FIM DE RELACIONAMENTO do mes selecionado
-    (Agosto lista Agosto), nao pela apuracao defasada da campanha; o
-    mesmo frame (todos os meses) serve os dois escopos, e a apuracao de
-    cada lead fica na linha em ambos.
+    """Desde 10/2026 o Detalhamento e so "Todos os meses": o export virou
+    analitico (a apuracao e a liga), sem escopo do mes selecionado e sem
+    as colunas Apuracao/Vigencia da campanha defasada.
     """
 
-    def test_escopo_do_mes_lista_o_fim_de_relacionamento_do_mes(self):
-        df = _tabela(_rodar("Mês selecionado"))
-        # Lead 4 (ref 08/2026) — e NAO o 3, que e a apuracao vigente da
-        # campanha (ref 07/2026). E exatamente a mudanca de eixo.
-        assert df["Cod ADE"].tolist() == [4]
-        assert df["Mês Fim Relac."].tolist() == ["08/2026"]
-        assert df["Apuração"].tolist() == ["09/2026"]
-
-    def test_escopo_todos_lista_o_historico_inteiro(self):
-        df = _tabela(_rodar("Todos"))
-        assert len(df) == 4
-        # Fim de relacionamento mais recente primeiro.
+    def test_lista_todos_os_meses_do_mais_recente_ao_mais_antigo(self):
+        df = _tabela(_rodar())
+        assert df["Cod ADE"].tolist() == [4, 3, 2, 1]
         assert df["Mês Fim Relac."].tolist() == [
             "08/2026", "07/2026", "06/2026", "05/2026",
         ]
-        assert df["Apuração"].tolist() == [
-            "09/2026", "08/2026", "07/2026", "06/2026",
-        ]
-        assert df["Vigência"].tolist() == [
-            "Próxima", "Vigente", "Histórico", "Histórico",
-        ]
 
-    def test_referencia_aparece_nos_dois_escopos(self):
-        for escopo in ("Mês selecionado", "Todos"):
-            df = _tabela(_rodar(escopo))
-            assert {"Mês Fim Relac.", "Apuração", "Vigência"} <= set(
-                df.columns
-            )
+    def test_sem_colunas_da_apuracao_defasada(self):
+        cols = set(_tabela(_rodar()).columns)
+        assert "Mês Fim Relac." in cols
+        assert not {"Apuração", "Vigência"} & cols
 
-    def test_filtro_de_mes_so_no_escopo_completo(self):
-        # 4 filtros no mes selecionado (o mes seria inerte) e 5 em todos.
-        assert len(_rodar("Mês selecionado").multiselect) == 1  # so Loja
-        assert len(_rodar("Todos").multiselect) == 2  # Loja + Fim Relac.
+    def test_sem_pill_de_escopo(self):
+        at = _rodar()
+        assert "rec_det_escopo" not in at.session_state
+        assert len(at.button_group) == 0
 
-    def test_caption_separa_os_dois_eixos(self):
-        for escopo in ("Mês selecionado", "Todos"):
-            caption = _rodar(escopo).caption[0].value
-            # Mes vigente do analitico = fim de relacionamento 08/2026;
-            # a apuracao 08/2026 da campanha le 07/2026.
-            assert "08/2026" in caption
-            assert "07/2026" in caption
-            assert "defasagem" in caption
+    def test_filtro_de_fim_de_relacionamento_sempre_presente(self):
+        # Loja + Fim de Relacionamento.
+        assert len(_rodar().multiselect) == 2
 
+    def test_caption_fala_de_todos_os_meses_sem_defasagem(self):
+        caption = _rodar().caption[0].value
+        assert "todos os meses" in caption
+        assert "05/2026 a 08/2026" in caption
+        assert "defasagem" not in caption
 
 
 # ── Sub-aba Reconquista: qual quebra por loja chega na tela ──────────
@@ -236,6 +216,94 @@ class TestRenderReconquistaPorLoja:
         assert "09/2026" in captions
         assert "08/2026" in captions
         assert "prévia" in captions
+
+    def test_sem_coluna_faixa_premio(self):
+        """Faixa Premio saiu em 10/2026: o export nao decide premio."""
+        at = AppTest.from_function(
+            _script_render_reconquista,
+            kwargs=dict(reconquista=_dict_reconquista()),
+        )
+        at.session_state["nav_reconquista"] = "Por Loja"
+        at.run()
+        assert not at.exception
+        assert "Faixa Prêmio" not in _tabela(at).columns
+
+
+# ── Sub-aba Liga ─────────────────────────────────────────────────────
+
+
+def _liga() -> pd.DataFrame:
+    return pd.DataFrame([
+        {"co_adesao": 10, "qtde": 1, "loja": "LOJA A", "regiao": "R1",
+         "consultor": "ANA", "data_reconquista": "2026-09-16"},
+        {"co_adesao": 11, "qtde": 1, "loja": "LOJA B", "regiao": "R1",
+         "consultor": "BRUNO", "data_reconquista": "2026-09-16"},
+        {"co_adesao": 12, "qtde": 0, "loja": "LOJA A", "regiao": "R1",
+         "consultor": "ANA", "data_reconquista": "2026-09-16"},
+    ])
+
+
+def _dict_liga(status: str = "ok") -> dict:
+    d = _dict_reconquista()
+    d["totais"] = {
+        **d["totais"], "efetivadas": 2, "liga_status": status,
+        "liga_listadas": 3, "liga_nao_contabilizadas": 1,
+    }
+    d["liga"] = _liga() if status == "ok" else pd.DataFrame()
+    return d
+
+
+def _rodar_liga(status: str = "ok", contab: str | None = None) -> AppTest:
+    at = AppTest.from_function(
+        _script_render_reconquista,
+        kwargs=dict(reconquista=_dict_liga(status)),
+    )
+    if contab is not None:
+        at.session_state["rec_liga_contab"] = contab
+    at.run()
+    assert not at.exception
+    return at
+
+
+@pytest.mark.unit
+class TestRenderReconquistaLiga:
+    def test_abre_na_liga_quando_a_apuracao_e_da_liga(self):
+        df = _tabela(_rodar_liga())
+        assert "Contabilizada" in df.columns
+
+    def test_filtro_padrao_mostra_so_contabilizadas(self):
+        df = _tabela(_rodar_liga())
+        assert df["Cod ADE"].tolist() == [10, 11]
+        assert set(df["Contabilizada"]) == {"Sim"}
+
+    def test_nao_contabilizadas_a_um_filtro(self):
+        df = _tabela(_rodar_liga(contab="Não contabilizadas"))
+        assert df["Cod ADE"].tolist() == [12]
+
+    def test_todas_lista_as_duas(self):
+        assert len(_tabela(_rodar_liga(contab="Todas"))) == 3
+
+    def test_caption_do_topo_usa_a_contagem_da_liga_sem_conversao(self):
+        captions = " ".join(c.value for c in _rodar_liga().caption)
+        assert "2 contabilizadas pela liga" in captions
+        assert "Conversão" not in captions
+
+    def test_liga_nao_importada_avisa_em_vez_de_zerar(self):
+        at = _rodar_liga(status="nao_importada")
+        avisos = " ".join(w.value for w in at.warning)
+        assert "ainda não importada" in avisos
+        assert len(at.dataframe) == 0
+        captions = " ".join(c.value for c in at.caption)
+        assert "contabilizadas pela liga" not in captions
+
+    def test_antes_da_liga_abre_no_por_loja(self):
+        at = AppTest.from_function(
+            _script_render_reconquista,
+            kwargs=dict(reconquista=_dict_reconquista()),
+        )
+        at.run()
+        assert not at.exception
+        assert _tabela(at)["Loja"].tolist() == ["LOJA DO MES"]
 
 
 # ── Seletor de banco da Distribuicao de Produtos (AppTest) ───────────

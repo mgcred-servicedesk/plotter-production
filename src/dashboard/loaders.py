@@ -51,6 +51,10 @@ from src.dashboard.presets_gestao import (  # noqa: F401
 )
 from src.dashboard.kpis.reconquista import (  # noqa: F401
     COLS_ACELERADOR,
+    LIGA_ERRO,
+    LIGA_FORA,
+    LIGA_NAO_IMPORTADA,
+    LIGA_OK,
     faixa_agregada_acelerador,
     faixas_acelerador_por_qtd,
     montar_acelerador_por_consultor,
@@ -71,6 +75,9 @@ from src.dashboard.kpis.reconquista import (  # noqa: F401
     _por_consultor_reconquista,
     _por_loja_reconquista,
     _totais_reconquista,
+    efetivadas_por_consultor_liga,
+    liga_vigente,
+    totais_liga,
 )
 from src.dashboard.kpis.consolidacao import (
     aplicar_nomes_display_produto,
@@ -2557,6 +2564,31 @@ def _reconquista_cache(mes: int, ano: int) -> dict:
     }
 
 
+@st.cache_data(ttl=600)
+def _liga_periodo(mes: int, ano: int) -> pd.DataFrame:
+    """Liga (apuracao do banco) de UM periodo — GLOBAL, sem RLS. TTL 10min.
+
+    O recorte por perfil e do consumidor, como em `_reconquista_todos`.
+    Falha de I/O LEVANTA (e `st.cache_data` nao guarda excecao): quem
+    decide o que exibir e `carregar_reconquista`, que transforma o erro
+    em `LIGA_ERRO` — nunca em zero.
+    """
+    return pd.DataFrame(
+        _paginar_keyset(
+            lambda limite: (
+                _sb()
+                .from_("v_reconquista_liga")
+                .select("*")
+                .eq("ano", ano)
+                .eq("mes", mes)
+                .order("co_adesao")
+                .limit(limite)
+            ),
+            "co_adesao",
+        )
+    )
+
+
 # ══════════════════════════════════════════════════════
 # Acelerador combinado: Reconquista + Cobranca Consignavel
 #
@@ -2812,7 +2844,16 @@ def carregar_reconquista(mes: int, ano: int) -> Dict:
                                      # que compoem totais["cobranca_consignavel"]
                                      # (vazio fora da vigencia)
             "prox":     dict,        # previa da apuracao seguinte (mes+1)
+            "liga":     DataFrame,   # liga do (mes, ano), pos-RLS
         }
+
+    LIGA (>= 09/2026, migration 127): `totais["efetivadas"]` e a
+    contagem `qtde = 1` da liga do proprio (mes, ano) — sem defasagem —
+    e alimenta o card e o acelerador. `totais["liga_status"]` e um de
+    LIGA_FORA / LIGA_OK / LIGA_NAO_IMPORTADA / LIGA_ERRO; nos dois
+    ultimos nao ha numero nem faixa (a UI avisa). Conversao/faixa CNC
+    continuam calculadas sobre o export, mas a UI so as exibe fora da
+    liga. Ver business-rules.md § "Liga".
 
     Conversao/apuracao contam so ELEGIVEL; `clientes` mantem todos.
     TTL 10min no fetch; KPIs derivados apos a RLS.
@@ -2825,7 +2866,8 @@ def carregar_reconquista(mes: int, ano: int) -> Dict:
     O ANALITICO roda no outro eixo: lista/agrega o fim de relacionamento
     do mes SELECIONADO (`clientes_prox` -> `por_loja_mes`), nao a
     apuracao defasada. `por_loja` (apuracao) segue exposto para quem
-    precisar do eixo de premio. Ver business-rules.md § "Dois eixos".
+    precisar do eixo de premio. Ver business-rules.md § "Analitico da
+    sub-aba Reconquista".
 
     O acelerador combinado e apurado sobre o proprio (mes, ano) — sem a
     defasagem, que so vale para a esteira de reconquista. Dois gates
@@ -2862,6 +2904,37 @@ def carregar_reconquista(mes: int, ano: int) -> Dict:
         )
     else:
         totais["promessas_anterior"] = 0
+
+    # Liga (>= 09/2026): efetivadas passam a ser a contagem do banco no
+    # PROPRIO mes, sem defasagem — sobrescreve a contagem do export.
+    # Promessas/sem reconquista seguem do export (analitico). Sem liga
+    # importada (ou com erro de leitura) o numero NAO cai em zero nem
+    # volta para a regra antiga: `liga_status` diz o que houve e a UI
+    # mostra "nao importada" no lugar do numero.
+    liga = pd.DataFrame()
+    liga_status = LIGA_FORA
+    if liga_vigente(mes, ano):
+        try:
+            liga_global = _liga_periodo(mes, ano)
+        except Exception:
+            logger.exception(
+                "Falha ao carregar a liga da Reconquista (%02d/%d)",
+                mes, ano,
+            )
+            liga_status = LIGA_ERRO
+        else:
+            if liga_global.empty:
+                liga_status = LIGA_NAO_IMPORTADA
+            else:
+                liga_status = LIGA_OK
+                _filtra_liga = _filtro_rls_reconquista()
+                liga = (
+                    _filtra_liga(liga_global)
+                    if _filtra_liga is not None
+                    else liga_global
+                )
+        totais.update(totais_liga(liga))
+    totais["liga_status"] = liga_status
 
     # Previa da proxima apuracao (mes+1): exibe os clientes cujo
     # dt_fim caiu no mes selecionado, ja na esteira mas ainda sem a
@@ -2911,6 +2984,9 @@ def carregar_reconquista(mes: int, ano: int) -> Dict:
     # Fora do gate a quebra nao e montada — e o recurso desligado para o
     # perfil/periodo, nao erro. O gate mora aqui porque depende do
     # usuario logado; a regra, em kpis/reconquista.py, so recebe frames.
+    # Na liga sem dado (nao importada/erro) tambem nao: a faixa sairia
+    # calculada com efetivadas = 0 — numero com cara de certo.
+    liga_sem_dado = liga_status in (LIGA_NAO_IMPORTADA, LIGA_ERRO)
     por_consultor = (
         montar_acelerador_por_consultor(
             clientes,
@@ -2920,15 +2996,24 @@ def carregar_reconquista(mes: int, ano: int) -> Dict:
             lambda qtds: faixas_acelerador_por_qtd(
                 qtds, mes, ano, carregar_faixa_acelerador
             ),
+            efetivadas_por_consultor=(
+                efetivadas_por_consultor_liga(liga)
+                if liga_status == LIGA_OK
+                else None
+            ),
         )
-        if no_escopo
+        if no_escopo and not liga_sem_dado
         else pd.DataFrame(columns=COLS_ACELERADOR)
     )
 
     # Faixa do total agregado (barra-resumo). Depende das duas chaves
     # acima, entao vem depois delas.
-    totais["faixa_agregada"] = faixa_agregada_acelerador(
-        totais, mes, ano, carregar_faixa_acelerador
+    totais["faixa_agregada"] = (
+        None
+        if liga_sem_dado
+        else faixa_agregada_acelerador(
+            totais, mes, ano, carregar_faixa_acelerador
+        )
     )
 
     # Lista completa para o analitico: mesma base e MESMO recorte de RLS
@@ -2958,4 +3043,8 @@ def carregar_reconquista(mes: int, ano: int) -> Dict:
         "clientes_todos": clientes_todos,
         "cobranca_consignavel_contratos": contratos_consignavel,
         "prox": prox,
+        # Liga do periodo selecionado (pos-RLS, qtde 1 e 0) — analitico
+        # "Liga". Vazio fora da vigencia ou sem import; `liga_status`
+        # em `totais` diz qual dos casos.
+        "liga": liga,
     }

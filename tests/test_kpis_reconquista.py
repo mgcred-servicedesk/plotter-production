@@ -25,9 +25,12 @@ from src.dashboard.kpis.reconquista import (
     _por_consultor_reconquista,
     _por_loja_reconquista,
     _totais_reconquista,
+    efetivadas_por_consultor_liga,
     faixa_agregada_acelerador,
     faixas_acelerador_por_qtd,
+    liga_vigente,
     montar_acelerador_por_consultor,
+    totais_liga,
 )
 
 
@@ -616,6 +619,36 @@ class TestMontarAceleradorPorConsultor:
         assert out.empty
         assert list(out.columns) == COLS_ACELERADOR
 
+    def test_efetivadas_da_liga_substituem_as_do_export(self):
+        """A partir de 09/2026 a contagem vem da liga: o EFETIVADA do
+        export (`clientes`) e ignorado quando a contagem chega pronta."""
+        out = montar_acelerador_por_consultor(
+            self._rec(("ANA", "EFETIVADA"), ("ANA", "EFETIVADA")),
+            self._cobr("ANA"),
+            pd.DataFrame(columns=["SUPERVISOR"]),
+            self._universo("ANA", "BRUNO"),
+            self._resolver,
+            efetivadas_por_consultor=pd.DataFrame(
+                {"consultor": ["BRUNO"], "efetivadas": [5]}
+            ),
+        ).set_index("consultor")
+        assert out.loc["ANA", "efetivadas"] == 0
+        assert out.loc["ANA", "total_acelerador"] == 1
+        assert out.loc["BRUNO", "efetivadas"] == 5
+
+    def test_liga_vazia_zera_efetivadas_mesmo_com_export(self):
+        out = montar_acelerador_por_consultor(
+            self._rec(("ANA", "EFETIVADA")),
+            pd.DataFrame(),
+            pd.DataFrame(columns=["SUPERVISOR"]),
+            self._universo("ANA"),
+            self._resolver,
+            efetivadas_por_consultor=pd.DataFrame(
+                columns=["consultor", "efetivadas"]
+            ),
+        ).set_index("consultor")
+        assert out.loc["ANA", "efetivadas"] == 0
+
     def test_nao_consulta_faixas_quando_nao_ha_ninguem(self):
         def _explode(_):
             raise AssertionError("não deveria resolver faixas")
@@ -626,3 +659,59 @@ class TestMontarAceleradorPorConsultor:
             pd.DataFrame(columns=["CONSULTOR"]),
             _explode,
         ).empty
+
+
+# ── Liga (apuracao do banco, >= 09/2026) ─────────────────────────────
+
+
+def _liga(**overrides):
+    base = {
+        "co_adesao": [1, 2, 3, 4],
+        "qtde": [1, 1, 0, 1],
+        "consultor": ["ANA", "ANA", "ANA", "BRUNO"],
+        "loja": ["L1", "L1", "L1", "L2"],
+    }
+    base.update(overrides)
+    return pd.DataFrame(base)
+
+
+@pytest.mark.unit
+class TestLigaVigente:
+    @pytest.mark.parametrize("mes,ano,esperado", [
+        (8, 2026, False), (9, 2026, True), (10, 2026, True),
+        (12, 2025, False), (1, 2027, True),
+    ])
+    def test_corte_em_setembro_2026(self, mes, ano, esperado):
+        assert liga_vigente(mes, ano) is esperado
+
+
+@pytest.mark.unit
+class TestTotaisLiga:
+    def test_conta_so_qtde_1(self):
+        t = totais_liga(_liga())
+        assert t == {
+            "efetivadas": 3, "liga_listadas": 4,
+            "liga_nao_contabilizadas": 1,
+        }
+
+    def test_qtde_ilegivel_nao_conta(self):
+        t = totais_liga(_liga(qtde=[1, None, "x", "1"]))
+        # "1" texto ainda e 1; None/"x" nao.
+        assert t["efetivadas"] == 2
+
+    def test_vazio(self):
+        assert totais_liga(pd.DataFrame())["efetivadas"] == 0
+        assert totais_liga(None)["efetivadas"] == 0
+
+
+@pytest.mark.unit
+class TestEfetivadasPorConsultorLiga:
+    def test_agrupa_so_contabilizadas(self):
+        out = efetivadas_por_consultor_liga(_liga()).set_index("consultor")
+        assert out.loc["ANA", "efetivadas"] == 2
+        assert out.loc["BRUNO", "efetivadas"] == 1
+
+    def test_so_qtde_0_devolve_vazio_com_schema(self):
+        out = efetivadas_por_consultor_liga(_liga(qtde=[0, 0, 0, 0]))
+        assert out.empty
+        assert list(out.columns) == ["consultor", "efetivadas"]

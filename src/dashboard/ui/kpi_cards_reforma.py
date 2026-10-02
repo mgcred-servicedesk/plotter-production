@@ -22,6 +22,11 @@ from src.dashboard.formatters import (
     formatar_percentual,
 )
 from src.config.settings import PACK_LABEL_AGREGADO
+from src.dashboard.kpis.reconquista import (
+    LIGA_ERRO,
+    LIGA_FORA,
+    LIGA_NAO_IMPORTADA,
+)
 from src.dashboard.permissions import pode_ver
 from src.dashboard.ui.colors import (
     get_status_full,
@@ -819,14 +824,41 @@ def render_cards_reconquista(
         f"{_MESES_RECONQ.get(ref_mes, '?')}/{ref_ano}" if ref_mes else "—"
     )
 
+    # Liga (>= 09/2026): Efetivadas = contagem do banco no proprio mes;
+    # Promessas seguem do export (fim de relacionamento em M-1).
+    liga_status = totais.get("liga_status", LIGA_FORA)
+    em_liga = liga_status != LIGA_FORA
+    liga_sem_dado = liga_status in (LIGA_NAO_IMPORTADA, LIGA_ERRO)
+    apur_label = f"{_MESES_RECONQ.get(mes, '?')}/{ano}"
+
     st.markdown("---")
     st.markdown("### 🎯 Reconquista")
-    st.caption(
-        f"Apuração {_MESES_RECONQ.get(mes, '?')}/{ano} · fim de "
-        f"relacionamento em **{ref_label}**"
-    )
+    if em_liga:
+        st.caption(
+            f"Apuração {apur_label} · **Efetivadas** = contabilizadas "
+            f"pela liga (banco) em {apur_label} · **Promessas** = fim "
+            f"de relacionamento em {ref_label}"
+        )
+        if liga_status == LIGA_NAO_IMPORTADA:
+            st.warning(
+                f"Liga de {apur_label} ainda não importada — sem "
+                f"Efetivadas nem faixa do acelerador até o upload no "
+                f"importador."
+            )
+        elif liga_status == LIGA_ERRO:
+            st.error(
+                f"Não foi possível carregar a liga de {apur_label} — "
+                f"Efetivadas e faixa do acelerador indisponíveis."
+            )
+    else:
+        st.caption(
+            f"Apuração {apur_label} · fim de "
+            f"relacionamento em **{ref_label}**"
+        )
 
-    if total == 0:
+    # Na liga o export vazio nao encerra o bloco: Efetivadas nao
+    # dependem dele.
+    if total == 0 and not em_liga:
         msg = (
             f"Sem contratos com fim de relacionamento em {ref_label}."
             if total_geral == 0
@@ -874,38 +906,70 @@ def render_cards_reconquista(
     else:
         var_prom_html = '<span style="opacity: 0.8;">— vs período ant.</span>'
 
-    card_efet = _card_contexto(
-        "✅ Efetivadas",
-        f"{efet:,}",
-        (
-            f'<strong style="color: {cor_faixa};">{pct_efet:.1f}%</strong> '
-            f'de conversão'
-            f'<br><span style="opacity: 0.8;">sobre {total} elegíveis</span>'
-        ),
-        valor_style=f' style="color: {cor_faixa};"',
-    )
+    if liga_sem_dado:
+        card_efet = _card_contexto(
+            "✅ Efetivadas",
+            "—",
+            (
+                "Liga não importada"
+                if liga_status == LIGA_NAO_IMPORTADA
+                else "Falha ao carregar a liga"
+            )
+            + f'<br><span style="opacity: 0.8;">{apur_label}</span>',
+        )
+    elif em_liga:
+        # Sem base total na liga: so a quantidade (sem conversao/faixa
+        # CNC — decisao do usuario, 02/10/2026).
+        nao_contab = int(totais.get("liga_nao_contabilizadas", 0) or 0)
+        card_efet = _card_contexto(
+            "✅ Efetivadas",
+            f"{efet:,}",
+            (
+                f'Contabilizadas pela liga · {apur_label}'
+                f'<br><span style="opacity: 0.8;">{nao_contab:,} '
+                f'listadas não contabilizadas</span>'
+            ),
+        )
+    else:
+        card_efet = _card_contexto(
+            "✅ Efetivadas",
+            f"{efet:,}",
+            (
+                f'<strong style="color: {cor_faixa};">{pct_efet:.1f}%</strong> '
+                f'de conversão'
+                f'<br><span style="opacity: 0.8;">sobre {total} elegíveis</span>'
+            ),
+            valor_style=f' style="color: {cor_faixa};"',
+        )
 
-    card_prom = _card_contexto(
-        "⏳ Promessas",
-        f"{prom:,}",
-        (
-            f'{pct_prom:.1f}% · {var_prom_html}'
+    # "Se efetivadas" soma Efetivadas e Promessas sobre a base do
+    # export — na liga as duas parcelas vem de fontes diferentes, entao
+    # a linha sai.
+    sub_prom = f'{pct_prom:.1f}% · {var_prom_html}'
+    if em_liga:
+        sub_prom += (
+            f'<br><span style="opacity: 0.8;">sobre {total} elegíveis '
+            f'de {ref_label}</span>'
+        )
+    else:
+        sub_prom += (
             f'<br><span style="opacity: 0.8;">Se efetivadas: '
             f'<strong>{taxa_potencial:.1f}%</strong> da base</span>'
-        ),
-    )
+        )
+    card_prom = _card_contexto("⏳ Promessas", f"{prom:,}", sub_prom)
 
     # Acelerador combinado: soma com Efetivadas para resolver a faixa
     # do consultor (a legenda mostra a soma; a faixa vem por consultor
     # logo abaixo). Sem vírgula literal no texto — `_card_contexto`
     # troca "," por "." no card inteiro (separador de milhar BR).
+    acelerador_txt = "—" if liga_sem_dado else f"{acelerador:,}"
     card_consignavel = _card_contexto(
         "💰 Cobrança Consignável",
         f"{consignavel:,}",
         (
             'Contrato Novo · BMG · propostas pagas'
             f'<br><span style="opacity: 0.8;">Acelerador combinado: '
-            f'<strong>{acelerador:,}</strong> com Efetivadas</span>'
+            f'<strong>{acelerador_txt}</strong> com Efetivadas</span>'
         ),
     )
 
@@ -949,7 +1013,9 @@ def render_cards_reconquista(
                 'Elegível</div>'
             )
         _render_barra_reconquista(barra_esq, barra_dir, cor_barra)
-    elif acelerador_perfil == "consultor":
+    elif acelerador_perfil == "consultor" and not em_liga:
+        # Na liga sem dado `faixa_agregada` tambem e None, mas o sistema
+        # antigo (conversao do export) nao vale mais — sem barra.
         cor_barra = cor_faixa
         barra_esq = (
             '<div style="font-size:12px; color:var(--mg-text-muted);">'

@@ -859,6 +859,75 @@ cliente** (`co_adesao`), já classificado em `status`. Tabela `reconquista`
 (truncada e realimentada a cada carga via RPC `fn_importar_reconquista`);
 leitura pela view `v_reconquista`. Loader: `carregar_reconquista(mes, ano)`.
 
+### Liga — apuração oficial a partir de 09/2026
+
+**Decisão de 02/10/2026.** A partir da apuração de **09/2026**, as
+**Efetivadas** do dashboard são a contagem que o **banco** contabiliza, ou
+seja, o arquivo da *liga* (`Reconquista_<Mês>_Liga.xlsx`, aba `Export`).
+Elas não saem mais do status `EFETIVADA` do export.
+
+| | Export `reconquista_YYYYMM.xlsx` | Liga `Reconquista_<Mês>_Liga.xlsx` |
+|---|---|---|
+| Papel | **Analítico**: clientes indicados pelo banco, elegíveis ou não | **Apuração**: Efetivadas do card e do acelerador |
+| Granularidade | 1 linha por cliente; foto única | 1 linha por proposta, **por período** |
+| Import (angry-man) | Card "Reconquista MG CRED", apaga e regrava tudo | Card "Reconquista — Liga", **com período obrigatório** |
+| Tabela / view | `reconquista` / `v_reconquista` | `reconquista_liga` / `v_reconquista_liga` (migration 127) |
+| RPC | `fn_importar_reconquista(p_rows)` | `fn_importar_reconquista_liga(p_periodo_id, p_rows)`: apaga e regrava **só o período** |
+
+**Regra de contagem:** Efetivadas = linhas da liga com `qtde = 1`
+(`Qtde Reconquista Relacionamento`) no **período selecionado**.
+- **Não há defasagem.** Setembro selecionado = liga importada como Setembro.
+- Linhas com `qtde = 0` ficam guardadas e aparecem no analítico "Liga",
+  mas ficam fora da conta.
+- Helpers: `liga_vigente`, `totais_liga` e `efetivadas_por_consultor_liga`
+  em `kpis/reconquista.py`.
+
+**A liga não se cruza com o export.** No primeiro arquivo (09/2026):
+- 36 das 118 contabilizadas **não existem** no export;
+- as 82 que existem têm `dt_fim_relacionamento` entre 03 e 08/2026, porque
+  o banco conta pelo mês da reconquista (maciça), não pelo fim de
+  relacionamento;
+- 54 EFETIVADA do export vieram com `qtde = 0`.
+
+Por isso nenhum indicador mistura as duas fontes.
+
+**Atribuição:** loja e consultor vêm das colunas `Franquia` e `Consultor`
+**da própria liga**, resolvidos como no export: loja pelo `cod_bmg` com
+sucessora, consultor pelo nome completo + loja. Se a resolução falha, a
+view usa o texto do arquivo.
+
+**Card principal com liga**
+- Efetivadas aparece só como **quantidade**. Saem o % de conversão e a
+  faixa sobre o prêmio CNC: a liga não traz a base total, e o prêmio já é
+  decidido pelo acelerador.
+- O **Acelerador combinado** passa a somar Efetivadas da liga e Cobrança
+  Consignável. As duas parcelas agora são do **mesmo mês**, e a assimetria
+  de janela descrita no acelerador vale só até 08/2026.
+- **Promessas** continua vindo do export (`dt_fim` em M-1), mas sem a linha
+  "Se efetivadas", porque as duas parcelas teriam fontes diferentes.
+
+**Liga ausente ou com erro de leitura não vira número.**
+`totais["liga_status"]` assume um destes valores:
+
+| Valor | Quando |
+|---|---|
+| `LIGA_FORA` | Apuração anterior a 09/2026; vale a regra antiga |
+| `LIGA_OK` | Liga do período importada |
+| `LIGA_NAO_IMPORTADA` | Período sem nenhuma linha na liga, antes do RLS |
+| `LIGA_ERRO` | Falha ao ler a view |
+
+Nos dois últimos casos:
+- o card mostra "—" e um aviso;
+- a quebra por consultor e a `faixa_agregada` **não são calculadas**,
+  porque sairiam com Efetivadas = 0;
+- **não há volta para a regra antiga**.
+
+Liga importada que o RLS esvazia (consultor sem nenhuma proposta) é
+`LIGA_OK` com 0, um zero legítimo.
+
+**Antes de 09/2026** nada muda: Efetivadas, conversão e faixa continuam
+saindo do export, com a defasagem descrita abaixo.
+
 ### Estados (validados 100% contra o arquivo)
 
 - **EFETIVADA** — reconquista confirmada: `dt_macica > dt_fim_relacionamento`.
@@ -891,64 +960,39 @@ ELEGIVEL entram na apuração/conversão** (numerador e denominador); os
 apenas fora da conta. **NULL / sem flag ⇒ ELEGIVEL** (interim, até o
 arquivo com a flag ser importado). Helper: `_mask_elegivel` (loaders).
 
-### Dois eixos: apuração da campanha × mês do analítico
+### Analítico da sub-aba Reconquista
 
-A **apuração é mensal e defasada** — KPIs, conversão, faixa de prêmio e
-acelerador leem só a apuração vigente (`clientes`, o corte de
-`dt_fim_relacionamento` em `M-1`). Somar apurações produziria uma
-conversão que não corresponde a prêmio nenhum.
+**KPIs, conversão, faixa e acelerador:**
+- até 08/2026, leem só a apuração vigente: `clientes`, o corte de
+  `dt_fim_relacionamento` em `M-1`;
+- a partir de 09/2026, as Efetivadas vêm da liga (ver acima).
 
-O **analítico inteiro** (Por Loja **e** Detalhamento) roda no **outro
-eixo**: o mês de `dt_fim_relacionamento` **selecionado** — Agosto mostra
-Agosto, Setembro mostra Setembro. É a data do lead, não o mês de prêmio;
-quem trabalha a esteira quer ver quem encerrou agora, não quem encerrou
-no mês passado. (Decisão de 23/09/2026 — antes os dois seguiam a
-apuração vigente, `M-1`.)
+Somar apurações produziria uma conversão que não corresponde a prêmio
+nenhum.
 
-| Chave do loader | Recorte | Quem lê |
+O **analítico** roda em outros recortes. Sub-navegação: **Liga · Por Loja
+· Detalhamento**. Abre em Liga quando o período é contado pela liga, e em
+Por Loja antes disso.
+
+| Sub-aba | Recorte | Chave do loader |
 |---|---|---|
-| `clientes` | `dt_fim` em `M-1` (apuração) | KPIs, conversão, faixa, acelerador |
-| `por_loja` | idem, agregado por loja | **ninguém na UI** — exposto para o eixo de prêmio |
-| `clientes_prox` → `por_loja_mes` | `dt_fim` no mês selecionado | **Por Loja** do analítico |
-| `clientes_todos` | todos os meses, marcados | **Detalhamento** (abre no mês selecionado) |
+| **Liga** | Liga do período selecionado, `qtde` 1 e 0. O filtro "Contabilizada" abre em *Contabilizadas* | `liga` |
+| **Por Loja** | Export, `dt_fim` no mês selecionado | `clientes_prox` → `por_loja_mes` |
+| **Detalhamento** | Export, **todos os meses**, do mais recente ao mais antigo, com o mês selecionado destacado | `clientes_todos` |
 
-Consequência esperada: com Setembro selecionado, o analítico mostra
-`dt_fim` de 09/2026 (apuração 10/2026, `vigencia = Próxima`) enquanto os
-cards acima seguem em `dt_fim` 08/2026. **Não é divergência** — os
-captions explicitam os dois eixos.
+`por_loja` (export, apuração defasada) continua no dict e **ninguém na UI o
+lê**.
 
-⚠️ **Conversão e faixa dentro do Por Loja do analítico são prévia**, não
-prêmio: no mês corrente a maciça ainda não virou, EFETIVADA tende a 0 e
-a faixa cai no piso para quase toda loja. O caption da tabela diz isso;
-a faixa que vale é a da apuração, no caption do topo da sub-aba.
-
-O Detalhamento recebe `clientes_todos` — a mesma base sem o filtro de mês, com o
-mesmo recorte de RLS — e alterna por pill entre
-`Fim de relacionamento · MM/AAAA` e `Todos os meses · <cobertura>`; no
-escopo completo há multiselect de **Fim de Relacionamento** e a linha do
-mês selecionado fica destacada.
-
-**Labels carregam o período**, porque os dois eixos convivem na mesma
-sub-aba: a sub-nav mostra `Por Loja · 09/2026` e `Detalhamento ·
-09/2026` — o mês de `dt_fim_relacionamento` que os dois cobrem —
-enquanto o caption do topo declara "**KPIs acima** — apuração 09/2026 …
-fim de relacionamento em 08/2026". O escopo do Detalhamento **não** usa
-a palavra "vigente": ela colidiria com a coluna `Vigência`, que no
-recorte padrão marca todo lead como `Próxima`.
-
-Cada linha carrega a marcação, derivada de `ref_ano`/`ref_mes` +
-defasagem (`_marcar_vigencia_reconquista`, `kpis/reconquista.py`):
-
-| Coluna | Conteúdo |
-|---|---|
-| `ref_label` → "Mês Fim Relac." | `MM/AAAA` do fim de relacionamento — **o eixo da listagem** |
-| `ref_key` | `ano*12+mes` do fim de relacionamento (ordenação/filtro) |
-| `apuracao_ref` → "Apuração" | `MM/AAAA` da apuração do lead (= ref + 1) |
-| `vigencia` → "Vigência" | `Vigente` (a que os KPIs apuram) · `Próxima` (esteira do mês seguinte, a mesma da prévia) · `Histórico` · `Futura` · `Sem referência` (sem `dt_fim`) |
-
-As colunas de apuração/vigência aparecem **nos dois escopos** e vão no
-CSV: é o que impede o eixo do analítico de ser lido como o da campanha.
-Nenhum KPI lê `clientes_todos`.
+**Mudanças de 02/10/2026** (decisão do usuário, quando o export virou só
+analítico):
+- **Por Loja** perdeu a coluna *Faixa Prêmio*. A *Conversão %* continua,
+  como **prévia da esteira**.
+- **Detalhamento** perdeu o escopo "Fim de relacionamento · mês" (fica só
+  *Todos os meses*, com o filtro *Fim de Relacionamento*) e as colunas
+  *Apuração* e *Vigência*. Elas posicionavam o lead numa apuração
+  defasada que deixou de existir.
+- `_marcar_vigencia_reconquista` continua gerando `apuracao_*` e
+  `vigencia`. Hoje só `ref_key` e `ref_label` são lidos pela UI.
 
 ### KPI — conversão e faixa de prêmio (substitui a meta fixa)
 
@@ -1018,10 +1062,14 @@ total = EFETIVADA (Reconquista, base ELEGIVEL) + Cobrança Consignável
   Contraste deliberado com `_faixa_premio_conversao`
   ([`src/dashboard/loaders.py:1917`](../../src/dashboard/loaders.py)),
   escada fixa em Python — não é o modelo a seguir aqui.
-- **Assimetria de janela entre as duas parcelas** (esperado, não bug):
-  EFETIVADA carrega a defasagem de 1 mês da Reconquista (apuração `M` =
-  `dt_fim_relacionamento` em `M-1`); Cobrança Consignável conta pagamentos
-  **do próprio mês `M`**.
+- **Assimetria de janela entre as duas parcelas** (esperado, não bug;
+  **só até 08/2026**):
+  - EFETIVADA carrega a defasagem de 1 mês da Reconquista (apuração `M` =
+    `dt_fim_relacionamento` em `M-1`);
+  - Cobrança Consignável conta pagamentos **do próprio mês `M`**.
+
+  A partir de 09/2026 a parcela de Reconquista é a liga do próprio `M`, e
+  as duas parcelas ficam no mesmo mês.
 
 **O dashboard exibe faixa, nunca prêmio.** Decisão de produto: só o
 **rótulo** da faixa atingida (ex.: "3 a 5"). Nenhum valor de premiação em

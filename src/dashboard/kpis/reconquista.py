@@ -20,6 +20,11 @@ Conversao = EFETIVADA / elegiveis. **So ELEGIVEL entra no
 denominador** (NULL ou sem flag conta como elegivel); os NAO ELEGIVEL
 seguem visiveis nos analiticos, apenas fora da conta.
 
+**A partir de 09/2026 (liga)** as Efetivadas deixam de vir daqui: sao a
+contagem `qtde = 1` do arquivo da liga do banco no proprio mes, sem
+defasagem (`liga_vigente`, `totais_liga`,
+`efetivadas_por_consultor_liga`). O export segue como analitico.
+
 ## O que NAO veio para ca
 
 `_faixas_acelerador_por_qtd`, `_faixa_agregada_acelerador` e
@@ -75,6 +80,18 @@ VIGENCIA_SEM_REF = "Sem referência"
 
 # Primeira apuracao (ano, mes) em que a regra vale.
 _ACELERADOR_INICIO = (2026, 8)
+
+# Primeira apuracao (ano, mes) contada pela LIGA (arquivo do banco,
+# tabela `reconquista_liga`, migration 127). Antes dela, efetivadas
+# saem do export (status EFETIVADA, defasagem de 1 mes).
+_LIGA_INICIO = (2026, 9)
+
+# Estados da liga no dict de `carregar_reconquista` (`liga_status`).
+# Publicos: a UI decide a mensagem por eles, sem reescrever a regra.
+LIGA_FORA = "fora"                    # apuracao < 09/2026: regra antiga
+LIGA_OK = "ok"                        # liga do periodo importada
+LIGA_NAO_IMPORTADA = "nao_importada"  # periodo sem linhas na liga
+LIGA_ERRO = "erro"                    # falha ao ler a liga
 
 
 def _faixa_premio_conversao(pct: float) -> Dict:
@@ -387,6 +404,64 @@ def _acelerador_vigente(mes: int, ano: int) -> bool:
     return (ano, mes) >= _ACELERADOR_INICIO
 
 
+def liga_vigente(mes: int, ano: int) -> bool:
+    """A apuracao (mes, ano) e contada pela liga? So a data importa.
+
+    Corte simples, como `_acelerador_vigente`: a partir de 09/2026 o
+    indicador e a contagem do banco no proprio mes, sem defasagem.
+    """
+    return (ano, mes) >= _LIGA_INICIO
+
+
+def _mask_contabilizada(liga: pd.DataFrame) -> pd.Series:
+    """`qtde == 1` — o que o banco contabilizou. Qtde 0 fica so no
+    analitico; valor ausente/ilegivel NAO conta."""
+    if liga is None:
+        return pd.Series([], dtype=bool)
+    if "qtde" not in liga.columns:
+        return pd.Series(False, index=liga.index, dtype=bool)
+    return pd.to_numeric(liga["qtde"], errors="coerce").eq(1)
+
+
+def totais_liga(liga: pd.DataFrame) -> Dict:
+    """Contagem da liga do periodo (frame ja pos-RLS).
+
+    `efetivadas` e o indicador; `liga_listadas`/`liga_nao_contabilizadas`
+    sao contexto do card. Sem base total na liga, nao ha conversao.
+    """
+    if liga is None or liga.empty:
+        return {
+            "efetivadas": 0, "liga_listadas": 0,
+            "liga_nao_contabilizadas": 0,
+        }
+    efet = int(_mask_contabilizada(liga).sum())
+    return {
+        "efetivadas": efet,
+        "liga_listadas": len(liga),
+        "liga_nao_contabilizadas": len(liga) - efet,
+    }
+
+
+def efetivadas_por_consultor_liga(liga: pd.DataFrame) -> pd.DataFrame:
+    """`(consultor, efetivadas)` da liga — so `qtde == 1`.
+
+    Mesmo formato que `montar_acelerador_por_consultor` extrai de
+    `_por_consultor_reconquista`, para entrar no acelerador no lugar da
+    contagem do export.
+    """
+    cols = ["consultor", "efetivadas"]
+    if liga is None or liga.empty or "consultor" not in liga.columns:
+        return pd.DataFrame(columns=cols)
+    contab = liga[_mask_contabilizada(liga)]
+    if contab.empty:
+        return pd.DataFrame(columns=cols)
+    return (
+        contab.groupby("consultor", dropna=False)
+        .size()
+        .reset_index(name="efetivadas")
+    )
+
+
 def _por_consultor_cobranca_consignavel(
     contratos: pd.DataFrame,
 ) -> pd.DataFrame:
@@ -497,6 +572,7 @@ def montar_acelerador_por_consultor(
     df_sup: pd.DataFrame,
     universo_ativos: pd.DataFrame,
     resolver_faixas,
+    efetivadas_por_consultor: Optional[pd.DataFrame] = None,
 ) -> pd.DataFrame:
     """Quebra do acelerador por consultor — a regra, sem a carga.
 
@@ -524,6 +600,10 @@ def montar_acelerador_por_consultor(
         resolver_faixas: callable que recebe as contagens e devolve
             ``{qtd: rotulo}``; e o unico ponto que ainda toca o banco,
             e por isso chega injetado.
+        efetivadas_por_consultor: ``(consultor, efetivadas)`` ja
+            contado — a partir de 09/2026 vem da liga
+            (`efetivadas_por_consultor_liga`). Quando informado,
+            substitui a contagem de EFETIVADA de `clientes`.
 
     Universo = SO consultores ativos, sem supervisor. Supervisor com
     producao propria vira linha separada, marcada "(Supervisor)" e
@@ -532,7 +612,11 @@ def montar_acelerador_por_consultor(
     vazio = pd.DataFrame(columns=COLS_ACELERADOR)
     cobr = _por_consultor_cobranca_consignavel(contratos_consignavel)
 
-    rec = _por_consultor_reconquista(clientes)
+    rec = (
+        efetivadas_por_consultor
+        if efetivadas_por_consultor is not None
+        else _por_consultor_reconquista(clientes)
+    )
     rec = (
         rec[["consultor", "efetivadas"]]
         if not rec.empty
