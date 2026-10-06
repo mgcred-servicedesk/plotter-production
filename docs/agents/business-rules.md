@@ -473,6 +473,41 @@ deriva "Em Análise" excluindo do conjunto:
 
 Essas três exclusões são **cumulativas**.
 
+## `CANCELADO` entre os pagos — conta de propósito (alerta)
+
+`v_contratos_dashboard` filtra **só** por `status_pagamento_cliente`
+(mais a exceção de seguros `Liquidada`) e **não** exclui
+`status_banco = 'CANCELADO'`. Isso é deliberado. Um pago com `CANCELADO` é
+um de dois casos, e as datas não separam um do outro:
+
+| Caso | O que aconteceu |
+|---|---|
+| Reativação | cancelada, depois reativada e paga. Até ago/2026 a origem deixava o status congelado em `CANCELADO` (20 linhas históricas, nov/25–fev/26, vendas reais). Desde set/2026 a origem passa a `EM ANÁLISE` |
+| Estorno | paga ao cliente e cancelada depois (ex.: 3011756, out/2026, cadastro, pagamento e cancelamento no mesmo dia) |
+
+- **Decisão do usuário (06/10/2026): não filtrar.** Um filtro de estorno
+  chegou a ser escrito e foi descartado antes de aplicar. A linha contando
+  como pago é **sinal de que a proposta saiu da ordem natural** e deve ser
+  investigada por uma pessoa, não escondida por regra.
+- Consequência conhecida: uma apuração manual que recorta por
+  `status_banco = 'EM ANÁLISE'` fica **abaixo** do dashboard pelo valor
+  dessas linhas. É explicação, não bug.
+- Nunca propor migration que exclua `CANCELADO` da view de pagos sem pedido
+  explícito.
+
+Para listar os casos de um mês a investigar:
+
+```sql
+SELECT contrato_id, num_proposta, loja, consultor, tipo_operacao,
+       sub_status_banco, data_cadastro, data_status_banco,
+       data_status_pagamento, valor_consolidado
+FROM v_contratos_dashboard
+WHERE status_pagamento_cliente = 'PAGO AO CLIENTE'
+  AND upper(btrim(coalesce(status_banco, ''))) = 'CANCELADO'
+  AND data_status_pagamento BETWEEN '2026-10-01' AND '2026-10-31'
+ORDER BY data_status_pagamento;
+```
+
 ## Cancelados — contenção de redigitação
 
 O total de cancelados infla com **redigitações** (a mesma proposta digitada
