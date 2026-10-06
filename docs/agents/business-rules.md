@@ -1081,8 +1081,21 @@ sem nova decisão.
 ### Cobrança Consignável — critério
 
 Acelerador **novo e independente** da Reconquista: contagem de contratos
-por consultor no mês de apuração. Critérios combinados por **AND**, sobre
-o frame de contratos pagos (`v_contratos_dashboard`):
+por consultor no mês de apuração, sobre o frame de contratos pagos
+(`v_contratos_dashboard`). Desde a migration 130 o critério é **misto**:
+um contrato conta se passar pelo **sinal de valor** OU pela **tabela
+dedicada**.
+
+**Tabela dedicada (≥ 10/2026).** O banco criou, em 05/10/2026, as tabelas
+`COBRANÇA CONSIGNAVEL - NOVO - …` e `COBRANÇA CONSIGNAVEL - REFIN - …`.
+Toda proposta paga dessas tabelas conta, **NOVO e REFIN**. Reconhecida
+pelo nome em `produtos.tabela` (normalizado, `LIKE 'COBRAN_A
+CONSIGN_VEL%'`, o `_` cobre Ç/Á). Função `fn_eh_tabela_cobranca_consignavel`.
+Tabela nova da modalidade com outro nome exige `CREATE OR REPLACE` dela.
+
+**Sinal de valor (≥ 08/2026).** Continua valendo porque antes de 05/10
+houve propostas da modalidade em tabelas normais (INSS…). Critérios por
+**AND**:
 
 | Critério | Regra |
 |---|---|
@@ -1092,10 +1105,17 @@ o frame de contratos pagos (`v_contratos_dashboard`):
 | `categoria_codigo` | = `CONSIG_BMG` — é o que separa Consignado (INSS/público) de **CLT** (Consignado Privado e-Social): as duas linhas compartilham `TIPO OPER.`/`SUBTIPO` e só divergem aqui. Sem ele, CLT contaminaria a contagem |
 | `BANCO` | normalizado ∈ {`BMG`, `BANCO BMG`} — mesma normalização da [flag "Somente BMG/Help"](#flag-somente-bmghelp), **sem** `HELP` |
 | Valor | `valor_bruto <> valor` (`VLR BRUTO` ≠ `VLR BASE`), com tolerância de meio centavo |
+| Corte | `data_status_pagamento >= 2026-08-01` (início da modalidade) |
 
-> **Onde a regra mora:** desde a migration 067 o critério é a função SQL
-> `fn_eh_cobranca_consignavel`, exposta como coluna
-> `is_cobranca_consignavel` em `v_contratos_dashboard`. A tabela acima é
+> **Por que o corte:** a carga retroativa de 09/2025 (feita em 05/10/2026)
+> foi o primeiro mês antigo com `VLR BRUTO` preenchido, e sem corte o sinal
+> marcava 233 contratos de 09/2025 (+R$ 181.821,56 de produção e
+> pontuação) num mês em que a modalidade não existia.
+
+> **Onde a regra mora:** o sinal de valor é `fn_eh_cobranca_consignavel`
+> (067) envolvida pelo corte em `fn_eh_cobranca_consignavel_por_valor`
+> (130); a coluna `is_cobranca_consignavel` de `v_contratos_dashboard` é
+> `por_valor OR tabela`. A tabela acima é
 > **espelho documental** — alterar a regra é `CREATE OR REPLACE FUNCTION`
 > numa migration nova, nunca reimplementar a máscara em Python. O loader
 > aplica o filtro server-side (`.eq("is_cobranca_consignavel", True)`); o
@@ -1141,9 +1161,16 @@ produção considera o VLR BRUTO** — o valor cheio da operação.
 materializa isso:
 
 ```
-valor_consolidado = GREATEST(valor_bruto, valor)  quando is_cobranca_consignavel
+valor_consolidado = GREATEST(valor_bruto, valor)  quando fn_eh_cobranca_consignavel_por_valor
                   = valor                          nos demais casos
 ```
+
+**Só o sinal de valor move a produção para o VLR BRUTO** (130). Contrato
+reconhecido apenas pela tabela dedicada produz no `VLR BASE`, em especial
+o **REFIN**: nele o `VLR BRUTO` inclui o saldo quitado do contrato
+anterior (ex.: 3011868, base 4.075,96 × bruto 47.130,79), assim como nos
+refins BMG comuns. O REFIN conta no **contador**, não no valor. Nas
+tabelas novas o NOVO chega com bruto = base, então não há uplift a perder.
 
 | Aspecto | Regra |
 |---|---|
