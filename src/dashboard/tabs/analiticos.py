@@ -1221,11 +1221,6 @@ def _render_cobranca_consignavel(reconquista: dict | None) -> None:
         st.info("Nenhuma proposta de Cobrança Consignável no período.")
         return
 
-    st.caption(
-        "Contratos de Cobrança Consignável são considerados os valores cheios "
-        "(Valor bruto), para os clientes o valor recebível é o Valor Base."
-    )
-
     df_f = _filtrar_loja_consultor(contratos, "cobr_consig")
 
     total_valor = (
@@ -1246,7 +1241,10 @@ def _render_cobranca_consignavel(reconquista: dict | None) -> None:
     # venda cheia foi Y, entrou Y na producao") e deixa visivel o
     # GREATEST da migration 067 quando o bruto vem menor que a base
     # (Considerado = Base).
-    cols += ["BANCO", "VALOR_BASE", "VALOR_BRUTO", "VALOR"]
+    # TIPO OPER. separa Contrato Novo de Refinanciamento: desde a
+    # migration 130 as tabelas dedicadas do banco trazem REFIN, que
+    # produz no VLR BASE (Considerado = Base mesmo com Bruto maior).
+    cols += ["TIPO OPER.", "BANCO", "VALOR_BASE", "VALOR_BRUTO", "VALOR"]
     cols_disp = [c for c in cols if c in df_f.columns]
 
     df_tab = (
@@ -1258,6 +1256,7 @@ def _render_cobranca_consignavel(reconquista: dict | None) -> None:
             "LOJA": "Loja",
             "CONSULTOR": "Consultor",
             "REGIAO": "Regiao",
+            "TIPO OPER.": "Tipo Operacao",
             "BANCO": "Banco",
             "VALOR_BASE": "Valor Base",
             "VALOR_BRUTO": "Valor Bruto",
