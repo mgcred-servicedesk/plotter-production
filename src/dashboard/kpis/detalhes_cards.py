@@ -27,7 +27,8 @@ Regras transversais:
 - Medias (quadro 4): ``media = total_do_grupo / qtd_distinta_no_grupo``
   (PRINCIPAL) e ``media DU = media / du_decorridos`` (SECUNDARIO), com a
   MESMA base. base distinta de CONSULTOR exclui supervisores via
-  ``excluir_supervisores``.
+  ``excluir_supervisores``; as duas bases excluem lojas de backoffice
+  (VAI E VEM) via ``excluir_lojas_backoffice``.
 """
 
 from typing import Callable, Optional
@@ -36,6 +37,7 @@ import pandas as pd
 
 from src.dashboard.kpis.consolidacao import eh_emissao
 from src.dashboard.kpis.gerais import (
+    excluir_lojas_backoffice,
     excluir_supervisores,
     separar_cancelados_liquidos,
 )
@@ -163,7 +165,9 @@ def _medias_por_dimensao(
     if df.empty or dimensao not in df.columns or coluna_base not in df.columns:
         return pd.DataFrame(columns=cols)
 
-    trabalho = aplicar_conta_valor(df)
+    # VAI E VEM e setor de digitacao: fora das medias por consultor e
+    # por loja, como no card (``calcular_medias_du_por_nivel``).
+    trabalho = excluir_lojas_backoffice(aplicar_conta_valor(df))
     if base == "consultor":
         trabalho = excluir_supervisores(trabalho, df_supervisores)
     if trabalho.empty:

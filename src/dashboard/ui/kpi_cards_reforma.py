@@ -259,12 +259,33 @@ def render_kpis_contexto(
     media_du_consultor = medias.get("media_du_consultor", 0)
     projecao_consultor = media_du_consultor * du_total
 
-    # Médias por loja (em valor)
-    num_lojas = kpis.get("num_lojas", 1)
-    media_loja = total_vendas / num_lojas if num_lojas > 0 else 0
+    # Médias por loja (em valor). Numerador e denominador SEM VAI E VEM
+    # (setor de digitacao, nao loja comparavel): `kpis['num_lojas']` e
+    # `total_vendas` contam o setor como loja e diluiam a media. Fallback
+    # para `kpis` so se a chave faltar (dict de media de outro caminho).
+    prod_lojas = medias.get("producao_lojas")
+    if prod_lojas is not None:
+        num_lojas = int(medias.get("num_lojas", 0) or 0)
+        num_loja = float(prod_lojas)
+    else:
+        num_lojas = kpis.get("num_lojas", 1)
+        num_loja = float(total_vendas or 0)
+    # Rotulo da base: lojas fisicas + Digital (o canal entra na
+    # comparacao mas nao e loja fisica). Sem Digital no escopo (ex.:
+    # gerente de outra regiao) cai no texto simples.
+    num_digitais = int(medias.get("num_lojas_digitais", 0) or 0)
+    num_fisicas = num_lojas - num_digitais
+    if num_digitais > 0:
+        rotulo_lojas = (
+            f"{num_fisicas:,} lojas f&#237;sicas + Digital "
+            f"({num_lojas:,} na compara&#231;&#227;o)"
+        )
+    else:
+        rotulo_lojas = f"Acumulado entre {num_lojas:,} lojas"
+    media_loja = num_loja / num_lojas if num_lojas > 0 else 0
     du_dec = kpis.get("du_decorridos", 1)
     if num_lojas > 0 and du_dec > 0:
-        media_du_loja = total_vendas / num_lojas / du_dec
+        media_du_loja = num_loja / num_lojas / du_dec
     else:
         media_du_loja = media_loja
     projecao_loja = media_du_loja * du_total
@@ -331,7 +352,7 @@ def render_kpis_contexto(
             <div class="mg-kpi-ctx-valor">{_formatar_valor_moeda(media_loja)}</div>
             <div class="mg-kpi-ctx-sub">
                 <span style="font-size:12px;">{formatar_moeda(media_loja)}</span><br>
-                Acumulado entre {num_lojas:,} lojas<br>
+                {rotulo_lojas}<br>
                 Média DU/loja:
                 <strong>{_formatar_valor_moeda(media_du_loja)}</strong><br>
                 Projeção fim do mês:

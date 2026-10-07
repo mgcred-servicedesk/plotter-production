@@ -70,6 +70,11 @@ def excluir_supervisores(
 # filtro (regra de negócio: nessas somas o Vai e Vem conta normalmente).
 LOJAS_BACKOFFICE: frozenset = frozenset({"VAI E VEM"})
 
+# Canal digital: NAO e loja fisica, mas entra nas medias por loja e por
+# consultor (regra do usuario). So serve para rotular a contagem na
+# tela ("47 lojas + Digital").
+LOJAS_DIGITAIS: frozenset = frozenset({"DIGITAL"})
+
 
 def peso_headcount_escopo(
     df_headcount: Optional[pd.DataFrame],
@@ -758,8 +763,11 @@ def calcular_medias_du_por_nivel(
 ) -> Dict:
     """Calcula medias DU por loja e por consultor.
 
-    Exclui supervisores e lojas de backoffice (``LOJAS_BACKOFFICE``) —
-    ambos distorceriam as médias por nível.
+    Lojas de backoffice (``LOJAS_BACKOFFICE``) saem das duas medias.
+    Supervisores saem SO da media por consultor: na media por loja a
+    venda do supervisor e producao da loja (decisao do usuario,
+    2026-10-07) — tira-la subestimava a loja que tem supervisor
+    vendedor.
 
     ``peso_headcount`` e o denominador PONDERADO da competencia
     (``fn_headcount_ponderado``, migration 091), somado no escopo pelo
@@ -768,15 +776,23 @@ def calcular_medias_du_por_nivel(
     (quem produziu), e ``denominador_consultores`` no retorno diz qual
     dos dois valeu.
     """
-    df_sem_sup = excluir_lojas_backoffice(
-        excluir_supervisores(df, df_supervisores)
-    )
+    df_lojas = excluir_lojas_backoffice(df)
+    df_sem_sup = excluir_supervisores(df_lojas, df_supervisores)
 
-    # Media DU por loja
+    # Media DU por loja — com supervisor, sem backoffice.
     num_lojas = 0
-    if "LOJA" in df_sem_sup.columns and not df_sem_sup.empty:
-        vendas_por_loja = df_sem_sup.groupby("LOJA")["VALOR"].sum()
+    num_lojas_digitais = 0
+    producao_lojas = 0.0
+    if "LOJA" in df_lojas.columns and not df_lojas.empty:
+        vendas_por_loja = df_lojas.groupby("LOJA")["VALOR"].sum()
         num_lojas = len(vendas_por_loja)
+        num_lojas_digitais = int(
+            pd.Series(vendas_por_loja.index)
+            .astype(str).str.strip().str.upper()
+            .isin(LOJAS_DIGITAIS)
+            .sum()
+        )
+        producao_lojas = float(vendas_por_loja.sum())
         media_du_loja = (
             vendas_por_loja.mean() / du_decorridos
             if du_decorridos > 0
@@ -828,6 +844,8 @@ def calcular_medias_du_por_nivel(
         "media_du_loja": media_du_loja,
         "media_du_consultor": media_du_consultor,
         "num_lojas": num_lojas,
+        # Quantas das `num_lojas` sao canal digital (0 ou 1) — so rotulo.
+        "num_lojas_digitais": num_lojas_digitais,
         "num_consultores": num_consultores,
         # Producao da populacao CONSULTOR (sem supervisor, sem
         # backoffice) — o numerador que casa com o denominador acima.
@@ -836,6 +854,10 @@ def calcular_medias_du_por_nivel(
         # supervisor e VAI E VEM (regra de 2026-08-10), o peso exclui os
         # dois, e dividir um pelo outro e media sobre duas populacoes.
         "producao_consultores": total_consultores,
+        # Numerador da media por loja: producao sem VAI E VEM (setor de
+        # digitacao, nao loja comparavel), com supervisor. `num_lojas`
+        # acima e o denominador que casa com ele.
+        "producao_lojas": producao_lojas,
         "peso_consultores": (
             float(peso_headcount) if peso_headcount is not None else 0.0
         ),
