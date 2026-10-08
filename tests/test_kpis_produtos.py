@@ -558,3 +558,56 @@ class TestCalcularDistribuicaoProdutosPorLoja:
         assert loja_a["TOTAL"] == pytest.approx(1500.0)
         assert "CLT" in moeda
         assert "CLT (Qtd)" in numero
+
+
+@pytest.mark.unit
+class TestDistribuicaoSeparaPortabilidade:
+    """Portabilidade em coluna de valor propria, fora do CONSIGNADO.
+
+    ``categoria_codigo = PORTABILIDADE`` tem ``grupo_dashboard =
+    CONSIGNADO``; ate 2026-10-08 o R$ dela somava na coluna CONSIGNADO.
+    """
+
+    def _df(self):
+        return pd.DataFrame({
+            "LOJA": ["A", "A", "A", "B"],
+            "CONSULTOR": ["João", "João", "João", "Maria"],
+            "grupo_dashboard": ["CONSIGNADO", "CONSIGNADO", "CONSIGNADO", "CNC"],
+            "categoria_codigo": [
+                "CONSIG_BMG", "CONSIG_BMG", "PORTABILIDADE", "CNC",
+            ],
+            "SUBTIPO": ["NOVO", "REFIN", "PORTABILIDADE", "NOVO"],
+            "VALOR": [1000.0, 400.0, 2500.0, 300.0],
+            "TIPO_PRODUTO": ["CONSIG", "CONSIG", "PORTABILIDADE", "CNC"],
+        })
+
+    def test_por_consultor(self):
+        distrib, moeda, numero = calcular_distribuicao_produtos(self._df())
+        assert {"CONSIGNADO", "PORTABILIDADE"}.issubset(set(moeda))
+        joao = distrib[distrib["CONSULTOR"] == "João"].iloc[0]
+        assert joao["CONSIGNADO"] == pytest.approx(1400.0)
+        assert joao["PORTABILIDADE"] == pytest.approx(2500.0)
+        # TOTAL inalterado e a contagem de Consignado (Novo/Refin) idem.
+        assert joao["TOTAL"] == pytest.approx(3900.0)
+        assert joao["Consignado (Novo/Refin)"] == 2
+
+    def test_por_loja(self):
+        distrib, moeda, _ = calcular_distribuicao_produtos_por_loja(self._df())
+        assert "PORTABILIDADE" in moeda
+        loja_a = distrib[distrib["LOJA"] == "A"].iloc[0]
+        assert loja_a["CONSIGNADO"] == pytest.approx(1400.0)
+        assert loja_a["PORTABILIDADE"] == pytest.approx(2500.0)
+        assert loja_a["TOTAL"] == pytest.approx(3900.0)
+
+    def test_filtro_de_banco_recorta_as_duas_colunas(self):
+        # Portabilidade C6 e consignado BMG: cada recorte so mostra o seu.
+        df = self._df().assign(BANCO=["BMG", "BMG", "C6", "BMG"])
+        for fn in (calcular_distribuicao_produtos,
+                   calcular_distribuicao_produtos_por_loja):
+            so_c6, moeda_c6, _ = fn(df, bancos=("C6",))
+            assert "CONSIGNADO" not in moeda_c6
+            assert so_c6["PORTABILIDADE"].sum() == pytest.approx(2500.0)
+
+            so_bmg, moeda_bmg, _ = fn(df, bancos=("BMG",))
+            assert "PORTABILIDADE" not in moeda_bmg
+            assert so_bmg["CONSIGNADO"].sum() == pytest.approx(1400.0)

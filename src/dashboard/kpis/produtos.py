@@ -86,6 +86,33 @@ def adicionar_produto_detalhado(df: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
+# Rotulo proprio da Portabilidade nas visoes por PRODUTO_DETALHADO que a
+# separam do consignado Novo/Refin (detalhe Em Analise e Distribuicao).
+ROTULO_PORTABILIDADE = "PORTABILIDADE"
+
+
+def separar_portabilidade(df: pd.DataFrame) -> pd.DataFrame:
+    """Rotula a Portabilidade como coluna propria em ``PRODUTO_DETALHADO``.
+
+    A categoria ``PORTABILIDADE`` tem ``grupo_dashboard = CONSIGNADO`` e
+    por isso somava na mesma coluna do consignado Novo/Refin. Aqui as
+    linhas com ``categoria_codigo == 'PORTABILIDADE'`` passam a
+    ``PORTABILIDADE``; o restante do consignado continua ``CONSIGNADO``.
+    Espera o df ja passado por ``adicionar_produto_detalhado``. Copia
+    defensiva; sem ``categoria_codigo`` ou sem ``PRODUTO_DETALHADO``
+    devolve copia inalterada.
+    """
+    out = df.copy()
+    if (
+        "categoria_codigo" not in out.columns
+        or COL_PRODUTO_DETALHADO not in out.columns
+    ):
+        return out
+    mask = out["categoria_codigo"] == "PORTABILIDADE"
+    out.loc[mask, COL_PRODUTO_DETALHADO] = ROTULO_PORTABILIDADE
+    return out
+
+
 def calcular_kpis_por_produto(
     df: pd.DataFrame,
     df_metas_produto: pd.DataFrame,
@@ -337,7 +364,10 @@ def calcular_distribuicao_produtos(
     mask_cred = (df_v["VALOR"] > 0) & ~bmg_v & ~seg_v & ~em_v
     # PACK desmembrado: a distribuicao nao compara com meta, entao cada
     # categoria vira sua propria coluna (FGTS / ANT. DE BENEF. / CNC 13º).
-    df_cred = adicionar_produto_detalhado(df_v[mask_cred].copy())
+    # Portabilidade sai do CONSIGNADO e ganha coluna propria.
+    df_cred = separar_portabilidade(
+        adicionar_produto_detalhado(df_v[mask_cred].copy())
+    )
     df_cred["PRODUTO_MIX"] = (
         df_cred[COL_PRODUTO_DETALHADO].fillna("OUTROS")
         if COL_PRODUTO_DETALHADO in df_cred.columns
@@ -465,7 +495,10 @@ def calcular_distribuicao_produtos_por_loja(
     mask_cred = (df_v["VALOR"] > 0) & ~bmg_v & ~seg_v & ~em_v
     # PACK desmembrado: a distribuicao nao compara com meta, entao cada
     # categoria vira sua propria coluna (FGTS / ANT. DE BENEF. / CNC 13º).
-    df_cred = adicionar_produto_detalhado(df_v[mask_cred].copy())
+    # Portabilidade sai do CONSIGNADO e ganha coluna propria.
+    df_cred = separar_portabilidade(
+        adicionar_produto_detalhado(df_v[mask_cred].copy())
+    )
     df_cred["PRODUTO_MIX"] = (
         df_cred[COL_PRODUTO_DETALHADO].fillna("OUTROS")
         if COL_PRODUTO_DETALHADO in df_cred.columns

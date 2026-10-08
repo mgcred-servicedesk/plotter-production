@@ -47,7 +47,9 @@ from src.dashboard.kpis.gerais import (
 from src.dashboard.kpis.produtos import (  # noqa: F401
     COL_PRODUTO_DETALHADO,
     PACK_SPLIT_LABELS,
+    ROTULO_PORTABILIDADE,
     adicionar_produto_detalhado,
+    separar_portabilidade,
 )
 
 
@@ -279,32 +281,6 @@ def filtrar_ultimo_dia(df_analise: pd.DataFrame) -> tuple[pd.DataFrame, str]:
     dias = datas.dt.normalize()
     ultimo = dias.max()
     return df_analise[dias == ultimo], ultimo.strftime("%d/%m/%Y")
-
-
-# Rotulo proprio da Portabilidade no pivot de digitacao do ultimo dia.
-ROTULO_PORTABILIDADE = "PORTABILIDADE"
-
-
-def separar_portabilidade(df: pd.DataFrame) -> pd.DataFrame:
-    """Rotula a Portabilidade como coluna propria em ``PRODUTO_DETALHADO``.
-
-    A categoria ``PORTABILIDADE`` tem ``grupo_dashboard = CONSIGNADO`` e
-    por isso somava na mesma coluna do consignado Novo/Refin. Aqui as
-    linhas com ``categoria_codigo == 'PORTABILIDADE'`` passam a
-    ``PORTABILIDADE``; o restante do consignado continua ``CONSIGNADO``.
-    Espera o df ja passado por ``adicionar_produto_detalhado``. Copia
-    defensiva; sem ``categoria_codigo`` ou sem ``PRODUTO_DETALHADO``
-    devolve copia inalterada.
-    """
-    out = df.copy()
-    if (
-        "categoria_codigo" not in out.columns
-        or COL_PRODUTO_DETALHADO not in out.columns
-    ):
-        return out
-    mask = out["categoria_codigo"] == "PORTABILIDADE"
-    out.loc[mask, COL_PRODUTO_DETALHADO] = ROTULO_PORTABILIDADE
-    return out
 
 
 def rotular_produto_sem_grupo(df: pd.DataFrame) -> pd.DataFrame:

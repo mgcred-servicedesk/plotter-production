@@ -78,3 +78,16 @@ somava R$ 92.684,00 em 06/10 sem dizer o quê, e a Portabilidade
   **não** foi aplicado lá: o df de em análise traz `TIPO_PRODUTO` em
   todas as linhas e BMG Med/Seguro/Emissão (sem `grupo_dashboard`)
   virariam colunas próprias — hoje caem em OUTROS zerado e somem.
+
+## Atualização — 2026-10-08 (Distribuição de Produtos)
+
+- `separar_portabilidade` (e `ROTULO_PORTABILIDADE`) movidos para
+  `kpis/produtos.py` — `detalhes_cards` importa de `produtos`, o inverso
+  seria import circular; reexportados em `detalhes_cards` como já era
+  com `adicionar_produto_detalhado`.
+- Aplicado nas duas distribuições de Analíticos (consultor e loja), no
+  pivot de valor. 2 testes novos; sabotado, caem 4 (com os do helper).
+- Pagos reais 10/2026 pelo caminho do app (`_executar_consolidacao`),
+  por loja: CONSIGNADO 1.346.772,79 · PORTABILIDADE 520.326,41; TOTAL
+  2.931.266,51 inalterado; sem OUTROS (CLT/ANT. DE BENEF. já vinham pelo
+  fallback da consolidação).

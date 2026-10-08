@@ -512,10 +512,13 @@ via `obter_digitacao_diaria_detalhe` (≥ migration 132).
 
 - **Portabilidade em coluna própria** — `categoria_codigo = PORTABILIDADE`
   sai do `CONSIGNADO` (que fica só com Novo/Refin) e vira `PORTABILIDADE`
-  (`separar_portabilidade`, em `kpis/detalhes_cards.py`). Vale para
-  este quadro e para a **Análise por Produto** da mesma página; as demais
-  telas que usam `PRODUTO_DETALHADO` seguem somando Portabilidade em
-  `CONSIGNADO`.
+  (`separar_portabilidade`, em `kpis/produtos.py`). Vale para este
+  quadro, para a **Análise por Produto** da mesma página e para a
+  **Distribuição de Produtos** (Analíticos, por consultor e por loja —
+  coluna de valor `PORTABILIDADE`; a contagem `Consignado (Novo/Refin)`
+  não muda, Portabilidade já ficava fora dela). As demais telas que usam
+  `PRODUTO_DETALHADO` (Rankings, demais Analíticos, Cancelados) seguem
+  somando Portabilidade em `CONSIGNADO`.
 - **CLT e ANT. DE BENEF. não caem em OUTROS** — o ETL grava os dois sem
   categoria (ver migration 061); a RPC devolve `tipo_produto` **só** nas
   linhas sem categoria e o loader aplica `_preencher_categoria_fallback`,
