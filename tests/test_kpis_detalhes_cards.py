@@ -28,6 +28,8 @@ from src.dashboard.kpis.detalhes_cards import (
     detalhe_reaproveitamento,
     filtrar_ultimo_dia,
     ocultar_colunas_zeradas,
+    rotular_produto_sem_grupo,
+    separar_portabilidade,
 )
 
 
@@ -1068,3 +1070,97 @@ class TestOcultarColunasZeradas:
         pivot = pd.DataFrame({"REGIAO": ["R1", "Total"]})
         out = ocultar_colunas_zeradas(pivot, "REGIAO")
         assert list(out.columns) == ["REGIAO"]
+
+
+# ──────────────────────────────────────────────────────────────────
+# Portabilidade em coluna propria (separar_portabilidade)
+# ──────────────────────────────────────────────────────────────────
+
+
+@pytest.fixture
+def df_digitacao_consig():
+    return pd.DataFrame(
+        {
+            "REGIAO": ["NORTE", "NORTE", "NORTE", "SUL"],
+            "grupo_dashboard": [
+                "CONSIGNADO", "CONSIGNADO", "CONSIGNADO", "CNC",
+            ],
+            "categoria_codigo": [
+                "CONSIG_BMG", "CONSIG_C6", "PORTABILIDADE", "CNC",
+            ],
+            "VALOR": [300.0, 200.0, 700.0, 50.0],
+        }
+    )
+
+
+@pytest.mark.unit
+class TestSepararPortabilidade:
+    def test_portabilidade_vira_coluna_propria(self, df_digitacao_consig):
+        out = separar_portabilidade(
+            adicionar_produto_detalhado(df_digitacao_consig)
+        )
+        assert list(out[COL_PRODUTO_DETALHADO]) == [
+            "CONSIGNADO", "CONSIGNADO", "PORTABILIDADE", "CNC",
+        ]
+
+    def test_pivot_separa_sem_mudar_o_total(self, df_digitacao_consig):
+        base = adicionar_produto_detalhado(df_digitacao_consig)
+        antes = detalhe_analise_pivot(base, "REGIAO", COL_PRODUTO_DETALHADO)
+        depois = detalhe_analise_pivot(
+            separar_portabilidade(base), "REGIAO", COL_PRODUTO_DETALHADO
+        )
+        norte = depois[depois["REGIAO"] == "NORTE"].iloc[0]
+        assert norte["CONSIGNADO"] == pytest.approx(500.0)
+        assert norte["PORTABILIDADE"] == pytest.approx(700.0)
+        assert list(depois["Total"]) == pytest.approx(list(antes["Total"]))
+
+    def test_nao_altera_o_df_de_entrada(self, df_digitacao_consig):
+        base = adicionar_produto_detalhado(df_digitacao_consig)
+        separar_portabilidade(base)
+        assert "PORTABILIDADE" not in set(base[COL_PRODUTO_DETALHADO])
+
+    def test_sem_colunas_necessarias_devolve_inalterado(self):
+        df = pd.DataFrame({"grupo_dashboard": ["CONSIGNADO"]})
+        out = separar_portabilidade(df)
+        assert list(out.columns) == ["grupo_dashboard"]
+
+
+@pytest.mark.unit
+class TestRotularProdutoSemGrupo:
+    def _df(self):
+        return pd.DataFrame(
+            {
+                "REGIAO": ["NORTE", "NORTE", "SUL", "SUL"],
+                "grupo_dashboard": ["CNC", None, None, None],
+                "categoria_codigo": ["CNC", "", "", "BMG_MED"],
+                "TIPO_PRODUTO": [None, "Produto Novo", None, None],
+                "VALOR": [100.0, 40.0, 0.0, 0.0],
+            }
+        )
+
+    def test_tipo_sem_grupo_vira_coluna_propria(self):
+        out = rotular_produto_sem_grupo(
+            adicionar_produto_detalhado(self._df())
+        )
+        assert out[COL_PRODUTO_DETALHADO].iloc[0] == "CNC"
+        assert out[COL_PRODUTO_DETALHADO].iloc[1] == "PRODUTO NOVO"
+        # Sem tipo segue nulo → OUTROS no pivot.
+        assert out[COL_PRODUTO_DETALHADO].iloc[2:].isna().all()
+
+    def test_pivot_sem_outros_com_valor(self):
+        base = rotular_produto_sem_grupo(
+            adicionar_produto_detalhado(self._df())
+        )
+        res = ocultar_colunas_zeradas(
+            detalhe_analise_pivot(base, "REGIAO", COL_PRODUTO_DETALHADO),
+            "REGIAO",
+        )
+        # OUTROS (BMG Med, valor zero) some; o produto novo tem coluna.
+        assert list(res.columns) == ["REGIAO", "CNC", "PRODUTO NOVO", "Total"]
+
+    def test_sem_coluna_tipo_inalterado(self):
+        df = adicionar_produto_detalhado(
+            self._df().drop(columns="TIPO_PRODUTO")
+        )
+        out = rotular_produto_sem_grupo(df)
+        assert out[COL_PRODUTO_DETALHADO].isna().sum() == 3

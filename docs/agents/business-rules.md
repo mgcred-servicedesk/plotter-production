@@ -505,6 +505,28 @@ deriva "Em Análise" excluindo do conjunto:
 
 Essas três exclusões são **cumulativas**.
 
+### Quadro "Digitação do Último Dia" (página Em Análise)
+
+Pivot dimensão × produto da **digitação** (todos os status, valor bruto),
+via `obter_digitacao_diaria_detalhe` (≥ migration 132).
+
+- **Portabilidade em coluna própria** — `categoria_codigo = PORTABILIDADE`
+  sai do `CONSIGNADO` (que fica só com Novo/Refin) e vira `PORTABILIDADE`
+  (`separar_portabilidade`, em `kpis/detalhes_cards.py`). Vale para
+  este quadro e para a **Análise por Produto** da mesma página; as demais
+  telas que usam `PRODUTO_DETALHADO` seguem somando Portabilidade em
+  `CONSIGNADO`.
+- **CLT e ANT. DE BENEF. não caem em OUTROS** — o ETL grava os dois sem
+  categoria (ver migration 061); a RPC devolve `tipo_produto` **só** nas
+  linhas sem categoria e o loader aplica `_preencher_categoria_fallback`,
+  como pagos/em análise/cancelados. Contorno no dashboard; a correção na
+  origem (mapa `TIPO_TO_CATEGORIA` do angry-man) segue pendente.
+- **Produto sem categoria nunca vira OUTROS** — se o fallback também não
+  reconhece o tipo, a coluna leva o próprio `TIPO_PRODUTO` em maiúsculas
+  (`rotular_produto_sem_grupo`). Colunas zeradas em todas as linhas são
+  ocultadas (`ocultar_colunas_zeradas`) — é o caso de BMG Med/Seguro,
+  que chegam com valor 0.
+
 ## `CANCELADO` entre os pagos — conta de propósito (alerta)
 
 `v_contratos_dashboard` filtra **só** por `status_pagamento_cliente`

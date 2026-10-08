@@ -281,6 +281,54 @@ def filtrar_ultimo_dia(df_analise: pd.DataFrame) -> tuple[pd.DataFrame, str]:
     return df_analise[dias == ultimo], ultimo.strftime("%d/%m/%Y")
 
 
+# Rotulo proprio da Portabilidade no pivot de digitacao do ultimo dia.
+ROTULO_PORTABILIDADE = "PORTABILIDADE"
+
+
+def separar_portabilidade(df: pd.DataFrame) -> pd.DataFrame:
+    """Rotula a Portabilidade como coluna propria em ``PRODUTO_DETALHADO``.
+
+    A categoria ``PORTABILIDADE`` tem ``grupo_dashboard = CONSIGNADO`` e
+    por isso somava na mesma coluna do consignado Novo/Refin. Aqui as
+    linhas com ``categoria_codigo == 'PORTABILIDADE'`` passam a
+    ``PORTABILIDADE``; o restante do consignado continua ``CONSIGNADO``.
+    Espera o df ja passado por ``adicionar_produto_detalhado``. Copia
+    defensiva; sem ``categoria_codigo`` ou sem ``PRODUTO_DETALHADO``
+    devolve copia inalterada.
+    """
+    out = df.copy()
+    if (
+        "categoria_codigo" not in out.columns
+        or COL_PRODUTO_DETALHADO not in out.columns
+    ):
+        return out
+    mask = out["categoria_codigo"] == "PORTABILIDADE"
+    out.loc[mask, COL_PRODUTO_DETALHADO] = ROTULO_PORTABILIDADE
+    return out
+
+
+def rotular_produto_sem_grupo(df: pd.DataFrame) -> pd.DataFrame:
+    """Usa o ``TIPO_PRODUTO`` como coluna quando nao ha grupo de produto.
+
+    Linha sem ``PRODUTO_DETALHADO`` (produto sem categoria que nem o
+    ``_preencher_categoria_fallback`` reconheceu) cairia no bucket
+    ``OUTROS`` do pivot. Com o tipo disponivel (a RPC de digitacao o
+    devolve so nessas linhas — migration 132), a coluna leva o nome do
+    produto: cada produto digitado tem coluna propria. Sem tipo, segue
+    nulo → ``OUTROS``. Copia defensiva; sem as colunas, inalterado.
+    """
+    out = df.copy()
+    if (
+        "TIPO_PRODUTO" not in out.columns
+        or COL_PRODUTO_DETALHADO not in out.columns
+    ):
+        return out
+    tipo = out["TIPO_PRODUTO"].astype("string").str.strip()
+    mask = out[COL_PRODUTO_DETALHADO].isna() & tipo.notna() & (tipo != "")
+    out.loc[mask, COL_PRODUTO_DETALHADO] = tipo[mask].str.upper()
+    return out
+
+
 def detalhe_analise_pivot(
     df_analise: pd.DataFrame,
     linha: str,

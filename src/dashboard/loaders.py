@@ -786,7 +786,9 @@ def carregar_digitacao_diaria_detalhe(
     ``grupo_dashboard``, ``categoria_codigo``, ``VALOR`` (bruto, =
     valor_digitado), ``qtd_digitada``. SEM ``conta_valor`` — digitacao e
     volume bruto. ``categoria_codigo`` permite desmembrar o grupo 'PACK'
-    em colunas granulares no pivot (RPC migration 041).
+    em colunas granulares no pivot (RPC migration 041). ``TIPO_PRODUTO``
+    (so nas linhas sem categoria, migration 132) recupera a categoria
+    via ``_preencher_categoria_fallback``.
     """
     if _eh_mes_atual(mes, ano):
         return _digitacao_detalhe_atual(mes, ano, dias_recentes)
@@ -811,6 +813,11 @@ def _fetch_digitacao_diaria_detalhe(
     ``dias_recentes`` (None = mes inteiro) e repassado a RPC como
     ``p_dias_recentes`` (migration 042); omitido quando None para usar o
     DEFAULT NULL da funcao.
+
+    ``TIPO_PRODUTO`` (migration 132) so vem preenchido nas linhas sem
+    categoria e alimenta o mesmo ``_preencher_categoria_fallback`` das
+    outras cargas — sem ele, CLT e ANT. DE BENEF. (que o ETL grava sem
+    categoria) caiam no bucket OUTROS do pivot.
     """
     cols = [
         "DATA_CADASTRO",
@@ -819,6 +826,7 @@ def _fetch_digitacao_diaria_detalhe(
         "LOJA",
         "grupo_dashboard",
         "categoria_codigo",
+        "TIPO_PRODUTO",
         "VALOR",
         "qtd_digitada",
     ]
@@ -845,6 +853,9 @@ def _fetch_digitacao_diaria_detalhe(
                 # None enquanto a migration 041 nao roda → o helper de
                 # split cai no fallback grupo_dashboard (sem quebrar).
                 "categoria_codigo": r.get("categoria_codigo"),
+                # None enquanto a migration 132 nao roda → o fallback
+                # nao preenche nada (comportamento anterior).
+                "TIPO_PRODUTO": r.get("tipo_produto"),
                 "VALOR": float(r.get("valor_digitado", 0) or 0),
                 "qtd_digitada": int(r.get("qtd_digitada", 0) or 0),
             }
@@ -852,7 +863,7 @@ def _fetch_digitacao_diaria_detalhe(
         ]
     )
     df["DATA_CADASTRO"] = pd.to_datetime(df["DATA_CADASTRO"], errors="coerce")
-    return df
+    return _preencher_categoria_fallback(df)
 
 
 @st.cache_data(ttl=900)

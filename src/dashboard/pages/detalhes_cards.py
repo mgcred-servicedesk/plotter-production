@@ -46,6 +46,8 @@ from src.dashboard.kpis.detalhes_cards import (
     detalhe_reaproveitamento,
     filtrar_ultimo_dia,
     ocultar_colunas_zeradas,
+    rotular_produto_sem_grupo,
+    separar_portabilidade,
 )
 from src.dashboard.loaders import carregar_digitacao_diaria_detalhe
 from src.dashboard.rls import aplicar_rls
@@ -336,9 +338,11 @@ def render_detalhe_em_analise(
 
     1. Cards por dimensao (Valor, Qtd, Média DU, Projeção, farol).
     2. Digitação do último dia — pivot dimensao × Produto da DIGITAÇÃO
-       (todos os status), bate com o total digitado do dia.
+       (todos os status), bate com o total digitado do dia. Portabilidade
+       em coluna propria, fora do CONSIGNADO (Novo/Refin).
     3. Ultimos 7 dias de digitacao — serie diaria (sem projecao).
-    4. Analise por Produto — pivot dimensao × Produto (em análise).
+    4. Analise por Produto — pivot dimensao × Produto (em análise),
+       Portabilidade em coluna propria.
     5. Analise por Banco — pivot dimensao × Banco (em análise).
 
     Os quadros 2 e 3 derivam do MESMO ``df_digitacao_detalhe`` (ja
@@ -373,9 +377,15 @@ def render_detalhe_em_analise(
             f"Digitação do Último Dia{f' — {rotulo}' if rotulo else ''}",
             "calendar-check",
         )
+        # Portabilidade em coluna propria, separada do consignado
+        # Novo/Refin (os dois tem grupo_dashboard CONSIGNADO); produto
+        # sem categoria leva o proprio tipo como coluna, nunca OUTROS.
+        df_ultimo_prod = rotular_produto_sem_grupo(
+            separar_portabilidade(adicionar_produto_detalhado(df_ultimo))
+        )
         _exibir_pivot(
             detalhe_analise_pivot(
-                adicionar_produto_detalhado(df_ultimo),
+                df_ultimo_prod,
                 dim,
                 COL_PRODUTO_DETALHADO,
             ),
@@ -413,11 +423,12 @@ def render_detalhe_em_analise(
                 colunas_percentual=_PERC_DIGITACAO,
             )
 
-    # 4. Analise por Produto (pivot dimensao × Produto, PACK desmembrado)
+    # 4. Analise por Produto (pivot dimensao × Produto, PACK desmembrado
+    # e Portabilidade separada do consignado Novo/Refin)
     _divider_quadro("Análise por Produto", "tags-fill")
     _exibir_pivot(
         detalhe_analise_pivot(
-            adicionar_produto_detalhado(df_analise),
+            separar_portabilidade(adicionar_produto_detalhado(df_analise)),
             dim,
             COL_PRODUTO_DETALHADO,
         ),

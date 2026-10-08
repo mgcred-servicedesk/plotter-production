@@ -475,6 +475,71 @@ class TestPreencherCategoriaFallback:
         ]
 
 
+def _linha_digitacao(categoria, grupo, tipo=None, valor=100.0, **extra):
+    """Linha crua da RPC obter_digitacao_diaria_detalhe_json."""
+    linha = {
+        "data_cadastro": "2026-10-06",
+        "regiao": "NORTE",
+        "regiao_atual": "NORTE",
+        "loja": "L1",
+        "grupo_dashboard": grupo,
+        "categoria_codigo": categoria,
+        "qtd_digitada": 1,
+        "valor_digitado": valor,
+    }
+    if tipo is not None:
+        linha["tipo_produto"] = tipo
+    linha.update(extra)
+    return linha
+
+
+@pytest.mark.unit
+class TestDigitacaoDetalheFallbackCategoria:
+    """A digitacao detalhada recupera a categoria por tipo (migration 132).
+
+    Bug de origem (2026-10-08): CLT e ANT. DE BENEF. chegam do ETL sem
+    categoria; a RPC nao trazia o tipo, entao a linha ficava sem
+    grupo_dashboard e virava OUTROS no pivot do ultimo dia.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _stub_categorias(self, monkeypatch):
+        monkeypatch.setattr(
+            loaders,
+            "carregar_categorias",
+            lambda: TestPreencherCategoriaFallback.CATEGORIAS,
+        )
+
+    def _carregar(self, monkeypatch, linhas):
+        monkeypatch.setattr(loaders, "_executar_rpc", lambda nome, p: linhas)
+        return loaders._fetch_digitacao_diaria_detalhe(10, 2026)
+
+    def test_clt_e_ant_benef_recuperam_categoria_e_grupo(self, monkeypatch):
+        df = self._carregar(monkeypatch, [
+            _linha_digitacao(None, None, tipo="CLT"),
+            _linha_digitacao(None, None, tipo="ANT. DE BENEF."),
+            _linha_digitacao("CNC", "CNC"),
+        ])
+        assert list(df["categoria_codigo"]) == [
+            "CONSIG_PRIV", "ANT_BENEF", "CNC",
+        ]
+        assert list(df["grupo_dashboard"]) == ["CLT", "PACK", "CNC"]
+
+    def test_rpc_antiga_sem_tipo_mantem_comportamento(self, monkeypatch):
+        # Antes da 132 a coluna nao existe: nada a recuperar, sem erro.
+        df = self._carregar(monkeypatch, [_linha_digitacao(None, None)])
+        assert df["categoria_codigo"].iloc[0] == ""
+        assert pd.isna(df["grupo_dashboard"].iloc[0])
+
+    def test_fallback_nao_cria_conta_valor(self, monkeypatch):
+        # Digitacao e volume bruto: conta_valor nao pode aparecer.
+        df = self._carregar(
+            monkeypatch, [_linha_digitacao(None, None, tipo="CLT")]
+        )
+        assert "conta_valor" not in df.columns
+        assert df["VALOR"].iloc[0] == pytest.approx(100.0)
+
+
 @pytest.mark.unit
 class TestCarregarUniversoLojas:
     """Composição pura: mês corrente → lojas ativas; histórico → metas."""
