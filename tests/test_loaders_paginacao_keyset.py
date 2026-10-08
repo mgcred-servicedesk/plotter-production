@@ -199,3 +199,125 @@ class TestRetryStatementTimeout:
         assert [linha["id"] for linha in linhas] == list(range(1, 301))
         # 4ª chamada: página nova, tentativas resetadas (lote cheio).
         assert banco.chamadas[3] == (loaders._PAGE_SIZE, 250)
+
+
+class _ClienteRpcFake:
+    """Cliente Supabase mínimo: ``.rpc(nome, params).execute()``.
+
+    Mesmo ``roteiro`` do ``_BancoFake``: uma exceção (ou None) por
+    chamada, na ordem.
+    """
+
+    def __init__(self, dados, roteiro=None):
+        self.dados = dados
+        self.roteiro = list(roteiro or [])
+        self.chamadas = []
+
+    def rpc(self, nome, params):
+        self.chamadas.append((nome, params))
+        return self
+
+    def execute(self):
+        if self.roteiro:
+            erro = self.roteiro.pop(0)
+            if erro is not None:
+                raise erro
+        return _Resposta(self.dados)
+
+
+@pytest.fixture
+def cliente_rpc(monkeypatch):
+    """Instala um ``_ClienteRpcFake`` no lugar de ``loaders._sb``."""
+
+    def instalar(dados, roteiro=None):
+        cliente = _ClienteRpcFake(dados, roteiro)
+        monkeypatch.setattr(loaders, "_sb", lambda: cliente)
+        return cliente
+
+    return instalar
+
+
+class TestRetryRpcChamadaUnica:
+    """`_executar_rpc`: retry de 57014 nas RPCs *_json.
+
+    Erro que motivou: `obter_cancelados_classificados_json` estourou o
+    teto de 8s na 1ª chamada de um backend frio (07/10/2026) e derrubou
+    a carga inteira do dashboard.
+    """
+
+    def test_timeout_isolado_e_reexecutado(self, cliente_rpc, _sem_espera):
+        cliente = cliente_rpc([{"id": 1}], roteiro=[_timeout()])
+
+        dados = loaders._executar_rpc("rpc_x", {"p_mes": 10})
+
+        assert dados == [{"id": 1}]
+        assert cliente.chamadas == [
+            ("rpc_x", {"p_mes": 10}),
+            ("rpc_x", {"p_mes": 10}),
+        ]
+        assert _sem_espera == [1.5]
+
+    def test_timeout_persistente_sobe(self, cliente_rpc, _sem_espera):
+        cliente = cliente_rpc([], roteiro=[_timeout()] * 3)
+
+        with pytest.raises(APIError) as exc:
+            loaders._executar_rpc("rpc_x", {})
+
+        assert exc.value.code == "57014"
+        assert len(cliente.chamadas) == len(loaders._TENTATIVAS_PAGINA)
+
+    def test_erro_deterministico_nao_e_reexecutado(
+        self, cliente_rpc, _sem_espera
+    ):
+        cliente = cliente_rpc([], roteiro=[_erro_permanente()])
+
+        with pytest.raises(APIError) as exc:
+            loaders._executar_rpc("rpc_x", {})
+
+        assert exc.value.code == "42703"
+        assert len(cliente.chamadas) == 1
+        assert _sem_espera == []
+
+    def test_loader_de_cancelados_usa_o_retry(self, cliente_rpc):
+        """O loader real sobrevive a um 57014 isolado.
+
+        Testa o mecanismo pelo caminho de produção: se
+        `_fetch_contratos_cancelados` voltar a chamar `.rpc().execute()`
+        direto, este teste quebra com o próprio 57014.
+        """
+        cliente = cliente_rpc(
+            [
+                {
+                    "contrato_id": 7,
+                    "valor": 100,
+                    "classificacao": "liquido",
+                    "categoria_codigo": "CNC",
+                }
+            ],
+            roteiro=[_timeout()],
+        )
+
+        df = loaders._fetch_contratos_cancelados(10, 2026)
+
+        assert list(df["CONTRATO_ID"]) == [7]
+        assert [nome for nome, _ in cliente.chamadas] == [
+            "obter_cancelados_classificados_json"
+        ] * 2
+
+    def test_loader_de_em_analise_usa_o_retry(self, cliente_rpc):
+        cliente = cliente_rpc([], roteiro=[_timeout()])
+
+        loaders._fetch_contratos_em_analise(10, 2026)
+
+        assert [nome for nome, _ in cliente.chamadas] == [
+            "obter_contratos_em_analise_json"
+        ] * 2
+
+    def test_loader_de_digitacao_detalhe_usa_o_retry(self, cliente_rpc):
+        cliente = cliente_rpc([], roteiro=[_timeout()])
+
+        loaders._fetch_digitacao_diaria_detalhe(10, 2026)
+
+        assert [nome for nome, _ in cliente.chamadas] == [
+            "obter_digitacao_diaria_detalhe_json"
+        ] * 2

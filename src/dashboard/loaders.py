@@ -249,6 +249,45 @@ def _executar_pagina(
     raise ultimo_erro  # type: ignore[misc]
 
 
+def _executar_rpc(nome: str, params: Dict[str, Any]) -> Any:
+    """Executa uma RPC de chamada unica, reexecutando em statement_timeout.
+
+    Mesmo contrato de ``_executar_pagina`` (so 57014 e retentado; o
+    ultimo sobe esgotadas as tentativas), com as mesmas esperas de
+    ``_TENTATIVAS_PAGINA`` — mas sem reduzir lote: a RPC devolve o
+    resultado inteiro de uma vez.
+
+    Por que retentar resolve: medido em 07/10/2026, as RPCs *_json levam
+    ~50-150ms num backend aquecido e 0,6-1,9s na 1a chamada de um
+    backend novo (catalogo + planejamento). Com a CPU do Nano
+    estrangulada, essa 1a chamada passa do teto de 8s do
+    ``authenticator``; a reexecucao cai no backend ja aquecido. O
+    ``SET statement_timeout='15000'`` nas funcoes nao ajuda: o timer e
+    armado no inicio do statement top-level e nao e rearmado.
+    """
+    ultimo_erro: Optional[APIError] = None
+    total = len(_TENTATIVAS_PAGINA)
+
+    for tentativa, (_, espera) in enumerate(_TENTATIVAS_PAGINA, 1):
+        if espera:
+            time.sleep(espera)
+        try:
+            return _sb().rpc(nome, params).execute().data
+        except APIError as exc:
+            if not _e_timeout_statement(exc):
+                raise
+            ultimo_erro = exc
+            logger.warning(
+                "statement_timeout em %s (tentativa %d/%d)",
+                nome,
+                tentativa,
+                total,
+            )
+
+    logger.error("statement_timeout persistente em %s — desisto", nome)
+    raise ultimo_erro  # type: ignore[misc]
+
+
 def _paginar_keyset(
     montar_query: Callable[[int], Any], coluna_chave: str
 ) -> List[dict]:
@@ -585,15 +624,13 @@ def _fetch_contratos_em_analise(mes: int, ano: int) -> pd.DataFrame:
     inteiro agregado em JSON. O .range() antigo fazia o PostgREST
     reexecutar a funcao inteira a cada pagina de 1000 linhas.
     """
-    resp = (
-        _sb()
-        .rpc(
+    all_data = (
+        _executar_rpc(
             "obter_contratos_em_analise_json",
             {"p_mes": mes, "p_ano": ano},
         )
-        .execute()
+        or []
     )
-    all_data = resp.data or []
 
     if not all_data:
         return pd.DataFrame()
@@ -790,8 +827,9 @@ def _fetch_digitacao_diaria_detalhe(
         params["p_dias_recentes"] = dias_recentes
     # Variante _json (migration 057): execucao unica, sem reexecucao
     # da funcao por pagina.
-    resp = _sb().rpc("obter_digitacao_diaria_detalhe_json", params).execute()
-    all_data = resp.data or []
+    all_data = (
+        _executar_rpc("obter_digitacao_diaria_detalhe_json", params) or []
+    )
 
     if not all_data:
         return pd.DataFrame(columns=cols)
@@ -861,15 +899,13 @@ def _fetch_contratos_cancelados(mes: int, ano: int) -> pd.DataFrame:
     cliente. Execucao unica: o .range() antigo fazia o PostgREST
     reexecutar a funcao (~2,6 s) a cada pagina de 1000 linhas.
     """
-    resp = (
-        _sb()
-        .rpc(
+    all_data = (
+        _executar_rpc(
             "obter_cancelados_classificados_json",
             {"p_mes": mes, "p_ano": ano},
         )
-        .execute()
+        or []
     )
-    all_data = resp.data or []
 
     if not all_data:
         return pd.DataFrame()

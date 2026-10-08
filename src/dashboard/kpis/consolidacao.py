@@ -109,6 +109,49 @@ _PORTAB_BANCO_TO_CONSIG = {
 }
 
 
+# ── Portabilidade: taxa propria a partir de 10/2026 ──
+#
+# Ate 09/2026 a Portabilidade nao tinha taxa propria e herdava a do
+# CONSIG do banco (mapa acima). Em 10/2026 a tabela de pontuacao
+# passou a trazer uma linha PORTABILIDADE (0,5), unica para qualquer
+# banco — decisao do usuario em 2026-10-08. A partir da vigencia, a
+# linha PORTABILIDADE substitui o alias por banco.
+#
+# POR QUE A TRAVA DE VIGENCIA, SE A LINHA SO EXISTE EM 10/2026
+# ------------------------------------------------------------
+# Nao e verdade: 03/2026 e 04/2026 tem linha PORTABILIDADE = 1,0
+# (importadas e nunca consumidas). Sem a trava, "usar a linha quando
+# existir" reescreveria esses dois meses fechados. O corte e por DATA,
+# pelo mesmo motivo do saque Gov abaixo: `periodo_id` e derivado de
+# `data_status_pagamento`, logo "DATA >= 01/10/2026" e exatamente
+# "competencia >= 10/2026", inclusive na consolidacao por intervalo.
+#
+# Sem a linha no periodo (planilha do mes sem PORTABILIDADE), o alias
+# por banco permanece e a contagem vai para o diagnostico — mesmo
+# criterio do saque Gov: cair para 0 apagaria producao paga em
+# silencio.
+_PORTAB_CATEGORIA_PTS = "PORTABILIDADE"
+_PORTAB_VIGENCIA_TAXA_PROPRIA = pd.Timestamp("2026-10-01")
+
+
+def _mascara_portabilidade_taxa_propria(df: pd.DataFrame) -> pd.Series:
+    """Portabilidades sujeitas a taxa propria (linha ``PORTABILIDADE``).
+
+    ``categoria_codigo = PORTABILIDADE`` e ``DATA`` a partir da
+    vigencia, de qualquer banco. Sem a coluna ``DATA`` -> nenhuma
+    linha, mesmo criterio de :func:`_mascara_saque_gov`.
+    """
+    if "DATA" not in df.columns:
+        return pd.Series(False, index=df.index)
+    return (
+        (df["categoria_codigo"] == "PORTABILIDADE")
+        & (
+            pd.to_datetime(df["DATA"], errors="coerce")
+            >= _PORTAB_VIGENCIA_TAXA_PROPRIA
+        )
+    )
+
+
 # ── Saque no cartao Gov: taxa propria, nao a do cartao comum ──
 #
 # SAQUE e SAQUE_BENEFICIO nao pontuam pelo proprio codigo: aliasam
@@ -290,7 +333,8 @@ def consolidar_pontuacao(
         mapa_pontos = {}
         df["PONTOS"] = 0
 
-    # PORTABILIDADE herda a pontuacao do CONSIG do banco origem.
+    # PORTABILIDADE herda a pontuacao do CONSIG do banco origem (ate
+    # 09/2026; dai em diante, ver o bloco seguinte).
     # Regra: Portabilidade BMG -> CONSIG_BMG, C6 -> CONSIG_C6,
     # Itau -> CONSIG_ITAU. CONSIG_PRIV nao se aplica a portabilidade
     # (produto distinto). Bancos sem mapeamento permanecem com 0.
@@ -308,6 +352,21 @@ def consolidar_pontuacao(
             pts_alias = consig_alvo.map(mapa_pontos)
             df.loc[mask_portab, "PONTOS"] = pts_alias.fillna(0).astype(
                 float
+            )
+
+    # A partir de 10/2026 a Portabilidade tem taxa propria, unica para
+    # qualquer banco, e ela substitui o alias acima. Ver o bloco de
+    # comentario de `_PORTAB_CATEGORIA_PTS`.
+    mask_portab_propria = _mascara_portabilidade_taxa_propria(df)
+    qtd_portab_propria = int(mask_portab_propria.sum())
+    pts_portab_propria = mapa_pontos.get(_PORTAB_CATEGORIA_PTS)
+    portab_sem_taxa = 0
+    if qtd_portab_propria:
+        if pts_portab_propria is None:
+            portab_sem_taxa = qtd_portab_propria
+        else:
+            df.loc[mask_portab_propria, "PONTOS"] = float(
+                pts_portab_propria
             )
 
     # Saque no cartao Gov usa CARTAO_GOV, nao o alias CARTAO da
@@ -363,6 +422,12 @@ def consolidar_pontuacao(
         # falta da linha na pontuacao do periodo.
         "saque_gov_reclassificado": qtd_saque_gov - saque_gov_sem_taxa,
         "saque_gov_sem_pontuacao": saque_gov_sem_taxa,
+        # Portabilidade >= 10/2026: quantas pontuaram pela taxa propria
+        # e quantas ficaram no alias por banco por falta da linha.
+        "portabilidade_taxa_propria": (
+            qtd_portab_propria - portab_sem_taxa
+        ),
+        "portabilidade_sem_pontuacao": portab_sem_taxa,
     }
     # ───────────────────────────────────────────────
 

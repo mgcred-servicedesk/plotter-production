@@ -329,6 +329,112 @@ class TestSaqueCartaoGov:
         assert df["pontos"].tolist() == [700.0]
 
 
+def _portab(**overrides):
+    """Portabilidade C6 paga em 10/2026."""
+    base = {
+        "categoria_codigo": ["PORTABILIDADE"],
+        "TIPO_PRODUTO": ["Portabilidade"],
+        "BANCO": ["C6 BANK"],
+        "DATA": pd.to_datetime(["2026-10-02"]),
+    }
+    base.update(overrides)
+    return _contratos(**base)
+
+
+# Taxas deliberadamente distintas: com PORTABILIDADE == CONSIG_* as
+# asserções passariam mesmo se a regra nova não rodasse.
+_PTS_COM_PORTAB = {"PORTABILIDADE": 0.5, "CONSIG_C6": 1.0, "CONSIG_BMG": 0.8}
+
+
+@pytest.mark.unit
+class TestPortabilidadeTaxaPropria:
+    """A partir de 10/2026 a Portabilidade pontua pela linha
+    `PORTABILIDADE` da tabela, única para qualquer banco, e não mais
+    pelo CONSIG do banco (decisão de 2026-10-08)."""
+
+    @pytest.mark.parametrize("banco", ["C6 BANK", "BMG", "BANCO XPTO"])
+    def test_usa_a_taxa_de_portabilidade_para_qualquer_banco(self, banco):
+        df, _ = consolidar_pontuacao(
+            _portab(BANCO=[banco]), _pontos(_PTS_COM_PORTAB),
+            _sem_categorias,
+        )
+        assert df["PONTOS"].tolist() == [0.5]
+
+    def test_o_efeito_chega_na_coluna_pontos(self):
+        df, _ = consolidar_pontuacao(
+            _portab(VALOR=[8000.0]), _pontos(_PTS_COM_PORTAB),
+            _sem_categorias,
+        )
+        assert df["pontos"].tolist() == [4000.0]
+
+    def test_pagamento_antes_da_vigencia_mantem_o_alias_por_banco(self):
+        """Mês fechado não muda: 30/09/2026 fica como foi apurado."""
+        df, _ = consolidar_pontuacao(
+            _portab(DATA=pd.to_datetime(["2026-09-30"])),
+            _pontos(_PTS_COM_PORTAB),
+            _sem_categorias,
+        )
+        assert df["PONTOS"].tolist() == [1.0]
+
+    def test_primeiro_dia_da_vigencia_ja_entra(self):
+        df, _ = consolidar_pontuacao(
+            _portab(DATA=pd.to_datetime(["2026-10-01"])),
+            _pontos(_PTS_COM_PORTAB),
+            _sem_categorias,
+        )
+        assert df["PONTOS"].tolist() == [0.5]
+
+    def test_linha_antiga_de_portabilidade_nao_reescreve_mes_fechado(self):
+        """A catraca da trava: 03/2026 e 04/2026 têm linha
+        PORTABILIDADE = 1,0 no banco. Sem a vigência, "usar a linha
+        quando existir" mudaria esses meses."""
+        df, _ = consolidar_pontuacao(
+            _portab(DATA=pd.to_datetime(["2026-03-15"])),
+            _pontos({"PORTABILIDADE": 1.0, "CONSIG_C6": 0.7}),
+            _sem_categorias,
+        )
+        assert df["PONTOS"].tolist() == [0.7]
+
+    def test_sem_linha_de_portabilidade_mantem_o_alias_e_denuncia(self):
+        df, diag = consolidar_pontuacao(
+            _portab(), _pontos({"CONSIG_C6": 1.0}), _sem_categorias,
+        )
+        assert df["PONTOS"].tolist() == [1.0]
+        assert diag["portabilidade_sem_pontuacao"] == 1
+        assert diag["portabilidade_taxa_propria"] == 0
+
+    def test_diagnostico_conta_as_de_taxa_propria(self):
+        _, diag = consolidar_pontuacao(
+            _portab(), _pontos(_PTS_COM_PORTAB), _sem_categorias,
+        )
+        assert diag["portabilidade_taxa_propria"] == 1
+        assert diag["portabilidade_sem_pontuacao"] == 0
+
+    def test_sem_coluna_data_a_regra_nao_roda(self):
+        df, _ = consolidar_pontuacao(
+            _portab().drop(columns=["DATA"]), _pontos(_PTS_COM_PORTAB),
+            _sem_categorias,
+        )
+        assert df["PONTOS"].tolist() == [1.0]
+
+    def test_consignado_do_mesmo_banco_nao_e_afetado(self):
+        contratos = _portab(
+            categoria_codigo=["PORTABILIDADE", "CONSIG_C6", "CONSIG_BMG"],
+            TIPO_PRODUTO=["Portabilidade", "CONSIG", "CONSIG"],
+            BANCO=["C6 BANK", "C6 BANK", "BMG"],
+            DATA=pd.to_datetime(["2026-10-02"] * 3),
+            VALOR=[1000.0] * 3,
+            conta_valor=[True] * 3,
+            conta_pontuacao=[True] * 3,
+            SUBTIPO=["PORTABILIDADE", "NOVO", "NOVO"],
+            **{"TIPO OPER.": ["CONTRATO NOVO"] * 3},
+        )
+        df, _ = consolidar_pontuacao(
+            contratos, _pontos(_PTS_COM_PORTAB), _sem_categorias,
+        )
+        assert df["PONTOS"].tolist() == [0.5, 1.0, 0.8]
+
+
 @pytest.mark.unit
 class TestRegrasDeExclusao:
     def test_conta_valor_falso_zera_valor_e_por_consequencia_os_pontos(self):

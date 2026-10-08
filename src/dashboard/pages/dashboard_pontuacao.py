@@ -414,3 +414,21 @@ def render_diagnostico_pontuacao(diag: Dict) -> None:
                 f"{reclass} saque(s) no cartao Gov pontuando por "
                 f"CARTAO_GOV."
             )
+
+        # Portabilidade >= 10/2026 — taxa propria (PORTABILIDADE) em vez
+        # do CONSIG do banco. Mesmo raciocinio do aviso acima: sem a
+        # linha no periodo, o alias por banco permanece.
+        portab_propria = diag.get("portabilidade_taxa_propria", 0)
+        portab_sem_taxa = diag.get("portabilidade_sem_pontuacao", 0)
+        if portab_sem_taxa:
+            st.warning(
+                f"**{portab_sem_taxa} portabilidades sem taxa propria** "
+                f"— PORTABILIDADE ausente da pontuacao do periodo; esses "
+                f"contratos seguem com a taxa do CONSIG do banco. "
+                f"Importar a linha 'PORTABILIDADE' da planilha do mes."
+            )
+        elif portab_propria:
+            st.caption(
+                f"{portab_propria} portabilidade(s) pontuando por "
+                f"PORTABILIDADE."
+            )

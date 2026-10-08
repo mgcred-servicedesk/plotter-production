@@ -14,9 +14,13 @@ produção.
 
 ### Portabilidade — alias por banco
 
-A categoria `PORTABILIDADE` **não tem entrada própria** em `pontuacao`. O
-multiplicador é herdado do `CONSIG_<banco>` correspondente ao `BANCO` do
-contrato:
+> **A partir de 10/2026 a Portabilidade tem taxa própria.** Ver
+> [Portabilidade — taxa própria](#portabilidade--taxa-própria--102026).
+> O alias abaixo vale até 09/2026 e como fallback.
+
+Até 09/2026 a categoria `PORTABILIDADE` **não tinha entrada própria
+consumida** em `pontuacao`. O multiplicador é herdado do `CONSIG_<banco>`
+correspondente ao `BANCO` do contrato:
 
 | `BANCO` (normalizado) | Categoria de pts usada |
 |---|---|
@@ -32,6 +36,34 @@ Resolvido em código ([`src/dashboard/loaders.py`](../../src/dashboard/loaders.p
 e não via tabela `pontuacao` porque o diferencial é `BANCO`, granularidade
 maior que categoria. A migration 013 explicitamente deixou portabilidade
 fora do alias estrutural por causa dessa granularidade.
+
+### Portabilidade — taxa própria (≥ 10/2026)
+
+Em 10/2026 a tabela de pontuação passou a trazer a linha
+`PORTABILIDADE` (**0,5**), **única para qualquer banco** (decisão do
+usuário, 2026-10-08). A partir da vigência, ela substitui o alias por
+banco acima.
+
+| Critério (AND) | Regra |
+|---|---|
+| `categoria_codigo` | = `PORTABILIDADE` |
+| `DATA` (pagamento) | ≥ `2026-10-01` |
+| Linha `PORTABILIDADE` no período | presente |
+
+- **A trava de vigência não é redundante.** 03/2026 e 04/2026 têm linha
+  `PORTABILIDADE = 1,0` importada e nunca consumida. Sem a trava, "usar
+  a linha quando existir" reescreveria esses dois meses fechados.
+- **Sem a linha no período, o alias por banco permanece** e a contagem
+  vai para o diagnóstico (`portabilidade_sem_pontuacao`, expander de
+  admin) — mesmo critério do saque Gov: zerar apagaria produção paga.
+- **Duas superfícies, de propósito.** Python
+  ([`kpis/consolidacao.py`](../../src/dashboard/kpis/consolidacao.py),
+  `_mascara_portabilidade_taxa_propria`) e SQL (migration 131, `WHEN`
+  novo no `CASE` de `categoria_pontos`). Catraca:
+  `tests/test_kpis_consolidacao.py::TestPortabilidadeTaxaPropria`.
+- **A coluna `PRODUTO PTS` da planilha de Tabelas não participa.** O
+  importador de produtos do angry-man a ignora desde 2026-09-09;
+  pontuação entra só pela planilha de pontos (`pontos_modelo`).
 
 ### Saque no cartão Gov — alias por convênio (≥ 09/2026)
 
