@@ -316,6 +316,39 @@ o `categoria_id` volta a `NULL` e as linhas chegam sem
 preenche colunas que já existem no frame (em análise/cancelados não
 expõem `grupo_meta` nem `conta_pontuacao`). Correção definitiva é no ETL.
 
+### Modalidade da tabela versionada (`produtos_modalidade_periodo`)
+
+Migration 135. Tabela `(produto_id, periodo_id)` PK → `modalidade`
+(`NORMAL`|`FLEX`), `competencia` (1º dia do mês, preenchida por trigger a
+partir de `periodos` — o importador não envia), `created_at`/`updated_at`.
+Escrita só via `fn_admin_import` (está no `v_allowed`): upsert com
+`p_on_conflict = 'produto_id,periodo_id'` ou delete+insert com
+`p_delete_where = {"periodo_id": ...}` (o DELETE roda a cada chamada —
+`deleteWhere` só no primeiro lote do mês). Leitura ampla igual a
+`produtos`/`pontuacao` (RLS + `SELECT USING (true)` + GRANT SELECT
+anon/authenticated) — o angry-man lê com a chave anon para achar o
+último mês importado; **não** trocar por policy deny.
+
+Regra de negócio em
+[business-rules.md](business-rules.md#modalidade-da-tabela-normal--flex--por-tabela-e-mês).
+Superfícies SQL:
+
+| Objeto | O que expõe |
+|---|---|
+| `fn_modalidade_tabela(produto_id uuid, data_cadastro date) → text` | canônica; `'SEM TABELA'` sem produto |
+| `fn_modalidade_tabela_fallback(produto_id uuid, data_cadastro date) → boolean` | `TRUE` se não veio do mês exato; nunca NULL |
+| `v_contratos_dashboard.modalidade` / `.modalidade_fallback` (2 últimas colunas) | mesma regra **inline** (subquery escalar) |
+| `obter_contratos_em_analise_json` / `obter_cancelados_classificados_json` | chaves `modalidade`, `modalidade_fallback` no fim de cada objeto |
+
+- **Custo.** A view replica a regra inline em vez de chamar a função:
+  função SQL com subquery nunca é inlinada, e a chamada custou ~30x a
+  subquery escalar (medido em ~99k linhas, 825 ms × 27 ms). Coluna não
+  selecionada não entra no plano — **selecione `modalidade` só onde for
+  usar** (nada de `select("*")` na view). Mudar a regra = mudar a função
+  **e** a view (validação de paridade no fim da migration 135).
+- O dashboard Python ainda **não** lê essas colunas (`_COLS_CONTRATOS_PAGOS`
+  não as inclui) — entra quando alguma tela consumir.
+
 ## Dias úteis e feriados
 
 **Nunca** calcular dias úteis inline. Sempre:

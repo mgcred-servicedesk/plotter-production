@@ -225,7 +225,9 @@ def _render_detalhamento_pagos(df, df_sup, prestamista: dict | None = None):
     cols = ["NR_ADE", "DATA", "LOJA", "CONSULTOR"]
     if "REGIAO" in df_d.columns:
         cols.append("REGIAO")
-    cols += _COLS_PRODUTO + ["TIPO OPER.", "VALOR", "BANCO", "PRESTAMISTA"]
+    cols += _COLS_PRODUTO + [
+        "TIPO OPER.", "MODALIDADE", "VALOR", "BANCO", "PRESTAMISTA",
+    ]
 
     cols_disp = [c for c in cols if c in df_d.columns]
     df_tabela = (
@@ -239,6 +241,7 @@ def _render_detalhamento_pagos(df, df_sup, prestamista: dict | None = None):
             "TIPO_PRODUTO": "Produto",
             "SUBTIPO": "Subproduto",
             "TIPO OPER.": "Tipo Operacao",
+            "MODALIDADE": "Modalidade",
             "VALOR": "Valor",
             "BANCO": "Banco",
             "LOJA": "Loja",
@@ -289,7 +292,7 @@ def _render_detalhamento_em_analise(df_analise):
     if "REGIAO" in df_d.columns:
         cols.append("REGIAO")
     cols += _COLS_PRODUTO + [
-        "TIPO OPER.", "VALOR",
+        "TIPO OPER.", "MODALIDADE", "VALOR",
         "STATUS_BANCO", "BANCO",
     ]
 
@@ -304,6 +307,7 @@ def _render_detalhamento_em_analise(df_analise):
             "TIPO_PRODUTO": "Produto",
             "SUBTIPO": "Subproduto",
             "TIPO OPER.": "Tipo Operacao",
+            "MODALIDADE": "Modalidade",
             "VALOR": "Valor",
             "STATUS_BANCO": "Status Banco",
             "BANCO": "Banco",
@@ -374,7 +378,7 @@ def _render_detalhamento_cancelados(df_cancel):
     if "REGIAO" in df_d.columns:
         cols.append("REGIAO")
     cols += _COLS_PRODUTO + [
-        "TIPO OPER.", "VALOR",
+        "TIPO OPER.", "MODALIDADE", "VALOR",
         "SUB_STATUS", "STATUS_PAG", "BANCO", "CLASSIFICACAO",
     ]
 
@@ -389,6 +393,7 @@ def _render_detalhamento_cancelados(df_cancel):
             "TIPO_PRODUTO": "Produto",
             "SUBTIPO": "Subproduto",
             "TIPO OPER.": "Tipo Operacao",
+            "MODALIDADE": "Modalidade",
             "VALOR": "Valor",
             "SUB_STATUS": "Sub-Status",
             "STATUS_PAG": "Status Pagamento",
@@ -571,7 +576,7 @@ def _render_busca_ade(df, df_analise, df_cancelados):
     cols_base = ["NR_ADE", "Status", "_DATA", "LOJA", "CONSULTOR"]
     if "REGIAO" in encontrados.columns:
         cols_base.append("REGIAO")
-    cols_base += _COLS_PRODUTO + ["TIPO OPER.", "VALOR", "BANCO"]
+    cols_base += _COLS_PRODUTO + ["TIPO OPER.", "MODALIDADE", "VALOR", "BANCO"]
 
     df_res = (
         encontrados[[c for c in cols_base if c in encontrados.columns]]
@@ -583,6 +588,7 @@ def _render_busca_ade(df, df_analise, df_cancelados):
             "TIPO_PRODUTO": "Produto",
             "SUBTIPO": "Subproduto",
             "TIPO OPER.": "Tipo Operacao",
+            "MODALIDADE": "Modalidade",
             "VALOR": "Valor",
             "BANCO": "Banco",
             "LOJA": "Loja",

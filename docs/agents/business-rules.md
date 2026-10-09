@@ -138,6 +138,48 @@ detecta isso na carga (`app.py`) e emite `st.warning`:
 Revisar no início de cada período e ao introduzir produtos novos. (Sucessor
 vivo do antigo aviso baseado na planilha `pontuacao/pontos_{mes}.xlsx`.)
 
+## Modalidade da tabela (NORMAL / FLEX) — por tabela e mês
+
+Cada tabela comercial (`produtos.tabela`) é **NORMAL** ou **FLEX**. A
+planilha de tabelas passa a ser importada **todo mês** (angry-man, com
+período selecionado, como a de pontuação) e uma tabela pode trocar de
+modalidade de um mês para o outro. O histórico fica em
+`produtos_modalidade_periodo` (migration 135); `produtos.tipo_operacao`
+continua sendo só a **última** importação.
+
+> Não confundir com `contratos.tipo_operacao` (Contrato Novo / Refin /
+> BMG MED / Seguro) — é outra coluna, outra regra.
+
+**Regra (decisão do usuário, 2026-10-09)** — para a tabela da proposta
+(`contratos.produto_id`), no **mês de `data_cadastro`** (não o
+`periodo_id`, que é a competência do pagamento):
+
+1. versão da própria tabela no mês do cadastro;
+2. senão, a versão mais recente dela **anterior** a esse mês;
+3. senão, `produtos.tipo_operacao` (a última importação vale para todos
+   os meses anteriores à primeira versão);
+4. proposta sem `produto_id` → `'SEM TABELA'`.
+
+`modalidade_fallback = TRUE` sempre que o valor **não** veio do mês exato
+do cadastro (casos 2, 3 e 4). Versão de mês **posterior** ao cadastro
+nunca é usada.
+
+Onde está: `fn_modalidade_tabela` / `fn_modalidade_tabela_fallback`
+(canônicas), espelhadas inline em `v_contratos_dashboard.modalidade` /
+`.modalidade_fallback` e expostas nas chaves homônimas de
+`obter_contratos_em_analise_json` e `obter_cancelados_classificados_json`.
+O Caderno (`obter_caderno_fechamento`, migration 136) usa
+`v.modalidade` para `classificacao_validade`; reclassifica um mês só na
+próxima rematerialização dele.
+
+- **Os PTS/pontos da planilha de tabelas continuam ignorados** — pontuação
+  vem só de `pontuacao`.
+- **Critério de prazo — pendente.** O Caderno ainda classifica como FLEX o
+  CONSIG (BMG/Itaú/C6) `NOVO` com prazo `< 96`, independentemente da
+  tabela. Se esse critério vai ser substituído pela modalidade versionada
+  (ou mudar de limiar) é decisão em aberto do negócio; até lá ele fica
+  como está.
+
 ## Emissão de cartão
 
 `TIPO_PRODUTO ∈ PRODUTOS_EMISSAO` (`EMISSAO`, `EMISSAO CC`, `EMISSAO CB`) —

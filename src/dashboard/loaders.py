@@ -151,6 +151,12 @@ _COLS_CONTRATOS_PAGOS = {
     "tipo_produto": "TIPO_PRODUTO",
     "subtipo": "SUBTIPO",
     "tipo_operacao": "TIPO OPER.",
+    # NORMAL/FLEX da tabela no mes do cadastro (migration 135):
+    # versao mensal da tabela; senao a anterior mais recente; senao
+    # produtos.tipo_operacao. "SEM TABELA" quando nao ha produto.
+    # Nao confundir com TIPO OPER. (Contrato Novo/Refin...).
+    "modalidade": "MODALIDADE",
+    "modalidade_fallback": "MODALIDADE_FALLBACK",
     # VALOR = valor CONSOLIDADO (migration 067). Igual ao VLR BASE em
     # toda linha que nao e Cobranca Consignavel; VLR BRUTO nas que sao
     # (GREATEST, nunca reduz). Todo KPI de producao e a pontuacao
@@ -656,6 +662,8 @@ def _fetch_contratos_em_analise(mes: int, ano: int) -> pd.DataFrame:
                 "TIPO_PRODUTO": c.get("tipo_produto", ""),
                 "SUBTIPO": c.get("subtipo", ""),
                 "TIPO OPER.": c.get("tipo_operacao", ""),
+                "MODALIDADE": c.get("modalidade"),
+                "MODALIDADE_FALLBACK": c.get("modalidade_fallback"),
                 "VALOR": float(c.get("valor", 0)),
                 "BANCO": c.get("banco", ""),
                 "STATUS_BANCO": c.get("status_banco", ""),
@@ -942,6 +950,8 @@ def _fetch_contratos_cancelados(mes: int, ano: int) -> pd.DataFrame:
                 "TIPO_PRODUTO": c.get("tipo_produto", ""),
                 "SUBTIPO": c.get("subtipo", ""),
                 "TIPO OPER.": c.get("tipo_operacao", ""),
+                "MODALIDADE": c.get("modalidade"),
+                "MODALIDADE_FALLBACK": c.get("modalidade_fallback"),
                 "VALOR": float(c.get("valor", 0)),
                 "BANCO": c.get("banco", ""),
                 "STATUS_BANCO": c.get("status_banco", ""),
