@@ -40,6 +40,18 @@ from src.dashboard.kpis.reconquista import (
     LIGA_FORA,
     LIGA_NAO_IMPORTADA,
 )
+from src.dashboard.kpis.prestamista import (
+    PRESTAMISTA_ERRO,
+    PRESTAMISTA_NAO_IMPORTADO,
+    PRESTAMISTA_OK,
+    SITUACAO_COM_SEGURO,
+    SITUACAO_NAO_ELEGIVEL,
+    SITUACAO_SEM_SEGURO,
+    com_situacao,
+    marcar_situacao_por_ade,
+    totais_prestamista,
+)
+from src.dashboard.ui.kpi_cards_reforma import render_quebras_prestamista
 
 
 # Compat: alias local mantido — implementação canônica em
@@ -67,6 +79,7 @@ _ICONES_ANALITICOS = {
     "Aceleradores": "rocket_launch",
     "Reconquista": "autorenew",
     "Cobranca Consignavel": "payments",
+    "Prestamista": "shield",
     "Distribuicao de Produtos": "pie_chart",
 }
 
@@ -155,8 +168,20 @@ def _filtrar_detalhamento(df: pd.DataFrame, key_prefix: str) -> pd.DataFrame:
     return df_d
 
 
-def _render_detalhamento_pagos(df, df_sup):
-    """Sub-aba: detalhamento de contratos pagos."""
+def _prestamista_propostas(prestamista: dict | None) -> pd.DataFrame | None:
+    """Propostas do Prestamista (pos-RLS) se o periodo foi importado."""
+    if not prestamista or prestamista.get("status") != PRESTAMISTA_OK:
+        return None
+    return prestamista.get("propostas")
+
+
+def _render_detalhamento_pagos(df, df_sup, prestamista: dict | None = None):
+    """Sub-aba: detalhamento de contratos pagos.
+
+    Com o Prestamista CNC importado no periodo, ganha a coluna
+    "Prestamista" (situacao da ADE no arquivo do banco) e o filtro das
+    elegiveis sem seguro. ADE fora do arquivo fica em branco.
+    """
     if df.empty:
         st.warning("Nenhum contrato pago no periodo.")
         return
@@ -164,6 +189,19 @@ def _render_detalhamento_pagos(df, df_sup):
     st.markdown(f"**{len(df):,} contratos pagos**".replace(",", "."))
 
     df_d = _filtrar_detalhamento(df, "det_pago")
+
+    propostas_prest = _prestamista_propostas(prestamista)
+    if propostas_prest is not None:
+        df_d = df_d.copy()
+        df_d["PRESTAMISTA"] = marcar_situacao_por_ade(
+            _nr_ade(df_d), propostas_prest
+        )
+        n_pend = int((df_d["PRESTAMISTA"] == SITUACAO_SEM_SEGURO).sum())
+        if st.checkbox(
+            f"Só Prestamista elegível sem seguro ({n_pend})",
+            key="det_pago_prest_pend",
+        ):
+            df_d = df_d[df_d["PRESTAMISTA"] == SITUACAO_SEM_SEGURO]
 
     # KPIs
     total_valor = df_d["VALOR"].sum()
@@ -187,13 +225,14 @@ def _render_detalhamento_pagos(df, df_sup):
     cols = ["NR_ADE", "DATA", "LOJA", "CONSULTOR"]
     if "REGIAO" in df_d.columns:
         cols.append("REGIAO")
-    cols += _COLS_PRODUTO + ["TIPO OPER.", "VALOR", "BANCO"]
+    cols += _COLS_PRODUTO + ["TIPO OPER.", "VALOR", "BANCO", "PRESTAMISTA"]
 
     cols_disp = [c for c in cols if c in df_d.columns]
     df_tabela = (
         df_d[cols_disp]
         .sort_values("DATA", ascending=False)
         .rename(columns={
+            "PRESTAMISTA": "Prestamista",
             "NR_ADE": "Nº ADE",
             "DATA": "Data Pagamento",
             COL_PRODUTO_DETALHADO: "Grupo",
@@ -1289,6 +1328,129 @@ _KEY_BANCO_DIST = "dist_prod_banco"
 _OPCAO_BMG_HELP = "BMG/Help"
 
 
+# ══════════════════════════════════════════════════════
+# Prestamista CNC (IPV) — migration 134
+# ══════════════════════════════════════════════════════
+
+_COLS_PRESTAMISTA = {
+    "ade": "Nº ADE",
+    "situacao": "Situação",
+    "status_apolice": "Status Apólice",
+    "REGIAO": "Regiao",
+    "LOJA": "Loja",
+    "CONSULTOR": "Consultor",
+    "TIPO_PRODUTO": "Produto",
+    "SUBTIPO": "Subproduto",
+    "DATA": "Data Pagamento",
+    "VALOR": "Valor",
+}
+
+
+def _prestamista_com_contrato(
+    propostas: pd.DataFrame, df_pagos: pd.DataFrame
+) -> pd.DataFrame:
+    """Propostas do arquivo + produto/valor/data do contrato pago.
+
+    Loja/consultor/regiao vem do ARQUIVO (e a atribuicao do IPV); da
+    nossa base so entram os dados do contrato. ADE sem contrato pago no
+    periodo fica com essas colunas vazias.
+    """
+    base = com_situacao(propostas).rename(columns={
+        "regiao": "REGIAO", "loja": "LOJA", "consultor": "CONSULTOR",
+    })
+    if df_pagos is None or df_pagos.empty:
+        return base
+    contrato = df_pagos.copy()
+    contrato["ade"] = _nr_ade(contrato).astype(str).str.strip()
+    cols = [c for c in ("TIPO_PRODUTO", "SUBTIPO", "DATA", "VALOR")
+            if c in contrato.columns]
+    contrato = contrato.drop_duplicates("ade")[["ade", *cols]]
+    return base.merge(contrato, on="ade", how="left")
+
+
+def _tabela_prestamista(df: pd.DataFrame, nome: str, key: str) -> None:
+    cols = [c for c in _COLS_PRESTAMISTA if c in df.columns]
+    view = df[cols].rename(columns=_COLS_PRESTAMISTA)
+    exibir_tabela(view, colunas_moeda=["Valor"], paginacao=100, key=key)
+    _exportar_csv(view, nome, f"exp_{key}")
+
+
+def _render_prestamista(
+    prestamista: dict | None, df_pagos: pd.DataFrame, perfil: str
+) -> None:
+    """Sub-aba Prestamista: pendencias, quebras e o arquivo inteiro.
+
+    Escopo do BI do banco: CNC + Super Conta (produto CNC no banco).
+    Recorte por perfil ja aplicado no loader.
+    """
+    if not prestamista:
+        st.info("Prestamista CNC indisponível.")
+        return
+    status = prestamista.get("status")
+    if status == PRESTAMISTA_ERRO:
+        st.error("Não foi possível carregar o Prestamista CNC do período.")
+        return
+    if status == PRESTAMISTA_NAO_IMPORTADO:
+        st.info("Arquivo do Prestamista CNC do período ainda não importado.")
+        return
+
+    propostas = prestamista.get("propostas")
+    if propostas is None or propostas.empty:
+        st.info("Sem propostas de Prestamista CNC no seu escopo.")
+        return
+
+    st.caption(
+        "Fonte: BI do banco (Prst CNC — inclui Super Conta). "
+        "IPV = seguros ativos / propostas elegíveis."
+    )
+    tot = totais_prestamista(propostas)
+    base = _prestamista_com_contrato(propostas, df_pagos)
+    pend = base[base["situacao"] == SITUACAO_SEM_SEGURO]
+
+    col1, col2, col3, col4 = st.columns(4)
+    with col1:
+        ipv = tot["ipv"]
+        st.metric("IPV", "—" if ipv is None else formatar_percentual(ipv * 100))
+    with col2:
+        st.metric("Elegíveis", formatar_numero(tot["elegiveis"]))
+    with col3:
+        st.metric("Com seguro", formatar_numero(tot["seguros"]))
+    with col4:
+        st.metric("Elegíveis sem seguro", formatar_numero(len(pend)))
+
+    st.markdown("#### ⚠️ Elegíveis sem seguro")
+    st.caption(
+        "Propostas que o banco marcou como elegíveis ao Prestamista e "
+        "ainda sem seguro — cada uma conta contra o IPV."
+    )
+    if pend.empty:
+        st.success("Nenhuma proposta elegível sem seguro no seu escopo.")
+    else:
+        pend_f = _filtrar_loja_consultor(pend, "anl_prest_pend")
+        _tabela_prestamista(
+            pend_f, "prestamista_elegiveis_sem_seguro", "anl_prest_pend"
+        )
+
+    if perfil in ("admin", "gestor", "gerente_comercial", "supervisor"):
+        st.markdown("#### 📊 IPV por nível")
+        render_quebras_prestamista(
+            propostas, prestamista.get("meta"), perfil,
+            key_prefix="anl_prestamista",
+        )
+
+    with st.expander(f"Todas as propostas do arquivo ({len(base)})"):
+        situacoes = [SITUACAO_SEM_SEGURO, SITUACAO_COM_SEGURO,
+                     SITUACAO_NAO_ELEGIVEL]
+        sel = st.multiselect(
+            "Situação", situacoes, default=situacoes,
+            key="anl_prest_situacao",
+        )
+        todas = _filtrar_loja_consultor(
+            base[base["situacao"].isin(sel)], "anl_prest_todas"
+        )
+        _tabela_prestamista(todas, "prestamista_cnc", "anl_prest_todas")
+
+
 def _selecionar_banco(df) -> tuple[str, ...] | None:
     """Selectbox de banco da Distribuicao de Produtos.
 
@@ -1441,6 +1603,7 @@ def _render_distribuicao_produtos(df, df_sup, perfil: str) -> None:
 def render_tab_analiticos(
     df, df_sup, df_analise, df_cancelados, perfil: str = "",
     reconquista: dict | None = None,
+    prestamista: dict | None = None,
 ):
     """Renderiza aba de Analiticos."""
     sac.divider(
@@ -1470,6 +1633,7 @@ def render_tab_analiticos(
         "Aceleradores",
         "Reconquista",
         "Cobranca Consignavel",
+        "Prestamista",
     ]
     if not _is_consultor:
         opcoes.append("Distribuicao de Produtos")
@@ -1485,7 +1649,7 @@ def render_tab_analiticos(
     )
 
     if menu == "Propostas Pagas":
-        _render_detalhamento_pagos(df, df_sup)
+        _render_detalhamento_pagos(df, df_sup, prestamista)
 
     elif menu == "Em Analise":
         _render_detalhamento_em_analise(df_analise)
@@ -1505,6 +1669,9 @@ def render_tab_analiticos(
 
     elif menu == "Cobranca Consignavel":
         _render_cobranca_consignavel(reconquista)
+
+    elif menu == "Prestamista":
+        _render_prestamista(prestamista, df, perfil)
 
     elif menu == "Distribuicao de Produtos":
         _render_distribuicao_produtos(df, df_sup, perfil)

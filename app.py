@@ -63,6 +63,7 @@ from src.dashboard.loaders import (
     carregar_periodo_dashboard,
     carregar_pontuacao_efetiva,
     carregar_reconquista,
+    carregar_prestamista_cnc,
 )
 from src.dashboard.permissions import pode_ver
 from src.dashboard.rls import (
@@ -708,6 +709,10 @@ def main():
             logger.exception("Falha ao carregar Reconquista")
             dados_reconquista = None
 
+        # Prestamista CNC (IPV): RLS aplicada no loader; falha de I/O
+        # vira status de erro dentro do dict (o card avisa), nunca IPV 0.
+        dados_prestamista = carregar_prestamista_cnc(mes, ano)
+
         # Contexto do chat de IA. Nasce None e so e preenchido dentro do
         # bloco `cards_gerenciais` abaixo, que e onde os grupos de KPI
         # que ele carrega (pipeline, medias, quantidades) sao calculados.
@@ -844,7 +849,7 @@ def main():
 
             # KPIs Principais Reformulados
             # (3 principais + contexto + MIX + Aceleradores
-            # + Reconquista + Média/Projeção)
+            # + Prestamista CNC + Reconquista + Média/Projeção)
             render_kpis_reforma(
                 kpis=kpis,
                 kpis_analise=kpis_analise,
@@ -858,6 +863,7 @@ def main():
                 reconquista=dados_reconquista,
                 mes=mes,
                 ano=ano,
+                prestamista=dados_prestamista,
             )
 
             # Resumo Executivo comentado (após KPIs visuais)
@@ -866,6 +872,7 @@ def main():
                 kpis_analise=kpis_analise,
                 kpis_cancel=kpis_cancel,
                 metas_produto=metas_prod_diarias,
+                prestamista=dados_prestamista,
             )
 
             # NOVA REFORMA UX/UI: Bloco 3 - Prioridades de Ação
@@ -1055,6 +1062,7 @@ def main():
                     df_cancelados_f,
                     perfil=role,
                     reconquista=dados_reconquista,
+                    prestamista=dados_prestamista,
                 ),
             ),
             _AbaNav(

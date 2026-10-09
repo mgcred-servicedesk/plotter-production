@@ -27,8 +27,19 @@ from src.dashboard.kpis.reconquista import (
     LIGA_FORA,
     LIGA_NAO_IMPORTADA,
 )
+from src.dashboard.kpis.prestamista import (
+    PRESTAMISTA_ERRO,
+    PRESTAMISTA_NAO_IMPORTADO,
+    QUEBRAS_POR_PERFIL,
+    SEMAFORO_AMARELO,
+    SEMAFORO_VERDE,
+    SEMAFORO_VERMELHO,
+    classificar_ipv,
+    quebra_prestamista,
+)
 from src.dashboard.permissions import pode_ver
 from src.dashboard.ui.colors import (
+    StatusColors,
     get_status_full,
     get_churn_status,
     get_ritmo_status,
@@ -1240,6 +1251,196 @@ def _render_previa_reconquista(prox: Optional[Dict]) -> None:
         st.markdown(cards, unsafe_allow_html=True)
 
 
+# ══════════════════════════════════════════════════════
+# Seguro Prestamista CNC (IPV)
+# ══════════════════════════════════════════════════════
+
+# Cor e marcador do semaforo do IPV (meta/alerta vem do banco, por
+# periodo — ver kpis/prestamista.py).
+_COR_SEMAFORO = {
+    SEMAFORO_VERDE: StatusColors.SUCCESS,
+    SEMAFORO_AMARELO: StatusColors.WARNING,
+    SEMAFORO_VERMELHO: StatusColors.DANGER,
+}
+_ICONE_SEMAFORO = {
+    SEMAFORO_VERDE: "🟢",
+    SEMAFORO_AMARELO: "🟡",
+    SEMAFORO_VERMELHO: "🔴",
+}
+
+_ROTULOS_QUEBRA = {
+    "regiao": "Região",
+    "loja": "Loja",
+    "consultor": "Consultor",
+    "elegiveis": "Elegíveis",
+    "seguros": "Seguros",
+    "ipv": "IPV",
+    "status": "Status",
+}
+
+
+def _fmt_ipv(ipv: Optional[float]) -> str:
+    return "—" if ipv is None or pd.isna(ipv) else f"{ipv * 100:.1f}%"
+
+
+def _tabela_quebra_prestamista(
+    df: pd.DataFrame,
+    niveis: List[str],
+    meta: Optional[Dict],
+    key: str,
+) -> None:
+    quebra = quebra_prestamista(df, niveis)
+    if quebra.empty:
+        st.info("Sem propostas neste recorte.")
+        return
+    view = quebra.copy()
+    view["status"] = [
+        _ICONE_SEMAFORO.get(classificar_ipv(v, meta), "")
+        for v in view["ipv"]
+    ]
+    # Tabela espera percentual em 0-100 (formatter `_JS_PERC`).
+    view["ipv"] = [None if pd.isna(v) else v * 100 for v in view["ipv"]]
+    view = view[[*niveis, "elegiveis", "seguros", "ipv", "status"]]
+    exibir_tabela(
+        view.rename(columns=_ROTULOS_QUEBRA),
+        colunas_numero=["Elegíveis", "Seguros"],
+        colunas_percentual=["IPV"],
+        paginacao=100,
+        key=key,
+    )
+
+
+def render_cards_prestamista(
+    dados: Optional[Dict],
+    mes: int,
+    ano: int,
+    perfil: Optional[str],
+    du_decorridos: int = 0,
+    du_total: int = 0,
+) -> None:
+    """Bloco do Seguro Prestamista CNC: IPV contra a meta + quebras.
+
+    IPV = seguros ativos / propostas elegiveis do recorte (o loader ja
+    aplicou a RLS por perfil). Quebras por perfil em
+    `QUEBRAS_POR_PERFIL`. No-op se `dados` for None.
+    """
+    if not dados:
+        return
+
+    periodo = f"{_MESES_RECONQ.get(mes, '?')}/{ano}"
+    st.markdown("---")
+    st.markdown("### 🛡️ Prestamista CNC")
+
+    status = dados.get("status")
+    if status == PRESTAMISTA_ERRO:
+        st.error(
+            f"Não foi possível carregar o Prestamista CNC de {periodo} — "
+            "IPV indisponível."
+        )
+        return
+    if status == PRESTAMISTA_NAO_IMPORTADO:
+        st.info(
+            f"Arquivo do Prestamista CNC de {periodo} ainda não importado."
+        )
+        return
+
+    meta = dados.get("meta")
+    totais = dados.get("totais") or {}
+    eleg = int(totais.get("elegiveis", 0))
+    seg = int(totais.get("seguros", 0))
+    ipv = totais.get("ipv")
+
+    if meta:
+        meta_pct = float(meta["meta_ipv"])
+        cap = (
+            f"IPV = seguros ativos / propostas elegíveis · {periodo} · "
+            f"meta {meta_pct * 100:.0f}% (amarelo a partir de "
+            f"{float(meta['faixa_alerta']) * 100:.0f}%)"
+        )
+        if meta.get("is_fallback"):
+            cap += " · meta herdada do período anterior"
+        st.caption(cap)
+    else:
+        st.caption(
+            f"IPV = seguros ativos / propostas elegíveis · {periodo}"
+        )
+        if dados.get("meta_erro"):
+            st.warning("Falha ao carregar a meta — IPV exibido sem semáforo.")
+        else:
+            st.warning("Sem meta cadastrada para o período — IPV sem semáforo.")
+
+    if eleg == 0 and seg == 0 and not totais.get("propostas"):
+        st.info("Sem propostas de Prestamista CNC no seu escopo.")
+        return
+
+    cor = _COR_SEMAFORO.get(classificar_ipv(ipv, meta), "var(--mg-text)")
+    card_ipv = _card_contexto(
+        "🛡️ IPV",
+        _fmt_ipv(ipv),
+        f"{seg:,} seguros de {eleg:,} elegíveis",
+        valor_style=f' style="color: {cor};"',
+    )
+    card_seg = _card_contexto(
+        "✅ Seguros ativos",
+        f"{seg:,}",
+        f'<span style="opacity: 0.8;">de {eleg:,} elegíveis</span>',
+    )
+    du_txt = (
+        f'<span style="opacity: 0.8;">{du_decorridos} de '
+        f"{du_total} DU</span>"
+    )
+    if meta and ipv is not None:
+        # Distancia em pontos percentuais; meta batida = 0 p.p.
+        faltam_pp = max(float(meta["meta_ipv"]) - ipv, 0.0) * 100
+        card_falta = _card_contexto(
+            "🎯 Faltam para a meta", f"{faltam_pp:.1f} p.p.", du_txt
+        )
+    else:
+        card_falta = _card_contexto("🎯 Faltam para a meta", "—", du_txt)
+
+    st.markdown(
+        '<div style="display:flex; flex-wrap:wrap; '
+        'gap:clamp(10px,1.2vw,20px); align-items:stretch;">'
+        + card_ipv + card_seg + card_falta
+        + "</div>",
+        unsafe_allow_html=True,
+    )
+
+    if QUEBRAS_POR_PERFIL.get(perfil or ""):
+        st.markdown(
+            "<div style='height: 20px;'></div>", unsafe_allow_html=True
+        )
+        render_quebras_prestamista(
+            dados.get("propostas"), meta, perfil, key_prefix="prestamista"
+        )
+
+
+def render_quebras_prestamista(
+    propostas: Optional[pd.DataFrame],
+    meta: Optional[Dict],
+    perfil: Optional[str],
+    key_prefix: str,
+) -> None:
+    """Abas de IPV por nivel conforme o perfil (`QUEBRAS_POR_PERFIL`).
+
+    Compartilhada pelo card do Dashboard e pela sub-aba Prestamista dos
+    Analiticos (``key_prefix`` distingue as chaves das tabelas).
+    No-op para perfil sem quebra (consultor, desconhecido).
+    """
+    quebras = QUEBRAS_POR_PERFIL.get(perfil or "", [])
+    if not quebras:
+        return
+    abas = st.tabs([titulo for titulo, _ in quebras])
+    for aba, (_, niveis) in zip(abas, quebras):
+        with aba:
+            _tabela_quebra_prestamista(
+                propostas,
+                niveis,
+                meta,
+                key=f"{key_prefix}_{'_'.join(niveis)}",
+            )
+
+
 def render_kpis_reforma(
     kpis: Dict,
     kpis_analise: Dict,
@@ -1253,6 +1454,7 @@ def render_kpis_reforma(
     reconquista: Optional[Dict] = None,
     mes: Optional[int] = None,
     ano: Optional[int] = None,
+    prestamista: Optional[Dict] = None,
 ) -> None:
     """
     Renderiza o novo bloco de KPIs reformulado.
@@ -1262,8 +1464,9 @@ def render_kpis_reforma(
     2. KPIs de contexto
     3. Cards por produto MIX
     4. Cards Aceleradores (qtd)
-    5. Cards Reconquista (resumo da maciça ativa)
-    6. Ritmo + Projeção
+    5. Prestamista CNC (IPV)
+    6. Cards Reconquista (resumo da maciça ativa)
+    7. Ritmo + Projeção
     """
     # 1. KPIs Principais
     render_kpis_principais(kpis, kpis_analise, kpis_cancel, daily_pago)
@@ -1286,9 +1489,17 @@ def render_kpis_reforma(
     # 4. Cards Aceleradores (por quantidade)
     render_cards_aceleradores(kpis_qtd, perfil=perfil or "")
 
-    # 5. Cards Reconquista
+    # 5. Prestamista CNC (IPV)
+    if prestamista is not None and mes is not None and ano is not None:
+        render_cards_prestamista(
+            prestamista, mes, ano, perfil,
+            du_decorridos=int(kpis.get("du_decorridos", 0) or 0),
+            du_total=int(kpis.get("du_total", 0) or 0),
+        )
+
+    # 6. Cards Reconquista
     if reconquista is not None and mes is not None and ano is not None:
         render_cards_reconquista(reconquista, mes, ano)
 
-    # 6. Média e Projeção
+    # 7. Média e Projeção
     render_bloco_media_projecao(kpis)

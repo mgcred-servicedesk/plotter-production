@@ -79,6 +79,12 @@ from src.dashboard.kpis.reconquista import (  # noqa: F401
     liga_vigente,
     totais_liga,
 )
+from src.dashboard.kpis.prestamista import (
+    PRESTAMISTA_ERRO,
+    PRESTAMISTA_NAO_IMPORTADO,
+    PRESTAMISTA_OK,
+    totais_prestamista,
+)
 from src.dashboard.kpis.consolidacao import (
     aplicar_nomes_display_produto,
     consolidar_pontuacao,
@@ -3094,4 +3100,122 @@ def carregar_reconquista(mes: int, ano: int) -> Dict:
         # "Liga". Vazio fora da vigencia ou sem import; `liga_status`
         # em `totais` diz qual dos casos.
         "liga": liga,
+    }
+
+
+# ══════════════════════════════════════════════════════
+# Seguro Prestamista CNC (IPV) — migration 134
+#
+# Export do BI do banco, uma linha por proposta por periodo, importado
+# pelo angry-man (`fn_importar_prestamista_cnc`). IPV = seguros /
+# elegiveis; meta por periodo em `prestamista_cnc_meta`. Recorte por
+# perfil identico ao da Reconquista (`_filtro_rls_reconquista`): a view
+# expoe regiao/loja/consultor com os mesmos nomes. A regra fica em
+# `kpis/prestamista.py`. Ver business-rules.md § "Seguro Prestamista CNC".
+# ══════════════════════════════════════════════════════
+
+
+@st.cache_data(ttl=600)
+def _prestamista_periodo(mes: int, ano: int) -> pd.DataFrame:
+    """Prestamista CNC de UM periodo — GLOBAL, sem RLS. TTL 10min.
+
+    Falha de I/O LEVANTA (``st.cache_data`` nao guarda excecao): quem
+    decide o que exibir e ``carregar_prestamista_cnc``, que transforma o
+    erro em ``PRESTAMISTA_ERRO`` — nunca em IPV zero.
+    """
+    return pd.DataFrame(
+        _paginar_keyset(
+            lambda limite: (
+                _sb()
+                .from_("v_prestamista_cnc")
+                .select(
+                    "co_adesao,qtd_contrato,qtd_elegivel,qtd_seguro,"
+                    "status_apolice,regiao,loja,consultor"
+                )
+                .eq("ano", ano)
+                .eq("mes", mes)
+                .order("co_adesao")
+                .limit(limite)
+            ),
+            "co_adesao",
+        )
+    )
+
+
+@st.cache_data(ttl=21600)
+def _meta_prestamista(mes: int, ano: int) -> Optional[Dict]:
+    """Meta do IPV do periodo (``obter_meta_prestamista_cnc``). TTL 6h.
+
+    ``None`` = sem meta cadastrada ate o periodo (o card exibe o IPV sem
+    semaforo). Erro de I/O LEVANTA, como em ``_prestamista_periodo``.
+    """
+    linhas = _executar_rpc(
+        "obter_meta_prestamista_cnc", {"p_mes": int(mes), "p_ano": int(ano)}
+    ) or []
+    if isinstance(linhas, dict):
+        linhas = [linhas]
+    if not linhas:
+        return None
+    return {
+        "meta_ipv": float(linhas[0]["meta_ipv"]),
+        "faixa_alerta": float(linhas[0]["faixa_alerta"]),
+        "is_fallback": bool(linhas[0].get("is_fallback")),
+    }
+
+
+def carregar_prestamista_cnc(mes: int, ano: int) -> Dict:
+    """IPV do Prestamista CNC do (mes, ano), ja recortado por perfil.
+
+    Estrutura::
+
+        {
+            "status": PRESTAMISTA_OK | _NAO_IMPORTADO | _ERRO,
+            "meta":   {"meta_ipv", "faixa_alerta", "is_fallback"} | None,
+            "meta_erro": bool,    # falha ao ler a meta (sem semaforo)
+            "totais": {"elegiveis", "seguros", "propostas", "ipv"},
+            "propostas": DataFrame,  # linhas pos-RLS (base das quebras)
+        }
+
+    NAO_IMPORTADO e sobre a base GLOBAL do periodo: perfil com recorte
+    vazio num periodo importado recebe OK com totais zerados — a UI
+    distingue "o arquivo nao veio" de "nada no seu escopo".
+    """
+    meta: Optional[Dict] = None
+    meta_erro = False
+    try:
+        meta = _meta_prestamista(mes, ano)
+    except Exception:
+        logger.exception(
+            "Falha ao carregar a meta do Prestamista CNC (%02d/%d)", mes, ano
+        )
+        meta_erro = True
+
+    try:
+        base = _prestamista_periodo(mes, ano)
+    except Exception:
+        logger.exception(
+            "Falha ao carregar o Prestamista CNC (%02d/%d)", mes, ano
+        )
+        return {
+            "status": PRESTAMISTA_ERRO,
+            "meta": meta,
+            "meta_erro": meta_erro,
+            "totais": totais_prestamista(None),
+            "propostas": pd.DataFrame(),
+        }
+
+    if base.empty:
+        status = PRESTAMISTA_NAO_IMPORTADO
+        propostas = base
+    else:
+        status = PRESTAMISTA_OK
+        _filtra = _filtro_rls_reconquista()
+        propostas = _filtra(base) if _filtra is not None else base
+
+    return {
+        "status": status,
+        "meta": meta,
+        "meta_erro": meta_erro,
+        "totais": totais_prestamista(propostas),
+        "propostas": propostas,
     }

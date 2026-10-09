@@ -944,6 +944,62 @@ filtro de status, e o status casa por **prefixo** `ativo` (substring aceitaria
 `Inativo (a)`). Fonte da verdade do headcount é a planilha do RH — divergência
 entre universo e RH indica cadastro desatualizado no Supabase, não bug.
 
+## Seguro Prestamista CNC (IPV)
+
+Acompanhamento do seguro Prestamista nas propostas de CNC (≥ 10/2026,
+migration 134). Bloco "🛡️ Prestamista CNC" no Dashboard, entre os
+Aceleradores e a Reconquista.
+
+- **Fonte:** export do BI do banco (`Prestamista_CNC.xlsx`, aba `Export`,
+  filtro "Prst CNC" + mês). Uma linha por proposta (`Adesão` =
+  `contratos.num_proposta`) com `Qtd Elegível` e `Qtd Seguro` em 0/1. O
+  arquivo é o **acumulado do mês** até a extração; o angry-man importa
+  **por período** (reimportar substitui só aquele mês), como a Liga.
+- **Escopo = CNC + Super Conta.** Super Conta é produto CNC no banco (Débito
+  em Conta Portabilidade BMG); o filtro "Prst CNC" do BI já o inclui e o IPV
+  do banco (40,3% em 10/2026) conta os dois. Na nossa base o Super Conta está
+  em `categoria_codigo = SUPER_CONTA` — não filtrar. Cruzamento de 10/2026:
+  632 CNC + 80 Super Conta + 1 Antecipação casam com `num_proposta`; as 237
+  ADEs que não casam têm Qtd Contrato/Elegível/Seguro = 0 (sem efeito no IPV).
+- **Período = mês de PAGAMENTO** (não de digitação): todas as ADEs que
+  casam estão "PAGO AO CLIENTE" no mês do arquivo. O arquivo corta no
+  pagamento de D-1/D-2 da extração.
+- **IPV = Σ Qtd Seguro / Σ Qtd Elegível**, em qualquer nível. É a conta do
+  BI (rodapé de 10/2026: 93 / 231 = 40,26%). No arquivo de 10/2026 só a
+  apólice "Aprovado" vem com seguro 1; "Aguardando Envio de Arrecadação" é
+  elegível com seguro 0 — segue o arquivo, sem reinterpretar o status.
+  Sem elegível no recorte o IPV é indefinido ("—"), nunca 0%.
+- **Atribuição** loja/consultor vem do próprio arquivo (cod_bmg do prefixo
+  de `Franquia` + sucessora; consultor por nome + loja), mesmo critério da
+  Liga. Região = a atual da loja.
+- **Meta configurável por período** em `prestamista_cnc_meta` (editável por
+  SQL, sem deploy): `meta_ipv` (80% desde 10/2026) e `faixa_alerta` (60%).
+  Semáforo: 🟢 ≥ meta · 🟡 ≥ alerta · 🔴 abaixo (limites inclusivos).
+  Período sem meta herda a do anterior mais recente
+  (`obter_meta_prestamista_cnc`); antes do primeiro cadastro não há meta e o
+  card mostra o IPV sem semáforo.
+- **Visão por perfil** (recorte = `_filtro_rls_reconquista`):
+  admin/gestor → global, abas Por região / Por loja; gerente comercial →
+  própria região, Por loja / Por consultor; supervisor → própria loja, Por
+  consultor; consultor → só o próprio IPV (sem tabela).
+- **Estados:** arquivo do mês não importado → aviso; falha de leitura →
+  erro explícito (nunca IPV 0); escopo vazio num mês importado → "sem
+  propostas no seu escopo".
+- **Situação por proposta:** "⚠️ Elegível sem seguro" (elegível 1, seguro 0
+  — a pendência acionável), "✅ Com seguro", "Não elegível". ADE fora do
+  arquivo fica em branco (sem informação do banco, não "não elegível").
+- **Analíticos › Prestamista:** métricas, lista de elegíveis sem seguro
+  (loja/consultor do arquivo + produto/valor/data do contrato pago), IPV por
+  nível conforme o perfil e o arquivo inteiro com filtro de situação.
+- **Analíticos › Propostas Pagas:** coluna "Prestamista" casando o Nº ADE
+  (texto) com a Adesão (inteiro) e filtro "só elegíveis sem seguro".
+- **Resumo Executivo:** pill nas Ações Prioritárias com o IPV, a meta e as
+  pendências, colorida pelo semáforo; some sem arquivo importado.
+- Código: `kpis/prestamista.py` (regra), `loaders.carregar_prestamista_cnc`
+  (carga + RLS), `ui/kpi_cards_reforma.render_cards_prestamista` (card),
+  `tabs/analiticos._render_prestamista` (sub-aba),
+  `ui/resumo_executivo._pill_prestamista` (resumo).
+
 ## Reconquista (v2)
 
 Campanha de retenção. Fonte: export único `reconquista.xlsx`, **1 linha por

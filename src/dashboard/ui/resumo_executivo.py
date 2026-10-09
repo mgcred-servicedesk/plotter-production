@@ -10,6 +10,13 @@ from typing import Dict, List, Optional
 import streamlit as st
 
 from src.dashboard.formatters import formatar_moeda_compacta
+from src.dashboard.kpis.prestamista import (
+    PRESTAMISTA_OK,
+    SEMAFORO_AMARELO,
+    SEMAFORO_VERDE,
+    classificar_ipv,
+    pendencias_prestamista,
+)
 
 
 CSS_RESUMO = """
@@ -170,6 +177,37 @@ CSS_RESUMO = """
 """
 
 
+# Cor da pill do Prestamista pelo semaforo do IPV; sem meta -> azul.
+_PILL_SEMAFORO = {
+    SEMAFORO_VERDE: "mg-pill-green",
+    SEMAFORO_AMARELO: "mg-pill-yellow",
+}
+
+
+def _pill_prestamista(prestamista: Optional[Dict]) -> str:
+    """Pill do IPV do Prestamista CNC para as Acoes Prioritarias.
+
+    Vazia sem arquivo importado, com erro de leitura ou sem propostas no
+    escopo — nesses casos o bloco do Dashboard ja explica o motivo.
+    """
+    if not prestamista or prestamista.get("status") != PRESTAMISTA_OK:
+        return ""
+    totais = prestamista.get("totais") or {}
+    ipv = totais.get("ipv")
+    if ipv is None:
+        return ""
+    meta = prestamista.get("meta")
+    cor = classificar_ipv(ipv, meta)
+    classe = _PILL_SEMAFORO.get(cor, "mg-pill-red" if cor else "mg-pill-blue")
+    texto = f"🛡️ Prestamista {ipv * 100:.1f}%".replace(".", ",")
+    if meta:
+        texto += f" (meta {float(meta['meta_ipv']) * 100:.0f}%)"
+    n_pend = len(pendencias_prestamista(prestamista.get("propostas")))
+    if n_pend:
+        texto += f" · {n_pend} elegíveis sem seguro"
+    return f'<span class="mg-pill {classe}">{texto}</span>'
+
+
 def render_resumo_executivo(
     kpis: Dict,
     kpis_analise: Dict,
@@ -177,6 +215,7 @@ def render_resumo_executivo(
     metas_produto: List[Dict],
     produtos_criticos: Optional[List[Dict]] = None,
     regioes_criticas: Optional[List[Dict]] = None,
+    prestamista: Optional[Dict] = None,
 ) -> None:
     """Renderiza o bloco de Resumo Executivo estruturado."""
 
@@ -333,6 +372,7 @@ def render_resumo_executivo(
             f'💡 Pipeline: +{impacto_pipeline:.1f}% potencial'
             f'</span>'
         )
+    pills_html += _pill_prestamista(prestamista)
     if regioes_criticas and regioes_criticas[0].get("regiao"):
         pills_html += (
             f'<span class="mg-pill mg-pill-blue">'
