@@ -14,7 +14,7 @@ from typing import Dict, List, Optional, Sequence
 import pandas as pd
 import streamlit as st
 
-from src.dashboard.components.tables import exibir_tabela
+from src.dashboard.components.tables import botao_exportar_csv, exibir_tabela
 from src.dashboard.formatters import (
     formatar_decimal,
     formatar_moeda,
@@ -1288,6 +1288,7 @@ def _tabela_quebra_prestamista(
     niveis: List[str],
     meta: Optional[Dict],
     key: str,
+    exportar: bool = False,
 ) -> None:
     quebra = quebra_prestamista(df, niveis)
     if quebra.empty:
@@ -1308,6 +1309,18 @@ def _tabela_quebra_prestamista(
         paginacao=100,
         key=key,
     )
+    if exportar:
+        # CSV com o semaforo em texto (o icone nao serve fora da tela).
+        csv = view.copy()
+        csv["status"] = [
+            (classificar_ipv(v, meta) or "").capitalize() for v in quebra["ipv"]
+        ]
+        csv["ipv"] = pd.to_numeric(csv["ipv"]).round(2)
+        botao_exportar_csv(
+            csv.rename(columns=_ROTULOS_QUEBRA),
+            f"prestamista_ipv_por_{niveis[-1]}",
+            f"exp_{key}",
+        )
 
 
 def render_cards_prestamista(
@@ -1420,11 +1433,13 @@ def render_quebras_prestamista(
     meta: Optional[Dict],
     perfil: Optional[str],
     key_prefix: str,
+    exportar: bool = False,
 ) -> None:
     """Abas de IPV por nivel conforme o perfil (`QUEBRAS_POR_PERFIL`).
 
     Compartilhada pelo card do Dashboard e pela sub-aba Prestamista dos
     Analiticos (``key_prefix`` distingue as chaves das tabelas).
+    ``exportar`` poe o botao de CSV abaixo de cada tabela (Analiticos).
     No-op para perfil sem quebra (consultor, desconhecido).
     """
     quebras = QUEBRAS_POR_PERFIL.get(perfil or "", [])
@@ -1438,6 +1453,7 @@ def render_quebras_prestamista(
                 niveis,
                 meta,
                 key=f"{key_prefix}_{'_'.join(niveis)}",
+                exportar=exportar,
             )
 
 

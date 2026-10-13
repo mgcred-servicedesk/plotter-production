@@ -1441,7 +1441,7 @@ def _render_prestamista(
         st.markdown("#### 📊 IPV por nível")
         render_quebras_prestamista(
             propostas, prestamista.get("meta"), perfil,
-            key_prefix="anl_prestamista",
+            key_prefix="anl_prestamista", exportar=True,
         )
 
     with st.expander(f"Todas as propostas do arquivo ({len(base)})"):

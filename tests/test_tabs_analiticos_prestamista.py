@@ -126,6 +126,23 @@ class TestSubAbaPrestamista:
         )
         assert [t.label for t in at.tabs] == ["Por consultor"]
 
+    def test_quebras_tem_botao_de_exportar(self):
+        at = _rodar(
+            _script_sub_aba, prestamista=_prestamista(), pagos=_pagos(),
+            perfil="admin",
+        )
+        rotulos = [b.proto.label for b in at.get("download_button")]
+        assert "Exportar prestamista_ipv_por_regiao" in rotulos
+        assert "Exportar prestamista_ipv_por_loja" in rotulos
+
+    def test_consultor_sem_botao_de_quebra(self):
+        at = _rodar(
+            _script_sub_aba, prestamista=_prestamista(), pagos=_pagos(),
+            perfil="consultor",
+        )
+        rotulos = [b.proto.label for b in at.get("download_button")]
+        assert not any("ipv_por" in r for r in rotulos)
+
     def test_nao_importado_avisa(self):
         at = _rodar(
             _script_sub_aba,
