@@ -13,6 +13,8 @@ from src.dashboard.kpis.prestamista import (
     PRESTAMISTA_NAO_IMPORTADO,
     PRESTAMISTA_OK,
     SITUACAO_COM_SEGURO,
+    SITUACAO_ELEGIVEL,
+    SITUACAO_NAO_ELEGIVEL,
     SITUACAO_SEM_SEGURO,
     totais_prestamista,
 )
@@ -31,8 +33,8 @@ def _propostas():
     })
 
 
-def _prestamista(status=PRESTAMISTA_OK):
-    prop = _propostas()
+def _prestamista(status=PRESTAMISTA_OK, prop=None):
+    prop = _propostas() if prop is None else prop
     return {
         "status": status,
         "meta": {"meta_ipv": 0.8, "faixa_alerta": 0.6, "is_fallback": False},
@@ -83,6 +85,10 @@ def _tabela(at: AppTest, i: int = 0) -> pd.DataFrame:
     return valor.data if hasattr(valor, "data") else valor
 
 
+def _abas_quebra(at: AppTest) -> list:
+    return [t.label for t in at.tabs if t.label.startswith("Por ")]
+
+
 def _rodar(fn, **kwargs) -> AppTest:
     at = AppTest.from_function(fn, kwargs=kwargs)
     at.run()
@@ -117,14 +123,97 @@ class TestSubAbaPrestamista:
             _script_sub_aba, prestamista=_prestamista(), pagos=_pagos(),
             perfil="consultor",
         )
-        assert len(at.tabs) == 0
+        assert _abas_quebra(at) == []
 
     def test_supervisor_ve_quebra_por_consultor(self):
         at = _rodar(
             _script_sub_aba, prestamista=_prestamista(), pagos=_pagos(),
             perfil="supervisor",
         )
-        assert [t.label for t in at.tabs] == ["Por consultor"]
+        assert _abas_quebra(at) == ["Por consultor"]
+
+    def test_abas_por_situacao_com_contagem(self):
+        prop = pd.concat([_propostas(), pd.DataFrame({
+            "co_adesao": [105], "qtd_contrato": [1], "qtd_elegivel": [1],
+            "qtd_seguro": [0],
+            "status_apolice": ["Aguardando Envio de Arrecadação"],
+            "regiao": ["R1"], "loja": ["L2"], "consultor": ["CAU"],
+        })], ignore_index=True)
+        at = _rodar(
+            _script_sub_aba, prestamista=_prestamista(prop=prop),
+            pagos=_pagos(), perfil="consultor",
+        )
+        assert [t.label for t in at.tabs] == [
+            f"{SITUACAO_SEM_SEGURO} (1)",
+            f"{SITUACAO_ELEGIVEL} (1)",
+            f"{SITUACAO_COM_SEGURO} (1)",
+            f"{SITUACAO_NAO_ELEGIVEL} (2)",
+        ]
+        # Uma tabela por aba, na ordem das abas (+ o expander no fim).
+        assert _tabela(at, 0)["Nº ADE"].tolist() == ["102"]
+        assert _tabela(at, 1)["Nº ADE"].tolist() == ["105"]
+        assert _tabela(at, 2)["Nº ADE"].tolist() == ["101"]
+        assert sorted(_tabela(at, 3)["Nº ADE"]) == ["103", "104"]
+        valores = {m.label: m.value for m in at.metric}
+        assert valores["Seguro digitado"] == "1"
+        assert valores["Elegíveis sem seguro"] == "1"
+        rotulos = [b.proto.label for b in at.get("download_button")]
+        for nome in ("prestamista_elegiveis_sem_seguro",
+                     "prestamista_seguro_digitado",
+                     "prestamista_com_seguro",
+                     "prestamista_nao_elegiveis"):
+            assert f"Exportar {nome}" in rotulos
+
+    def _app_sub_aba(self) -> AppTest:
+        at = AppTest.from_function(
+            _script_sub_aba,
+            kwargs=dict(prestamista=_prestamista(), pagos=_pagos(),
+                        perfil="consultor"),
+        )
+        at.run()
+        return at
+
+    def test_busca_ade_filtra_as_abas(self):
+        at = self._app_sub_aba()
+        at.text_input(key="anl_prest_busca_input").input("102").run()
+        assert not at.exception, at.exception
+        assert [t.label for t in at.tabs] == [
+            f"{SITUACAO_SEM_SEGURO} (1)",
+            f"{SITUACAO_ELEGIVEL} (0)",
+            f"{SITUACAO_COM_SEGURO} (0)",
+            f"{SITUACAO_NAO_ELEGIVEL} (0)",
+        ]
+        res = _tabela(at, 0)
+        assert res["Nº ADE"].tolist() == ["102"]
+        assert res["Valor"].tolist() == [2000.0]
+        # Metricas do topo seguem o escopo inteiro, sem o filtro.
+        valores = {m.label: m.value for m in at.metric}
+        assert valores["IPV"] == "50.0%"
+
+    def test_busca_ade_sem_resultado(self):
+        at = self._app_sub_aba()
+        at.text_input(key="anl_prest_busca_input").input("999").run()
+        assert any("999" in w.value for w in at.warning)
+        assert all(t.label.endswith("(0)") for t in at.tabs)
+
+    def test_filtro_de_loja_vale_para_todas_as_abas(self):
+        at = self._app_sub_aba()
+        at.selectbox(key="anl_prest_loja").select("L2").run()
+        assert [t.label for t in at.tabs] == [
+            f"{SITUACAO_SEM_SEGURO} (0)",
+            f"{SITUACAO_ELEGIVEL} (0)",
+            f"{SITUACAO_COM_SEGURO} (0)",
+            f"{SITUACAO_NAO_ELEGIVEL} (2)",
+        ]
+        assert any("com esses filtros" in i.value for i in at.info)
+
+    def test_aba_vazia_avisa(self):
+        at = _rodar(
+            _script_sub_aba, prestamista=_prestamista(), pagos=_pagos(),
+            perfil="consultor",
+        )
+        assert f"{SITUACAO_ELEGIVEL} (0)" in [t.label for t in at.tabs]
+        assert any("nesta situação" in i.value for i in at.info)
 
     def test_quebras_tem_botao_de_exportar(self):
         at = _rodar(

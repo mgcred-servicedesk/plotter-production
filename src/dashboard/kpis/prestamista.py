@@ -158,6 +158,7 @@ def classificar_ipv(
 # ── Situacao por proposta (analiticos) ─────────────────────────────────
 
 SITUACAO_SEM_SEGURO = "⚠️ Elegível sem seguro"
+SITUACAO_ELEGIVEL = "⏳ Elegível"  # elegivel, seguro 0, apolice ja digitada
 SITUACAO_COM_SEGURO = "✅ Com seguro"
 SITUACAO_NAO_ELEGIVEL = "Não elegível"
 
@@ -175,11 +176,19 @@ QUEBRAS_POR_PERFIL: Dict[str, list] = {
 }
 
 
-def situacao_prestamista(elegivel, seguro) -> str:
-    """Rotulo da proposta: seguro tem precedencia (como no IPV do BI)."""
+def situacao_prestamista(elegivel, seguro, status_apolice=None) -> str:
+    """Rotulo da proposta: seguro tem precedencia (como no IPV do BI).
+
+    Elegivel sem seguro mas com `Status Apolice` preenchido (ex.:
+    "Aguardando Envio de Arrecadacao") ja teve o seguro digitado — e
+    "Elegivel", nao pendencia. Continua fora do numerador do IPV (o BI
+    traz Qtd Seguro 0 para ela).
+    """
     if int(seguro or 0) == 1:
         return SITUACAO_COM_SEGURO
     if int(elegivel or 0) == 1:
+        if pd.notna(status_apolice) and str(status_apolice).strip():
+            return SITUACAO_ELEGIVEL
         return SITUACAO_SEM_SEGURO
     return SITUACAO_NAO_ELEGIVEL
 
@@ -194,9 +203,13 @@ def com_situacao(df: Optional[pd.DataFrame]) -> pd.DataFrame:
     out["ade"] = pd.to_numeric(out["co_adesao"], errors="coerce").astype(
         "Int64"
     ).astype(str)
+    status = (
+        out["status_apolice"] if "status_apolice" in out.columns
+        else pd.Series(None, index=out.index, dtype=object)
+    )
     out["situacao"] = [
-        situacao_prestamista(e, s)
-        for e, s in zip(out["qtd_elegivel"], out["qtd_seguro"])
+        situacao_prestamista(e, s, st)
+        for e, s, st in zip(out["qtd_elegivel"], out["qtd_seguro"], status)
     ]
     return out
 

@@ -45,6 +45,7 @@ from src.dashboard.kpis.prestamista import (
     PRESTAMISTA_NAO_IMPORTADO,
     PRESTAMISTA_OK,
     SITUACAO_COM_SEGURO,
+    SITUACAO_ELEGIVEL,
     SITUACAO_NAO_ELEGIVEL,
     SITUACAO_SEM_SEGURO,
     com_situacao,
@@ -1381,10 +1382,74 @@ def _tabela_prestamista(df: pd.DataFrame, nome: str, key: str) -> None:
     _exportar_csv(view, nome, f"exp_{key}")
 
 
+def _filtros_prestamista(base: pd.DataFrame) -> tuple[pd.DataFrame, str]:
+    """Linha de filtros acima das abas: Loja, Consultor e Nº ADE.
+
+    Vale para todas as abas — a contagem de cada uma acompanha o filtro,
+    entao buscar uma ADE mostra em que situacao ela esta. A busca segue
+    a semantica da busca geral (`_render_busca_ade`): trecho do numero.
+    Devolve o frame filtrado e o texto buscado (vazio se nao houve busca).
+    """
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        lojas = ["Todas"] + sorted(base["LOJA"].dropna().unique().tolist())
+        filt_loja = st.selectbox("Loja", lojas, key="anl_prest_loja")
+    with col2:
+        cons = ["Todos"] + sorted(base["CONSULTOR"].dropna().unique().tolist())
+        filt_cons = st.selectbox("Consultor", cons, key="anl_prest_cons")
+    with col3:
+        busca = st.text_input(
+            "Nº ADE",
+            placeholder="Digite o número ADE e pressione Enter...",
+            key="anl_prest_busca_input",
+        ).strip()
+    out = base
+    if filt_loja != "Todas":
+        out = out[out["LOJA"] == filt_loja]
+    if filt_cons != "Todos":
+        out = out[out["CONSULTOR"] == filt_cons]
+    if busca:
+        out = out[out["ade"].astype(str).str.contains(busca, case=False, na=False)]
+    return out, busca
+
+
+# Abas da sub-aba Prestamista, na ordem de acao: (situacao, legenda,
+# nome do CSV, key). A pendencia acionavel vem primeiro.
+_ABAS_SITUACAO = [
+    (
+        SITUACAO_SEM_SEGURO,
+        "Elegíveis ao Prestamista, sem seguro e sem apólice digitada — "
+        "a pendência: cada uma conta contra o IPV.",
+        "prestamista_elegiveis_sem_seguro",
+        "anl_prest_pend",
+    ),
+    (
+        SITUACAO_ELEGIVEL,
+        "Elegíveis com o seguro já digitado (Status Apólice preenchido, "
+        "ex.: Aguardando Envio de Arrecadação). Só entram no IPV quando "
+        "o banco efetivar o seguro.",
+        "prestamista_seguro_digitado",
+        "anl_prest_digitado",
+    ),
+    (
+        SITUACAO_COM_SEGURO,
+        "Seguro efetivado — o numerador do IPV.",
+        "prestamista_com_seguro",
+        "anl_prest_com_seguro",
+    ),
+    (
+        SITUACAO_NAO_ELEGIVEL,
+        "Propostas que o banco não marcou como elegíveis — fora do IPV.",
+        "prestamista_nao_elegiveis",
+        "anl_prest_nao_elegivel",
+    ),
+]
+
+
 def _render_prestamista(
     prestamista: dict | None, df_pagos: pd.DataFrame, perfil: str
 ) -> None:
-    """Sub-aba Prestamista: pendencias, quebras e o arquivo inteiro.
+    """Sub-aba Prestamista: propostas por situacao, quebras e o arquivo.
 
     Escopo do BI do banco: CNC + Super Conta (produto CNC no banco).
     Recorte por perfil ja aplicado no loader.
@@ -1411,9 +1476,9 @@ def _render_prestamista(
     )
     tot = totais_prestamista(propostas)
     base = _prestamista_com_contrato(propostas, df_pagos)
-    pend = base[base["situacao"] == SITUACAO_SEM_SEGURO]
+    n_situacao = base["situacao"].value_counts()
 
-    col1, col2, col3, col4 = st.columns(4)
+    col1, col2, col3, col4, col5 = st.columns(5)
     with col1:
         ipv = tot["ipv"]
         st.metric("IPV", "—" if ipv is None else formatar_percentual(ipv * 100))
@@ -1422,20 +1487,44 @@ def _render_prestamista(
     with col3:
         st.metric("Com seguro", formatar_numero(tot["seguros"]))
     with col4:
-        st.metric("Elegíveis sem seguro", formatar_numero(len(pend)))
-
-    st.markdown("#### ⚠️ Elegíveis sem seguro")
-    st.caption(
-        "Propostas que o banco marcou como elegíveis ao Prestamista e "
-        "ainda sem seguro — cada uma conta contra o IPV."
-    )
-    if pend.empty:
-        st.success("Nenhuma proposta elegível sem seguro no seu escopo.")
-    else:
-        pend_f = _filtrar_loja_consultor(pend, "anl_prest_pend")
-        _tabela_prestamista(
-            pend_f, "prestamista_elegiveis_sem_seguro", "anl_prest_pend"
+        st.metric(
+            "Seguro digitado",
+            formatar_numero(int(n_situacao.get(SITUACAO_ELEGIVEL, 0))),
         )
+    with col5:
+        st.metric(
+            "Elegíveis sem seguro",
+            formatar_numero(int(n_situacao.get(SITUACAO_SEM_SEGURO, 0))),
+        )
+
+    st.markdown("#### 📋 Propostas por situação")
+    filtrado, busca = _filtros_prestamista(base)
+    if busca and filtrado.empty:
+        st.warning(f"Nenhuma proposta do Prestamista com ADE '{busca}'.")
+    filtros_ativos = len(filtrado) < len(base)
+    por_situacao = {
+        sit: filtrado[filtrado["situacao"] == sit]
+        for sit, *_ in _ABAS_SITUACAO
+    }
+    abas = st.tabs([
+        f"{sit} ({formatar_numero(len(por_situacao[sit]))})"
+        for sit, *_ in _ABAS_SITUACAO
+    ])
+    for aba, (sit, legenda, nome, key) in zip(abas, _ABAS_SITUACAO):
+        with aba:
+            st.caption(legenda)
+            df_sit = por_situacao[sit]
+            if df_sit.empty:
+                if filtros_ativos:
+                    st.info("Nenhuma proposta nesta situação com esses filtros.")
+                elif sit == SITUACAO_SEM_SEGURO:
+                    st.success(
+                        "Nenhuma proposta elegível sem seguro no seu escopo."
+                    )
+                else:
+                    st.info("Nenhuma proposta nesta situação no seu escopo.")
+                continue
+            _tabela_prestamista(df_sit, nome, key)
 
     if perfil in ("admin", "gestor", "gerente_comercial", "supervisor"):
         st.markdown("#### 📊 IPV por nível")
@@ -1445,8 +1534,7 @@ def _render_prestamista(
         )
 
     with st.expander(f"Todas as propostas do arquivo ({len(base)})"):
-        situacoes = [SITUACAO_SEM_SEGURO, SITUACAO_COM_SEGURO,
-                     SITUACAO_NAO_ELEGIVEL]
+        situacoes = [sit for sit, *_ in _ABAS_SITUACAO]
         sel = st.multiselect(
             "Situação", situacoes, default=situacoes,
             key="anl_prest_situacao",

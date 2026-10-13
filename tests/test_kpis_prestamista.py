@@ -107,6 +107,7 @@ def test_nan_nao_vira_vermelho():
 
 from src.dashboard.kpis.prestamista import (  # noqa: E402
     SITUACAO_COM_SEGURO,
+    SITUACAO_ELEGIVEL,
     SITUACAO_NAO_ELEGIVEL,
     SITUACAO_SEM_SEGURO,
     marcar_situacao_por_ade,
@@ -126,6 +127,35 @@ class TestSituacao:
     ])
     def test_rotulo(self, eleg, seg, esperado):
         assert situacao_prestamista(eleg, seg) == esperado
+
+    @pytest.mark.parametrize("eleg,seg,status,esperado", [
+        (1, 0, "Aguardando Envio de Arrecadação", SITUACAO_ELEGIVEL),
+        (1, 0, None, SITUACAO_SEM_SEGURO),
+        (1, 0, float("nan"), SITUACAO_SEM_SEGURO),  # vazio vindo do pandas
+        (1, 0, "  ", SITUACAO_SEM_SEGURO),
+        (1, 1, "Aprovado", SITUACAO_COM_SEGURO),
+        (0, 0, "Aguardando Envio de Arrecadação", SITUACAO_NAO_ELEGIVEL),
+    ])
+    def test_status_apolice_digitada_nao_e_pendencia(
+        self, eleg, seg, status, esperado
+    ):
+        assert situacao_prestamista(eleg, seg, status) == esperado
+
+    def test_pendencias_excluem_apolice_digitada(self):
+        prop = _propostas().assign(
+            status_apolice=[None, None, "Aguardando Envio de Arrecadação",
+                            None, None, None, None]
+        )
+        pend = pendencias_prestamista(prop)
+        assert sorted(pend["co_adesao"]) == [6]
+        marcado = marcar_situacao_por_ade(pd.Series(["3", "6"]), prop)
+        assert list(marcado) == [SITUACAO_ELEGIVEL, SITUACAO_SEM_SEGURO]
+
+    def test_ipv_nao_muda_com_apolice_digitada(self):
+        """Elegivel com apolice digitada segue no denominador, fora do numerador."""
+        prop = _propostas()
+        com_status = prop.assign(status_apolice="Aguardando Envio de Arrecadação")
+        assert totais_prestamista(com_status) == totais_prestamista(prop)
 
     def test_pendencias_sao_so_elegiveis_sem_seguro(self):
         pend = pendencias_prestamista(_propostas())

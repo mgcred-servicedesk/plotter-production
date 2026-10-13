@@ -1027,12 +1027,20 @@ Aceleradores e a Reconquista.
 - **Estados:** arquivo do mês não importado → aviso; falha de leitura →
   erro explícito (nunca IPV 0); escopo vazio num mês importado → "sem
   propostas no seu escopo".
-- **Situação por proposta:** "⚠️ Elegível sem seguro" (elegível 1, seguro 0
-  — a pendência acionável), "✅ Com seguro", "Não elegível". ADE fora do
-  arquivo fica em branco (sem informação do banco, não "não elegível").
-- **Analíticos › Prestamista:** métricas, lista de elegíveis sem seguro
-  (loja/consultor do arquivo + produto/valor/data do contrato pago), IPV por
-  nível conforme o perfil e o arquivo inteiro com filtro de situação.
+- **Situação por proposta:** "⚠️ Elegível sem seguro" (elegível 1, seguro 0,
+  Status Apólice vazio — a pendência acionável), "⏳ Elegível" (elegível 1,
+  seguro 0, Status Apólice preenchido — o seguro já foi digitado, ex.
+  "Aguardando Envio de Arrecadação"; não é pendência, mas segue fora do
+  numerador do IPV, como no BI), "✅ Com seguro", "Não elegível". ADE fora
+  do arquivo fica em branco (sem informação do banco, não "não elegível").
+- **Analíticos › Prestamista:** métricas do escopo inteiro (IPV, elegíveis,
+  com seguro, seguro digitado, elegíveis sem seguro); "Propostas por
+  situação" com uma linha de filtros (Loja, Consultor, Nº ADE) que vale para
+  todas as abas — a contagem de cada aba acompanha o filtro — e uma aba por
+  situação na ordem de ação (⚠️ sem seguro → ⏳ Elegível → ✅ Com seguro →
+  Não elegível; loja/consultor do arquivo + produto/valor/data do contrato
+  pago; exportação por aba); IPV por nível conforme o perfil; e o arquivo
+  inteiro com filtro de situação.
 - **Analíticos › Propostas Pagas:** coluna "Prestamista" casando o Nº ADE
   (texto) com a Adesão (inteiro) e filtro "só elegíveis sem seguro".
 - **Resumo Executivo:** pill nas Ações Prioritárias com o IPV, a meta e as
