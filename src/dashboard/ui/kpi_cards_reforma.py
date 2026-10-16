@@ -22,6 +22,7 @@ from src.dashboard.formatters import (
     formatar_percentual,
 )
 from src.config.settings import PACK_LABEL_AGREGADO
+from src.dashboard.kpis.gerais import avaliar_regra_mix, projetar_regra_mix
 from src.dashboard.kpis.reconquista import (
     LIGA_ERRO,
     LIGA_FORA,
@@ -61,6 +62,42 @@ def _formatar_valor_moeda_total(valor: float) -> str:
     return f"R$ {valor:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
 
 
+def texto_faltas_mix(pendentes: List[Dict]) -> str:
+    """``CLT R$ 3.2K · Consignado R$ 12.0K`` — o que falta em cada produto.
+
+    ``$`` vira ``&#36;``: com dois valores na mesma linha o markdown do
+    Streamlit leria o trecho entre os cifroes como LaTeX.
+    """
+    return " · ".join(
+        f"{_display_name_produto(p['produto'])} "
+        f"{_formatar_valor_moeda(p['falta'])}".replace("$", "&#36;")
+        for p in pendentes
+    )
+
+
+def nomes_pendentes_mix(regra: Dict) -> str:
+    """``CNC, CLT`` — nomes dos produtos pendentes da regra, sem valores."""
+    return ", ".join(
+        _display_name_produto(p["produto"]) for p in regra.get("pendentes", [])
+    )
+
+
+def mensagem_regra_mix(regra: Dict) -> str:
+    """Frase do estado parcial da regra do MIX (vazia fora dele).
+
+    So existe quando o total ou algum produto ja bateu e ainda ha
+    produto abaixo da meta — o quadro nao pode dizer "meta atingida" e
+    avisa o que falta em cada produto restante.
+    """
+    if not regra.get("parcial"):
+        return ""
+    faltas = texto_faltas_mix(regra["pendentes"])
+    if regra.get("total_batido"):
+        return f"Total do MIX batido — falta bater: {faltas}"
+    batidos = ", ".join(_display_name_produto(p) for p in regra["batidos"])
+    return f"Já bateu: {batidos} · Falta: {faltas}"
+
+
 def _card_contexto(
     label: str,
     valor: str,
@@ -87,6 +124,7 @@ def render_kpis_principais(
     kpis_analise: Dict,
     kpis_cancel: Dict,
     daily_pago: Optional[Sequence[float]] = None,
+    metas_produto: Optional[List[Dict]] = None,
 ) -> None:
     """
     Renderiza os 3 KPIs principais em linha dominante.
@@ -99,22 +137,33 @@ def render_kpis_principais(
         kpis_analise: KPIs de contratos em análise
         kpis_cancel: KPIs de cancelados
         daily_pago: Série diária de valores pagos (para sparkline)
+        metas_produto: metas por produto (``calcular_metas_produto_diarias``)
+            — sustentam a regra do MIX no card "Falta para Meta".
     """
     total_vendas = kpis.get("total_vendas", 0)
     # % e gap aqui são em VALOR (R$), comparando vendas com a meta-mix.
     # Meta MIX (produto) = R$ 15.7M; Meta PRATA/OURO = pontos (página à parte).
-    perc_ating = kpis.get("perc_ating_valor", 0)
-    gap = kpis.get("gap_valor", 0)
+    meta_mix = kpis.get("meta_mix", 0)
+    # Regra do MIX: "Meta Atingida" so com o total E cada produto na
+    # meta; o que falta e a soma do que falta em cada produto, e o %
+    # sai da mesma conta (o excedente de um produto nao compensa a
+    # falta de outro). O % do total vendido segue visivel no rodape
+    # enquanto a regra nao fecha.
+    regra = avaliar_regra_mix(metas_produto, total_vendas, meta_mix)
+    gap = regra["falta"]
+    perc_ating = regra["perc"]
+    perc_total = kpis.get("perc_ating_valor", 0)
 
     cor_status, bg_status, emoji_status, label_status = get_status_full(perc_ating)
 
     # Linha dos 3 KPIs principais
-    meta_mix = kpis.get("meta_mix", 0)
     du_restantes = kpis.get("du_restantes", 1)
     projecao = kpis.get("projecao", 0)
-    # perc_proj em VALOR (projecao R$ / meta_mix), coerente com perc_ating_valor.
-    # kpis["perc_proj"] global é projecao_pts/meta_prata — base diferente.
-    perc_proj = (projecao / meta_mix * 100) if meta_mix > 0 else 0
+    # perc_proj em VALOR pela regra do MIX: projecao de cada produto
+    # contra a meta dele, sem o excedente de um compensar outro
+    # (``projetar_regra_mix``). kpis["perc_proj"] global é
+    # projecao_pts/meta_prata — base diferente.
+    perc_proj = projetar_regra_mix(metas_produto, projecao, meta_mix)["perc"]
 
     pagos_fmt = _formatar_valor_moeda(total_vendas)
     pagos_total = _formatar_valor_moeda_total(total_vendas)
@@ -134,6 +183,12 @@ def render_kpis_principais(
         </div>"""
 
     if meta_mix > 0:
+        linha_total = (
+            ""
+            if regra["atingida"]
+            else f"<br>Total vendido: {formatar_percentual(perc_total)}"
+            " da meta MIX"
+        )
         card_meta = f"""
             <div class="mg-kpi-hero" style="flex: 1;">
                 <div class="mg-kpi-label">📊 % Meta Atingida</div>
@@ -142,7 +197,7 @@ def render_kpis_principais(
                 </div>
                 <div class="mg-kpi-sub" style="font-size: 14px;">
                     Projeção: {formatar_percentual(perc_proj)} |
-                    MIX: {meta_mix_fmt}
+                    MIX: {meta_mix_fmt}{linha_total}
                 </div>
             </div>"""
     else:
@@ -164,16 +219,21 @@ def render_kpis_principais(
                     Sem meta definida
                 </div>
             </div>"""
-    elif gap > 0:
+    elif not regra["atingida"]:
         gap_fmt = _formatar_valor_moeda(gap)
         gap_por_dia = gap / du_restantes if du_restantes > 1 else gap
         gap_por_dia_fmt = _formatar_valor_moeda(gap_por_dia)
+        detalhe = (
+            mensagem_regra_mix(regra)
+            if regra["parcial"]
+            else f"Falta: {_formatar_valor_moeda_total(gap)}"
+        )
         card_gap = f"""
             <div class="mg-kpi-hero" style="flex: 1;">
                 <div class="mg-kpi-label">🎯 Falta para Meta</div>
                 <div class="mg-kpi-valor mg-kpi-gap">-{gap_fmt}</div>
                 <div class="mg-kpi-sub" style="font-size: 14px;">
-                    Falta: {_formatar_valor_moeda_total(gap)}<br>
+                    {detalhe}<br>
                     <strong>{gap_por_dia_fmt}/dia</strong>
                 </div>
             </div>"""
@@ -183,7 +243,7 @@ def render_kpis_principais(
                 <div class="mg-kpi-label">🎯 Falta para Meta</div>
                 <div class="mg-kpi-valor" style="color: #10A37F;">✓ Meta Atingida</div>
                 <div class="mg-kpi-sub" style="font-size: 14px;">
-                    +{_formatar_valor_moeda_total(abs(gap))} acima
+                    +{_formatar_valor_moeda_total(total_vendas - meta_mix)} acima
                 </div>
             </div>"""
 
@@ -406,10 +466,17 @@ def render_kpis_contexto(
                 st.rerun()
 
 
-def render_bloco_media_projecao(kpis: Dict) -> None:
+def render_bloco_media_projecao(
+    kpis: Dict,
+    metas_produto: Optional[List[Dict]] = None,
+) -> None:
     """
     Renderiza o bloco de Média vs Meta e Projeção.
     Design compacto unificado: Média → Necessário → Projeção
+
+    ``metas_produto`` sustenta a regra do MIX (``avaliar_regra_mix``):
+    "Meta atingida" so com o total e cada produto na meta, e o
+    "Necessário" sai da soma do que falta em cada produto.
     """
     from src.dashboard.ui.colors import get_status_color
 
@@ -424,10 +491,15 @@ def render_bloco_media_projecao(kpis: Dict) -> None:
     # perc_proj precisa estar na mesma base do resto do card (valor vs meta MIX).
     # O kpis["perc_proj"] global é projecao_pts/meta_prata (pontos vs Prata),
     # o que geraria incoerência com média/necessário/projeção em R$ vs MIX.
-    perc_proj = (projecao / meta_mix * 100) if meta_mix > 0 else 0
+    # Pela regra do MIX: projeção de cada produto contra a meta dele, sem
+    # o excedente de um compensar outro (``projetar_regra_mix``).
+    regra_proj = projetar_regra_mix(metas_produto, projecao, meta_mix)
+    perc_proj = regra_proj["perc"]
 
-    # Calcular média necessária e projeção
-    gap = max(0, meta_mix - total_vendas)
+    # Calcular média necessária e projeção. O gap segue a regra do MIX:
+    # o excedente de um produto nao cobre a falta de outro.
+    regra = avaliar_regra_mix(metas_produto, total_vendas, meta_mix)
+    gap = regra["falta"]
     media_necessaria = (
         gap / du_restantes if du_restantes > 0 else 0
     )
@@ -454,14 +526,30 @@ def render_bloco_media_projecao(kpis: Dict) -> None:
     )
 
     # Mensagem contextual
-    meta_atingida = meta_mix > 0 and total_vendas >= meta_mix
+    meta_atingida = regra["atingida"]
     periodo_encerrado = du_restantes <= 0
+    msg_regra = mensagem_regra_mix(regra)
+    linha_regra = (
+        f'<div style="text-align: center; font-size: 13px; margin-top: 8px;'
+        f' color: var(--mg-text-muted);">{msg_regra}</div>'
+        if msg_regra
+        else ""
+    )
     if meta_mix <= 0:
         msg_desvio = "Sem meta definida"
     elif meta_atingida:
         msg_desvio = "Meta atingida"
     elif periodo_encerrado:
         msg_desvio = "Período encerrado — meta não atingida"
+    elif regra_proj["pendentes"]:
+        # O ritmo total pode sobrar num produto e faltar em outro: a
+        # média geral "acima do necessário" escondia isso. Produto
+        # projetado abaixo da meta = ritmo dele abaixo do necessário.
+        cor_media = StatusColors.DANGER
+        msg_desvio = (
+            "Ritmo abaixo do necessário em: "
+            f"{nomes_pendentes_mix(regra_proj)}"
+        )
     else:
         msg_desvio = (
             f"{abs(desvio):.0f}% "
@@ -541,7 +629,7 @@ def render_bloco_media_projecao(kpis: Dict) -> None:
                 <span><strong style="color: {cor_media};">{msg_desvio}</strong></span>
                 <span>·</span>
                 <span><strong style="color: {cor_proj};">{msg_fechamento}</strong></span>
-            </div>
+            </div>{linha_regra}
         </div>
         """,
         unsafe_allow_html=True,
@@ -1485,7 +1573,10 @@ def render_kpis_reforma(
     7. Ritmo + Projeção
     """
     # 1. KPIs Principais
-    render_kpis_principais(kpis, kpis_analise, kpis_cancel, daily_pago)
+    render_kpis_principais(
+        kpis, kpis_analise, kpis_cancel, daily_pago,
+        metas_produto=metas_produto,
+    )
 
     # Espaçamento
     st.markdown("<div style='height: 20px;'></div>", unsafe_allow_html=True)
@@ -1518,4 +1609,4 @@ def render_kpis_reforma(
         render_cards_reconquista(reconquista, mes, ano)
 
     # 7. Média e Projeção
-    render_bloco_media_projecao(kpis)
+    render_bloco_media_projecao(kpis, metas_produto)

@@ -17,8 +17,10 @@ from src.config.settings import PACK_LABEL_AGREGADO
 from src.dashboard.formatters import formatar_moeda, formatar_percentual
 from src.dashboard.kpis.gerais import (
     PRODUTOS_DASHBOARD,
+    avaliar_regra_mix,
     excluir_lojas_backoffice,
 )
+from src.dashboard.ui.kpi_cards_reforma import mensagem_regra_mix
 from src.dashboard.ui.colors import (
     get_status_color,
     get_status_bg_color,
@@ -847,6 +849,7 @@ def calcular_status_aceleradores_proprio(
 def calcular_planejamento_consultor(
     kpis: Dict,
     df_analise: Optional[pd.DataFrame],
+    metas_produto: Optional[List[Dict]] = None,
 ) -> Dict:
     """
     Calcula Meta Diária necessária e pipeline em análise para o consultor.
@@ -854,14 +857,22 @@ def calcular_planejamento_consultor(
     Meta Diária = gap_valor / du_restantes — varia a cada dia conforme a
     produção acumulada e os dias úteis que restam no mês.
 
+    ``gap_valor`` segue a regra do MIX (``avaliar_regra_mix``): a meta so
+    esta atingida com o total e cada produto na meta, e o que falta e a
+    soma do que falta em cada produto.
+
     Returns:
         Dict com: meta_diaria_necessaria, media_du_atual, du_restantes,
-        gap_valor, pipeline (list of {produto, qtd, valor}).
+        gap_valor, meta_mix, regra_mix, pipeline (list of {produto, qtd,
+        valor}).
     """
-    gap_valor = float(kpis.get("gap_valor", 0) or 0)
     du_restantes = int(kpis.get("du_restantes", 0) or 0)
     media_du_atual = float(kpis.get("media_du", 0) or 0)
     meta_mix = float(kpis.get("meta_mix", 0) or 0)
+    regra_mix = avaliar_regra_mix(
+        metas_produto, float(kpis.get("total_vendas", 0) or 0), meta_mix
+    )
+    gap_valor = regra_mix["falta"]
 
     meta_diaria_necessaria = gap_valor / du_restantes if du_restantes > 0 else 0.0
 
@@ -892,6 +903,7 @@ def calcular_planejamento_consultor(
         "du_restantes": du_restantes,
         "gap_valor": gap_valor,
         "meta_mix": meta_mix,
+        "regra_mix": regra_mix,
         "pipeline": pipeline,
     }
 
@@ -1012,6 +1024,7 @@ def _render_planejamento_consultor_coluna(planejamento: Dict) -> None:
     du_rest = planejamento["du_restantes"]
     gap = planejamento["gap_valor"]
     meta_total = planejamento.get("meta_mix", 0)
+    regra = planejamento.get("regra_mix") or {}
     pipeline = planejamento["pipeline"]
 
     st.markdown(
@@ -1020,12 +1033,21 @@ def _render_planejamento_consultor_coluna(planejamento: Dict) -> None:
         unsafe_allow_html=True,
     )
 
+    # Regra do MIX: "Meta atingida" so com o total e cada produto na
+    # meta. No estado parcial, avisa o que falta nos produtos restantes.
+    msg_regra = mensagem_regra_mix(regra)
     if meta_total <= 0:
         st.info("Sem meta definida.")
-    elif gap <= 0:
+    elif regra.get("atingida", gap <= 0):
         st.success("Meta atingida! 🎉")
     elif du_rest <= 0:
         st.warning("Sem dias úteis restantes no mês.")
+        if msg_regra:
+            st.markdown(
+                f'<div style="font-size:12px; color:var(--mg-text-muted);">'
+                f"{msg_regra}</div>",
+                unsafe_allow_html=True,
+            )
     else:
         ritmo_ok = media_atual >= meta_nec
         cor_ritmo = "#10B981" if ritmo_ok else "#EF4444"
@@ -1046,6 +1068,12 @@ def _render_planejamento_consultor_coluna(planejamento: Dict) -> None:
             f"</div>"
         )
         st.markdown(html_meta, unsafe_allow_html=True)
+        if msg_regra:
+            st.markdown(
+                f'<div style="font-size:12px; color:var(--mg-text-muted); '
+                f'margin-bottom:8px;">{msg_regra}</div>',
+                unsafe_allow_html=True,
+            )
 
     st.markdown(
         '<div style="font-size:13px; font-weight:700; margin-top:10px; '
@@ -1549,7 +1577,9 @@ def render_prioridades_acao(
     elif _eh_consultor:
         prioridades_consultor = []
         status_acel_proprio = calcular_status_aceleradores_proprio(df, df_metas_produto)
-        planejamento_consultor = calcular_planejamento_consultor(kpis, df_analise)
+        planejamento_consultor = calcular_planejamento_consultor(
+            kpis, df_analise, metas_produto
+        )
     else:
         prioridades_consultor = []
 

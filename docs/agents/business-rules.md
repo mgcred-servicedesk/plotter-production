@@ -757,6 +757,45 @@ Helper único: `resolver_loja_principal` (`kpis/gerais.py`), usado por
 `loja` não muda. Afeta 3 a 6 consultores por mês (transferência no meio
 do mês; 6 em 08/2026).
 
+### Regra do MIX — "meta atingida" exige cada produto (10/2026)
+
+No dashboard de vendas, a meta MIX só está **atingida** quando o total do
+MIX bate `meta_mix` **e** cada produto com meta (CNC, CLT, Consignado,
+Saque, FGTS/Ant./13º) bate **100%** da própria meta. Produto com meta 0
+(Saque hoje) fica fora da regra. Função única: `avaliar_regra_mix`
+(`kpis/gerais.py`).
+
+- **Quanto falta** = o maior entre a falta no total e a **soma das faltas
+  por produto** — o excedente de um produto não cobre a falta de outro.
+  Alimenta o "Falta para Meta" e o "Necessário/dia".
+- **% de atingimento** (card **📊 % Meta Atingida**) = `(meta_mix − falta)
+  ÷ meta_mix` enquanto a regra não fecha — só chega a 100% com tudo
+  batido; o % do total vendido aparece no rodapé ("Total vendido: X% da
+  meta MIX"). Atingida, o card mostra o % real do total (pode passar de
+  100%). Ex. 10/2026: Stella 100,8% no total → 79,4% pela regra.
+  `kpis["perc_ating_valor"]` segue sendo o % do total.
+- **Projeção** pela mesma regra (`projetar_regra_mix`): cada produto
+  projeta pelo próprio ritmo (`projecao` de `calcular_metas_produto_diarias`,
+  a mesma dos cards por produto) contra a própria meta; a sobra
+  projetada de um não compensa a falta de outro. Vale para "Projeção:"
+  do card % Meta Atingida, "Projeção Fim" e "Fecharemos…" do Para Onde e
+  "Proj. MIX" do Resumo. Produto projetado abaixo da meta = ritmo abaixo
+  do necessário: a frase de ritmo do Para Onde e a pill 🔥 do Resumo
+  listam esses produtos em vez do "% acima/abaixo do necessário" do total.
+  O valor em R$ da projeção (card Pagos, Projeção Fim) segue sendo a venda
+  total prevista. Ex. Bruna 10/2026: projeção 202% → 87,1% (CLT e
+  FGTS/Ant./13º abaixo; CNC projeta acima da meta).
+- **Estado parcial** (total ou algum produto já batido, outro ainda
+  abaixo): o quadro não diz "meta atingida" e lista o que falta em cada
+  produto restante (`mensagem_regra_mix`, `ui/kpi_cards_reforma.py`).
+- Superfícies: cards **📊 % Meta Atingida** e **🎯 Falta para Meta**,
+  bloco **Para Onde Estamos Indo**, **Resumo Executivo** (status, Faltam,
+  Gap e ritmo necessário) e **Meta Diária** do consultor (prioridades de
+  ação). `kpis["gap_valor"]` / `kpis["perc_ating_valor"]` seguem sendo o
+  total puro — quem exibe veredito de meta passa por `avaliar_regra_mix`.
+- 10/2026 (dia 16): 6 consultores com o total batido e produto pendente
+  apareciam como "meta atingida".
+
 ### Meta diária restante
 
 ```

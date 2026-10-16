@@ -10,12 +10,17 @@ from typing import Dict, List, Optional
 import streamlit as st
 
 from src.dashboard.formatters import formatar_moeda_compacta
+from src.dashboard.kpis.gerais import avaliar_regra_mix, projetar_regra_mix
 from src.dashboard.kpis.prestamista import (
     PRESTAMISTA_OK,
     SEMAFORO_AMARELO,
     SEMAFORO_VERDE,
     classificar_ipv,
     pendencias_prestamista,
+)
+from src.dashboard.ui.kpi_cards_reforma import (
+    mensagem_regra_mix,
+    nomes_pendentes_mix,
 )
 
 
@@ -222,14 +227,22 @@ def render_resumo_executivo(
     # ── KPIs de valor MIX (base R$) ──────────────────────────────────────
     total_vendas = kpis.get("total_vendas", 0)
     meta_mix = kpis.get("meta_mix", 0)
-    perc_ating = kpis.get("perc_ating_valor", 0)
-    gap = kpis.get("gap_valor", 0)
+    # Regra do MIX (``avaliar_regra_mix``): "Meta MIX atingida" so com o
+    # total e cada produto na meta; % e falta pela regra (o excedente
+    # de um produto nao compensa a falta de outro) — mesma conta dos
+    # cards "% Meta Atingida" e "Falta para Meta".
+    regra = avaliar_regra_mix(metas_produto, total_vendas, meta_mix)
+    perc_ating = regra["perc"]
+    gap = regra["falta"]
     du_restantes = kpis.get("du_restantes", 1)
     ritmo_atual = kpis.get("media_du", 0)
 
-    # Proj. MIX em valor (R$/meta_mix) — mesma base que perc_ating e gap_valor
+    # Proj. MIX em valor pela regra do MIX — projeção de cada produto
+    # contra a meta dele, sem o excedente de um compensar outro (mesma
+    # conta do card "% Meta Atingida" e do bloco "Para Onde").
     projecao = kpis.get("projecao", 0)
-    perc_proj_mix = (projecao / meta_mix * 100) if meta_mix > 0 else 0
+    regra_proj = projetar_regra_mix(metas_produto, projecao, meta_mix)
+    perc_proj_mix = regra_proj["perc"]
 
     # Proj. Prata em pontos — base diferente (meta_prata); mantida para contexto
     perc_proj_prata = kpis.get("perc_proj", 0)
@@ -281,7 +294,7 @@ def render_resumo_executivo(
         status_class = "mg-status-warning"
         status_icon = "ℹ️"
         status_text = "Sem meta definida para o período"
-    elif perc_ating >= 100:
+    elif regra["atingida"]:
         status_class = "mg-status-success"
         status_icon = "✅"
         status_text = f"Meta MIX atingida — {perc_ating:.1f}% em valor (R$)"
@@ -304,6 +317,9 @@ def render_resumo_executivo(
             f"{formatar_moeda_compacta(meta_mix)} · "
             f"Faltam: {formatar_moeda_compacta(gap)}"
         )
+        msg_regra = mensagem_regra_mix(regra)
+        if msg_regra:
+            status_sub += f"<br>{msg_regra}"
 
     # ── Cores por faixa de atingimento ───────────────────────────────────
     proj_mix_class = (
@@ -337,7 +353,16 @@ def render_resumo_executivo(
 
     # ── Pills de prioridades ──────────────────────────────────────────────
     pills_html = ""
-    if desvio_ritmo < -20 and ritmo_necessario > 0:
+    if regra_proj["pendentes"] and du_restantes > 0 and not regra["atingida"]:
+        # Ritmo total pode sobrar num produto e faltar em outro; o que
+        # vale e o ritmo de cada produto (projetado abaixo da meta).
+        pills_html += (
+            f'<span class="mg-pill mg-pill-red">'
+            f'🔥 Ritmo abaixo do necessário em: '
+            f'{nomes_pendentes_mix(regra_proj)}'
+            f'</span>'
+        )
+    elif desvio_ritmo < -20 and ritmo_necessario > 0:
         pills_html += (
             f'<span class="mg-pill mg-pill-red">'
             f'🔥 Ritmo {abs(desvio_ritmo):.0f}% abaixo — meta {ritmo_nec_fmt}/dia'

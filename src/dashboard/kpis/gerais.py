@@ -1038,6 +1038,119 @@ def calcular_metas_produto_diarias(
     return resultados
 
 
+def avaliar_regra_mix(
+    metas_produto: Optional[List[Dict]],
+    total_vendas: float,
+    meta_mix: float,
+) -> Dict:
+    """Regra do MIX: a meta so esta atingida com o total E cada produto.
+
+    Decisao do usuario (10/2026): o quadro so pode dizer "meta
+    atingida" quando o total do MIX bate ``meta_mix`` **e** cada produto
+    com meta (CNC, CLT, Consignado, Saque, FGTS/Ant./13º) bate 100% da
+    propria meta. Produto sem meta (``meta_total <= 0``, ex.: Saque hoje)
+    nao entra na regra.
+
+    Args:
+        metas_produto: lista de ``calcular_metas_produto_diarias``.
+        total_vendas: realizado do MIX (``kpis["total_vendas"]``).
+        meta_mix: meta MIX (``kpis["meta_mix"]``).
+
+    Returns:
+        Dict com:
+
+        - ``tem_meta``: ``meta_mix > 0``;
+        - ``total_batido``: ``total_vendas >= meta_mix`` (com meta);
+        - ``batidos``: chaves dos produtos que ja bateram a meta;
+        - ``pendentes``: ``[{"produto", "falta"}]`` dos que nao bateram,
+          maior falta primeiro;
+        - ``falta``: quanto falta para a meta pela regra — o maior entre
+          o que falta no total e a SOMA do que falta em cada produto (o
+          excedente de um produto nao cobre a falta de outro);
+        - ``atingida``: total batido e nenhum produto pendente;
+        - ``parcial``: nao atingida, mas o total ou ao menos um produto
+          ja bateu — e quando o quadro mostra o que falta por produto;
+        - ``perc``: % de atingimento pela regra. Nao atingida:
+          ``(meta_mix - falta) / meta_mix`` — o excedente de um produto
+          nao compensa a falta de outro, entao so chega a 100% com tudo
+          batido. Atingida: o % real do total (pode passar de 100%; ai
+          nao ha falta para compensar).
+    """
+    meta_mix = float(meta_mix or 0)
+    total_vendas = float(total_vendas or 0)
+    tem_meta = meta_mix > 0
+
+    batidos: List[str] = []
+    pendentes: List[Dict] = []
+    for prod in metas_produto or []:
+        meta = float(prod.get("meta_total", 0) or 0)
+        if meta <= 0:
+            continue
+        valor = float(prod.get("valor_atual", 0) or 0)
+        if valor >= meta:
+            batidos.append(prod.get("produto", ""))
+        else:
+            pendentes.append(
+                {"produto": prod.get("produto", ""), "falta": meta - valor}
+            )
+    pendentes.sort(key=lambda p: p["falta"], reverse=True)
+
+    total_batido = tem_meta and total_vendas >= meta_mix
+    falta = max(
+        meta_mix - total_vendas if tem_meta else 0.0,
+        sum(p["falta"] for p in pendentes),
+        0.0,
+    )
+    atingida = total_batido and not pendentes
+    parcial = (
+        tem_meta
+        and not atingida
+        and bool(pendentes)
+        and (total_batido or bool(batidos))
+    )
+    if not tem_meta:
+        perc = 0.0
+    elif atingida:
+        perc = total_vendas / meta_mix * 100
+    else:
+        perc = max(0.0, meta_mix - falta) / meta_mix * 100
+    return {
+        "tem_meta": tem_meta,
+        "total_batido": total_batido,
+        "batidos": batidos,
+        "pendentes": pendentes,
+        "falta": falta,
+        "atingida": atingida,
+        "parcial": parcial,
+        "perc": perc,
+    }
+
+
+def projetar_regra_mix(
+    metas_produto: Optional[List[Dict]],
+    projecao: float,
+    meta_mix: float,
+) -> Dict:
+    """Regra do MIX aplicada a PROJECAO de fim de mes.
+
+    Mesma regra de ``avaliar_regra_mix``, trocando o realizado de cada
+    produto pela projecao dele (``projecao`` de
+    ``calcular_metas_produto_diarias`` — a mesma dos cards por produto)
+    e o total pela projecao total (``kpis["projecao"]``). Assim a
+    projecao que sobra num produto nao compensa a que falta em outro.
+
+    ``pendentes`` lista os produtos que, no ritmo atual, fecham abaixo
+    da meta — o mesmo que ritmo diario abaixo da meta diaria restante
+    (``ritmo * du_total < meta`` <=> ``ritmo < (meta - valor) /
+    du_restantes``). ``perc`` e o % de projecao pela regra.
+    """
+    projetados = [
+        {**p, "valor_atual": float(p.get("projecao", 0) or 0)}
+        for p in metas_produto or []
+    ]
+    return avaliar_regra_mix(projetados, projecao, meta_mix)
+
+
 # Produtos contados apenas por quantidade (sem valor/pontos)
 _PRODUTOS_QTD = [
     {
