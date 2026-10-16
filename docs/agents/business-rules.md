@@ -671,6 +671,13 @@ denominador é uma aproximação do período.
 - **Meta Prata** (base) e **Meta Ouro** (premium), em pontos.
 - Metas gerais (tabela `metas`, `escopo='GERAL'` ou por loja).
 - Metas por produto (tabela `metas_produto`).
+- **Consignado = Novo + Refin + Portabilidade** no realizado e na meta
+  (`PRODUTOS_DASHBOARD["CONSIGNADO"]` inclui `PORTABILIDADE`, alinhado a
+  `categorias_produto`, onde ela tem `grupo_meta = CONSIGNADO`). Vale para
+  card de Consignado, MIX em valor e em pontos, Gestão e prioridades. As
+  visões que **não** comparam com meta (Digitação, Distribuição de
+  Produtos, aba de quantidade "Consignado (Novo/Refin)") seguem mostrando
+  Portabilidade em separado.
 
 ### Meta do consultor — escopo CONSULTOR, nunca rateio
 
@@ -701,6 +708,13 @@ por `carregar_metas_produto_consultor(mes, ano)` — pivot por loja, com
   tem UMA meta, então o frame do recorte por consultor tem **uma única
   linha** — montada por `metas_pontos_consultor` (`kpis/gerais.py`), que
   preserva as demais colunas do escopo LOJA (`REGIAO`, `REGIAO_ATUAL`).
+- O mesmo vale para as **metas por produto** (MIX = soma de CLT, CNC,
+  Consignado, Saque e FGTS/Ant./13º; cards por produto; aceleradores):
+  no recorte de um consultor o pivot CONSULTOR é reduzido à linha da
+  loja principal por `metas_produto_loja_principal` (`kpis/gerais.py`).
+  Sem isso o MIX somava a meta individual de cada loja do recorte —
+  dobrava para quem produziu em duas lojas e multiplicava por N quando
+  o gerente marcava N lojas antes de escolher o consultor.
 - O ranking de **lojas** continua usando a meta de escopo LOJA — ali é
   o alvo correto.
 

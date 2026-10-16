@@ -35,6 +35,7 @@ from src.dashboard.kpis.gerais import (
     calcular_kpis_analise,
     limpar_cache_kpis,
     metas_pontos_consultor,
+    metas_produto_loja_principal,
     obter_kpis_gerais_periodo,
     obter_kpis_pipeline_periodo,
     obter_kpis_qtd_periodo,
@@ -621,13 +622,19 @@ def main():
             # meta da loja inteira subestimava o atingimento ~2x, que e
             # a distorcao que esta troca existe para corrigir. Frame
             # vazio propaga 0 e a tela avisa o porque.
-            df_metas_prod_f = _mpc
             # Uma pessoa tem UMA meta e `calcular_kpis_gerais` SOMA as
             # linhas do frame: `metas_pontos_consultor` devolve a linha
             # unica da loja do consultor (a de maior producao no
             # periodo, desempate alfabetico).
             df_metas_kpis, _loja_meta_cons = metas_pontos_consultor(
                 df_metas_f, _mpc, df_f
+            )
+            # Mesma loja para as metas por produto (MIX, cards por
+            # produto, aceleradores): `_mpc` traz uma linha por loja do
+            # recorte — duas para quem produziu em duas lojas, N para o
+            # gerente que marcou N lojas —, e o MIX somava todas.
+            df_metas_prod_f = metas_produto_loja_principal(
+                _mpc, _loja_meta_cons
             )
             if _mpc.empty:
                 st.caption(

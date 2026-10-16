@@ -24,7 +24,11 @@ PRODUTOS_DASHBOARD = {
     "CNC": ["CNC", "SUPER_CONTA"],  # CNC inclui Super Conta
     "CLT": ["CONSIG_PRIV"],  # CLT = CONSIG PRIVADO
     "SAQUE": ["SAQUE", "SAQUE_BENEFICIO"],
-    "CONSIGNADO": ["CONSIG_BMG", "CONSIG_ITAU", "CONSIG_C6"],
+    # Consignado = Novo + Refin + Portabilidade: a meta CONSIGNADO cobre
+    # os tres (categorias_produto.PORTABILIDADE tem grupo_meta e
+    # grupo_dashboard = CONSIGNADO). Sem PORTABILIDADE aqui o card media
+    # 39% em 10/2026 contra 57% reais (R$ 1,21 mi fora do realizado).
+    "CONSIGNADO": ["CONSIG_BMG", "CONSIG_ITAU", "CONSIG_C6", "PORTABILIDADE"],
     "FGTS_ANT_BEN_CNC13": ["FGTS", "ANT_BENEF", "CNC_13"],
 }
 
@@ -233,6 +237,34 @@ def metas_pontos_consultor(
     linha["META_PRATA"] = prata
     linha["META_OURO"] = ouro
     return linha.reset_index(drop=True), loja
+
+
+def metas_produto_loja_principal(
+    df_metas_consultor: pd.DataFrame,
+    loja: Optional[str],
+) -> pd.DataFrame:
+    """Metas por produto (escopo CONSULTOR) de UM consultor: so a loja dele.
+
+    Irma de ``metas_pontos_consultor`` para as metas em R$ e de
+    acelerador. ``calcular_kpis_gerais`` SOMA as colunas componentes do
+    MIX sobre todas as linhas do frame — sem este recorte, quem produziu
+    em duas lojas recebia a meta individual das duas somada (10/2026:
+    245.000 em vez de 115.000), e o gerente que marcava N lojas antes de
+    escolher o consultor via a meta individual de N lojas (360.000 em
+    vez de 130.000 com tres lojas).
+
+    ``loja`` e a devolvida por ``metas_pontos_consultor`` (loja principal,
+    ``resolver_loja_principal``) — a mesma chave da meta de pontos, para
+    que cards MIX, cards por produto e aceleradores nunca usem lojas
+    diferentes. ``loja`` ``None`` ou ausente do frame ⇒ frame vazio
+    (meta 0), nunca a meta de outra loja como fallback; o aviso na tela
+    e do chamador.
+    """
+    vazio = df_metas_consultor.iloc[0:0].copy()
+    if not loja or "LOJA" not in df_metas_consultor.columns:
+        return vazio
+    alvo = df_metas_consultor[df_metas_consultor["LOJA"] == loja]
+    return alvo.head(1).reset_index(drop=True)
 
 
 # Janela do pipeline: "em analise" e "cancelados" so consideram o que

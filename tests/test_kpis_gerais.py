@@ -44,6 +44,7 @@ from src.dashboard.kpis.gerais import (
     filtrar_janela_recente,
     limpar_cache_kpis,
     metas_pontos_consultor,
+    metas_produto_loja_principal,
     obter_kpis_gerais_periodo,
     obter_kpis_pipeline_periodo,
     obter_kpis_qtd_periodo,
@@ -249,6 +250,102 @@ class TestMetasPontosConsultor:
         assert len(linha) == 1
         assert linha["META_PRATA"].iloc[0] == 0.0
         assert linha["META_OURO"].iloc[0] == 0.0
+
+
+@pytest.mark.unit
+class TestMetasProdutoLojaPrincipal:
+    """O pivot CONSULTOR traz uma linha por loja do recorte e
+    ``calcular_kpis_gerais`` SOMA os componentes do MIX sobre todas.
+    Uma pessoa tem UMA meta MIX: a da loja principal (10/2026: quem
+    produziu em duas lojas via 245.000 em vez de 115.000)."""
+
+    @pytest.fixture
+    def df_metas_consultor(self):
+        # Patamares reais de 10/2026: A soma 130.000, B soma 115.000.
+        return pd.DataFrame({
+            "LOJA": ["A", "B", "C"],
+            "CLT": [15000.0, 12000.0, 15000.0],
+            "CNC": [40000.0, 35000.0, 40000.0],
+            "CONSIGNADO": [67000.0, 61000.0, 67000.0],
+            "SAQUE": [0.0, 0.0, 0.0],
+            "FGTS_ANT_BENEF_13": [8000.0, 7000.0, 8000.0],
+            "BMG_MED": [6.0, 6.0, 6.0],
+            "META_PRATA": [280000.0, 245000.0, 280000.0],
+        })
+
+    def _kpis(self, df, df_metas_kpis, df_metas_prod):
+        return calcular_kpis_gerais(
+            df, df_metas_kpis, df_metas_prod, 2026, 10, dia_atual=16,
+        )
+
+    def test_producao_em_duas_lojas_meta_mix_so_da_principal(
+        self, df_metas_consultor
+    ):
+        # Loja B soma mais pontos -> meta MIX de B (115.000), nunca A+B.
+        df = pd.DataFrame({
+            "CONSULTOR": ["Ana", "Ana"],
+            "LOJA": ["A", "B"],
+            "VALOR": [1000.0, 9000.0],
+            "pontos": [1000.0, 9000.0],
+            "categoria_codigo": ["CNC", "CNC"],
+        })
+        recorte = df_metas_consultor[df_metas_consultor["LOJA"].isin(["A", "B"])]
+        linha, loja = metas_pontos_consultor(
+            pd.DataFrame(columns=["LOJA"]), recorte, df
+        )
+        prod = metas_produto_loja_principal(recorte, loja)
+
+        assert loja == "B"
+        assert prod["LOJA"].tolist() == ["B"]
+        assert self._kpis(df, linha, prod)["meta_mix"] == pytest.approx(
+            115000.0
+        )
+        # Card por produto: meta de CNC so de B (35.000), nunca A+B.
+        cnc = next(
+            p for p in calcular_metas_produto_diarias(df, prod, 20, 12)
+            if p["produto"] == "CNC"
+        )
+        assert cnc["meta_total"] == pytest.approx(35000.0)
+
+    def test_gerente_com_varias_lojas_marcadas_usa_so_a_do_consultor(
+        self, df_metas_consultor
+    ):
+        # Gerente marcou A, B e C; o consultor so produziu em C.
+        df = pd.DataFrame({
+            "CONSULTOR": ["Stella"],
+            "LOJA": ["C"],
+            "VALOR": [5000.0],
+            "pontos": [5000.0],
+            "categoria_codigo": ["CNC"],
+        })
+        linha, loja = metas_pontos_consultor(
+            pd.DataFrame(columns=["LOJA"]), df_metas_consultor, df
+        )
+        prod = metas_produto_loja_principal(df_metas_consultor, loja)
+
+        assert self._kpis(df, linha, prod)["meta_mix"] == pytest.approx(
+            130000.0
+        )
+        # Cards por produto leem o mesmo frame: meta de CNC so de C.
+        cnc = next(
+            p for p in calcular_metas_produto_diarias(df, prod, 20, 12)
+            if p["produto"] == "CNC"
+        )
+        assert cnc["meta_total"] == pytest.approx(40000.0)
+
+    def test_loja_none_devolve_vazio_sem_fallback(self, df_metas_consultor):
+        out = metas_produto_loja_principal(df_metas_consultor, None)
+        assert out.empty
+        assert list(out.columns) == list(df_metas_consultor.columns)
+
+    def test_loja_ausente_do_pivot_devolve_vazio(self, df_metas_consultor):
+        assert metas_produto_loja_principal(df_metas_consultor, "Z").empty
+
+    def test_pivot_sem_coluna_loja_devolve_vazio(self):
+        out = metas_produto_loja_principal(
+            pd.DataFrame(columns=["LOJA"]).drop(columns="LOJA"), "A"
+        )
+        assert out.empty
 
 
 @pytest.mark.unit
@@ -672,6 +769,25 @@ class TestCalcularMetasProdutoDiarias:
         assert cnc["meta_diaria"] == pytest.approx(150.0)
         assert cnc["perc_atingido"] == pytest.approx(1000 / 3000 * 100)
         assert cnc["projecao"] == pytest.approx(2000.0)
+
+    def test_consignado_soma_novo_refin_e_portabilidade(self):
+        """A meta CONSIGNADO cobre Novo + Refin + Portabilidade; o
+        realizado precisa somar os tres (10/2026: 39% sem Portabilidade
+        contra 57% reais)."""
+        df = pd.DataFrame({
+            "LOJA": ["A", "A", "A"],
+            "categoria_codigo": ["CONSIG_BMG", "CONSIG_C6", "PORTABILIDADE"],
+            "VALOR": [1000.0, 500.0, 1500.0],
+        })
+        df_metas_produto = pd.DataFrame({
+            "LOJA": ["A"], "CONSIGNADO": [6000.0],
+        })
+        res = calcular_metas_produto_diarias(
+            df, df_metas_produto, du_total=20, du_decorridos=10,
+        )
+        consig = {r["produto"]: r for r in res}["CONSIGNADO"]
+        assert consig["valor_atual"] == pytest.approx(3000.0)
+        assert consig["perc_atingido"] == pytest.approx(50.0)
 
 
 @pytest.mark.unit
