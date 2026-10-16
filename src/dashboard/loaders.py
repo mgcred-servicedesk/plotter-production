@@ -55,6 +55,10 @@ from src.dashboard.kpis.reconquista import (  # noqa: F401
     LIGA_FORA,
     LIGA_NAO_IMPORTADA,
     LIGA_OK,
+    PROMESSA_ERRO,
+    PROMESSA_FORA,
+    PROMESSA_NAO_IMPORTADA,
+    PROMESSA_OK,
     faixa_agregada_acelerador,
     faixas_acelerador_por_qtd,
     montar_acelerador_por_consultor,
@@ -77,7 +81,12 @@ from src.dashboard.kpis.reconquista import (  # noqa: F401
     _totais_reconquista,
     efetivadas_por_consultor_liga,
     liga_vigente,
+    marcar_efetivada,
+    promessa_v3_vigente,
+    promessas_por_consultor,
+    promessas_por_loja,
     totais_liga,
+    totais_promessa,
 )
 from src.dashboard.kpis.prestamista import (
     PRESTAMISTA_ERRO,
@@ -2652,6 +2661,88 @@ def _liga_periodo(mes: int, ano: int) -> pd.DataFrame:
     )
 
 
+@st.cache_data(ttl=600)
+def _promessa_periodo(mes: int, ano: int) -> pd.DataFrame:
+    """Promessa Diaria (V3, migration 137) de UM periodo — GLOBAL, sem
+    RLS. TTL 10min.
+
+    Mesmo contrato de `_liga_periodo`: o recorte por perfil e do
+    consumidor, e falha de I/O LEVANTA (`st.cache_data` nao guarda
+    excecao) — `carregar_reconquista` a transforma em `PROMESSA_ERRO`,
+    nunca em zero. Keyset por ``co_adesao``, UNICO por periodo
+    (uq_reconquista_promessa_periodo_adesao).
+    """
+    return pd.DataFrame(
+        _paginar_keyset(
+            lambda limite: (
+                _sb()
+                .from_("v_reconquista_promessa")
+                .select("*")
+                .eq("ano", ano)
+                .eq("mes", mes)
+                .order("co_adesao")
+                .limit(limite)
+            ),
+            "co_adesao",
+        )
+    )
+
+
+# Colunas da liga que o badge "Efetivada MM/AAAA" consome
+# (`marcar_efetivada`).
+_COLS_LIGA_BADGE = ["co_adesao", "ano", "mes", "qtde"]
+
+
+def _liga_desde(mes: int, ano: int) -> pd.DataFrame:
+    """Liga GLOBAL (sem RLS) de TODOS os periodos de (mes, ano) ate o mes
+    corrente — base do badge de efetivacao das promessas.
+
+    O badge precisa dos periodos >= o da promessa, nao so o dela. Um
+    unico fetch com ``ano*12+mes >= X`` nao pode usar o keyset: em
+    ``v_reconquista_liga`` o ``co_adesao`` e unico SO por periodo
+    (uq_reconquista_liga_periodo_adesao), e cursor sobre chave repetida
+    pula linhas na virada de pagina — justamente o periodo mais antigo
+    de uma ADE, que define ``efetivada_ref``. Por isso le periodo a
+    periodo via `_liga_periodo`, onde a chave e unica. O cache e o
+    dele (TTL 10min por periodo), entao o mes selecionado — que
+    `carregar_reconquista` ja leu para o card — nao gera request novo.
+
+    Limite superior = mes corrente do relogio (liga e importada no
+    proprio mes ou depois, nunca adiantada); periodo futuro le so ele
+    mesmo. Sem cache proprio de proposito: o resultado depende do
+    relogio, e as partes ja estao cacheadas.
+
+    Falha de I/O de QUALQUER periodo LEVANTA — o chamador transforma em
+    "badge indisponivel", nunca em "nao efetivada". Coluna ausente
+    tambem levanta (KeyError), pelo mesmo motivo.
+    """
+    hoje = datetime.now()
+    inicio = ano * 12 + (mes - 1)
+    fim = max(inicio, hoje.year * 12 + (hoje.month - 1))
+    partes = []
+    for chave in range(inicio, fim + 1):
+        p_ano, p_mes0 = divmod(chave, 12)
+        liga_p = _liga_periodo(p_mes0 + 1, p_ano)
+        if not liga_p.empty:
+            partes.append(liga_p[_COLS_LIGA_BADGE])
+    if not partes:
+        return pd.DataFrame(columns=_COLS_LIGA_BADGE)
+    return pd.concat(partes, ignore_index=True)
+
+
+def _totais_promessa_no_card(t_prom: Dict) -> Dict:
+    """`totais_promessa` -> chaves de `carregar_reconquista()["totais"]`.
+
+    Unica traducao: `efetivadas` (promessas ja efetivadas, pelo badge)
+    vira `promessas_efetivadas`. Sem isso o `totais.update` sobrescreveria
+    `totais["efetivadas"]` — a contagem da liga que alimenta o card de
+    Efetivadas, o acelerador e a faixa agregada.
+    """
+    out = dict(t_prom)
+    out["promessas_efetivadas"] = out.pop("efetivadas")
+    return out
+
+
 # ══════════════════════════════════════════════════════
 # Acelerador combinado: Reconquista + Cobranca Consignavel
 #
@@ -2908,7 +2999,34 @@ def carregar_reconquista(mes: int, ano: int) -> Dict:
                                      # (vazio fora da vigencia)
             "prox":     dict,        # previa da apuracao seguinte (mes+1)
             "liga":     DataFrame,   # liga do (mes, ano), pos-RLS
+            "promessas": DataFrame,  # Promessa Diaria do (mes, ano),
+                                     # pos-RLS, com efetivada/efetivada_ref
+            "promessas_por_loja": DataFrame,      # quebra por loja/regiao
+            "promessas_por_consultor": DataFrame | None,  # sem supervisores
         }
+
+    PROMESSA DIARIA (V3, >= 09/2026, migration 137): `totais["promessas"]`
+    e a contagem `elegivel = true` da Promessa Diaria do proprio
+    (mes, ano) — sem defasagem — e NAO a do export. Sem variacao vs mes
+    anterior: `totais["promessas_anterior"]` so existe fora da V3.
+    `totais["promessa_status"]` e um de:
+      - PROMESSA_FORA (< 09/2026): legado, `promessas` do export e
+        `promessas_anterior` como antes; frames de promessa vazios.
+      - PROMESSA_OK: `totais` ganha `promessas`, `nao_elegiveis`,
+        `retorno_aceito`, `retorno_pendente`, `retorno_nao_aceito`,
+        `retorno_outros`, `pct_retorno_aceito`, `fdr_e_promessa`,
+        `so_promessa` (sobre o frame pos-RLS; zero aqui e legitimo) e
+        `promessas_efetivadas` (int, ou None se a liga do badge nao pode
+        ser lida — badge "indisponivel", nunca "nao efetivada").
+      - PROMESSA_NAO_IMPORTADA (periodo sem linha, decidido ANTES do RLS)
+        e PROMESSA_ERRO (falha de leitura): todas essas chaves = None —
+        nunca 0, nunca o numero do export — e nenhuma quebra calculada
+        (frames vazios).
+    O badge cruza com a liga GLOBAL dos periodos >= (mes, ano)
+    (`_liga_desde`), antes do RLS. `promessas_por_consultor` e None
+    quando o cadastro de supervisores nao pode ser lido — a quebra nao e
+    montada sem excluir supervisores. Supervisor conta na loja.
+    `totais["efetivadas"]`, liga e acelerador nao mudam.
 
     LIGA (>= 09/2026, migration 127): `totais["efetivadas"]` e a
     contagem `qtde = 1` da liga do proprio (mes, ano) — sem defasagem —
@@ -2955,22 +3073,26 @@ def carregar_reconquista(mes: int, ano: int) -> Dict:
     clientes_prox = dados.get("clientes_prox", pd.DataFrame())
 
     totais = _totais_reconquista(clientes)
-    # Promessas do periodo anterior (so elegiveis) p/ a variacao.
-    if (
-        clientes_ant is not None
-        and not clientes_ant.empty
-        and "status" in clientes_ant.columns
-    ):
-        _ant_eleg = clientes_ant[_mask_elegivel(clientes_ant)]
-        totais["promessas_anterior"] = int(
-            (_ant_eleg["status"] == "PROMESSA").sum()
-        )
-    else:
-        totais["promessas_anterior"] = 0
+    # Promessas do periodo anterior (so elegiveis) p/ a variacao. So no
+    # legado: a Promessa V3 (>= 09/2026) nao compara com o mes anterior
+    # (decisao V3) — a chave nem existe, para a UI nao exibir variacao.
+    if not promessa_v3_vigente(mes, ano):
+        if (
+            clientes_ant is not None
+            and not clientes_ant.empty
+            and "status" in clientes_ant.columns
+        ):
+            _ant_eleg = clientes_ant[_mask_elegivel(clientes_ant)]
+            totais["promessas_anterior"] = int(
+                (_ant_eleg["status"] == "PROMESSA").sum()
+            )
+        else:
+            totais["promessas_anterior"] = 0
 
     # Liga (>= 09/2026): efetivadas passam a ser a contagem do banco no
     # PROPRIO mes, sem defasagem — sobrescreve a contagem do export.
-    # Promessas/sem reconquista seguem do export (analitico). Sem liga
+    # Sem reconquista segue do export (analitico); Promessas, a partir
+    # de 09/2026, vem da Promessa Diaria (bloco abaixo). Sem liga
     # importada (ou com erro de leitura) o numero NAO cai em zero nem
     # volta para a regra antiga: `liga_status` diz o que houve e a UI
     # mostra "nao importada" no lugar do numero.
@@ -2998,6 +3120,92 @@ def carregar_reconquista(mes: int, ano: int) -> Dict:
                 )
         totais.update(totais_liga(liga))
     totais["liga_status"] = liga_status
+
+    # Promessa Diaria (V3, >= 09/2026): `totais["promessas"]` passa a ser
+    # a contagem de elegiveis do arquivo do banco no PROPRIO mes, sem
+    # defasagem — sobrescreve a do export. Mesmo desenho de estados da
+    # liga: o vazio e decidido ANTES do RLS (escopo sem promessa e zero
+    # legitimo; periodo sem import nao e), e nao importada/erro NAO viram
+    # zero nem o numero do export — viram None e a UI avisa.
+    promessas = pd.DataFrame()
+    promessas_loja = pd.DataFrame()
+    promessas_consultor: Optional[pd.DataFrame] = pd.DataFrame()
+    promessa_status = PROMESSA_FORA
+    if promessa_v3_vigente(mes, ano):
+        try:
+            promessa_global = _promessa_periodo(mes, ano)
+        except Exception:
+            logger.exception(
+                "Falha ao carregar a Promessa Diaria da Reconquista "
+                "(%02d/%d)",
+                mes, ano,
+            )
+            promessa_status = PROMESSA_ERRO
+        else:
+            promessa_status = (
+                PROMESSA_NAO_IMPORTADA
+                if promessa_global.empty
+                else PROMESSA_OK
+            )
+
+        if promessa_status == PROMESSA_OK:
+            # Badge pela liga GLOBAL (antes do RLS): a promessa e cruzada
+            # por ADE em qualquer loja, entao uma efetivacao atribuida a
+            # outra loja na liga nao vira falso "nao efetivada". Falha na
+            # liga => badge indisponivel (NA), sem derrubar o bloco.
+            try:
+                liga_badge = _liga_desde(mes, ano)
+            except Exception:
+                logger.exception(
+                    "Falha ao carregar a liga para o badge de efetivacao "
+                    "das promessas (%02d/%d)",
+                    mes, ano,
+                )
+                liga_badge = None
+            _filtra_prom = _filtro_rls_reconquista()
+            promessa_rls = (
+                _filtra_prom(promessa_global)
+                if _filtra_prom is not None
+                else promessa_global
+            )
+            promessas = marcar_efetivada(promessa_rls, liga_badge)
+            totais.update(_totais_promessa_no_card(totais_promessa(promessas)))
+            promessas_loja = promessas_por_loja(promessas)
+            # Visao por pessoa SEM supervisores (criterio = cadastro). Sem
+            # o cadastro a quebra nao e montada: incluir supervisor seria
+            # numero com cara de certo.
+            try:
+                df_sup = carregar_supervisores(mes, ano)
+            except Exception:
+                logger.exception(
+                    "Falha ao carregar supervisores para a quebra de "
+                    "promessas por consultor (%02d/%d)",
+                    mes, ano,
+                )
+                promessas_consultor = None
+            else:
+                # Sem `consultor_identificado` (view anterior a 138) a
+                # quebra levanta: leads sem consultor iriam para o nome do
+                # arquivo em vez do supervisor da loja.
+                try:
+                    promessas_consultor = promessas_por_consultor(
+                        promessas, df_sup
+                    )
+                except KeyError:
+                    logger.exception(
+                        "Quebra de promessas por consultor indisponivel "
+                        "(%02d/%d): coluna ausente na view",
+                        mes, ano,
+                    )
+                    promessas_consultor = None
+        else:
+            totais.update({
+                chave: None
+                for chave in _totais_promessa_no_card(
+                    totais_promessa(pd.DataFrame())
+                )
+            })
+    totais["promessa_status"] = promessa_status
 
     # Previa da proxima apuracao (mes+1): exibe os clientes cujo
     # dt_fim caiu no mes selecionado, ja na esteira mas ainda sem a
@@ -3110,6 +3318,13 @@ def carregar_reconquista(mes: int, ano: int) -> Dict:
         # "Liga". Vazio fora da vigencia ou sem import; `liga_status`
         # em `totais` diz qual dos casos.
         "liga": liga,
+        # Promessa Diaria (V3) do periodo, pos-RLS e com o badge
+        # (`efetivada`/`efetivada_ref`) — sub-aba "Promessa Diaria" e
+        # quebras. Vazios fora de PROMESSA_OK; `promessa_status` em
+        # `totais` diz qual dos casos.
+        "promessas": promessas,
+        "promessas_por_loja": promessas_loja,
+        "promessas_por_consultor": promessas_consultor,
     }
 
 

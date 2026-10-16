@@ -163,7 +163,9 @@ menu = st.pills(
 O gate de perfil vive na **lista de `options`**, como na primária: o
 `st.pills` descarta valor de `session_state` fora de `options` e cai no
 `default`, então um consultor nunca fica preso numa sub-aba que deixou de
-existir para ele.
+existir para ele. O mesmo mecanismo serve para gate por **vigência**: a
+sub-aba "Promessa Diária" de Reconquista só entra nas `options` a partir
+de 09/2026, e quem volta a um mês anterior cai no `default`.
 
 ### Segmented — sub-seleção dentro de uma aba
 
@@ -183,9 +185,10 @@ tipo = "loja" if sel == "Lojas" else "consultor"
 
 `sac.segmented` continua o padrão para sub-seleção de rótulo **curto e
 fixo** (Pagas/Em Análise/Cancelados, Lojas/Consultores). Quando o rótulo
-carrega dado — a sub-nav e o escopo do Detalhamento de Reconquista
-mostram o período ("Detalhamento · 09/2026", "Fim de relacionamento ·
-09/2026", "Todos os meses · 02/2026 a 09/2026") — use
+carrega dado — a sub-nav de Reconquista mostra o período ("Liga ·
+09/2026", "Promessa Diária · 09/2026", "Detalhamento · todos os meses";
+o escopo "Fim de relacionamento · mês" do Detalhamento saiu em
+02/10/2026) — use
 `st.pills`, pelo mesmo motivo que tirou o `sac.tabs` das sub-navs: o
 `sac` roda em iframe, o que não cabe fica **inacessível** e o CSS do
 documento pai não atravessa. Rótulo que cresce com o dado não tem

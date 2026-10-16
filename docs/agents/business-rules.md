@@ -1175,8 +1175,11 @@ view usa o texto do arquivo.
 - O **Acelerador combinado** passa a somar Efetivadas da liga e Cobrança
   Consignável. As duas parcelas agora são do **mesmo mês**, e a assimetria
   de janela descrita no acelerador vale só até 08/2026.
-- **Promessas** continua vindo do export (`dt_fim` em M-1), mas sem a linha
-  "Se efetivadas", porque as duas parcelas teriam fontes diferentes.
+- **Promessas** (só apurações **anteriores a 09/2026**) continua vindo do
+  export (`dt_fim` em M-1), mas sem a linha "Se efetivadas", porque as
+  duas parcelas teriam fontes diferentes. A partir de 09/2026 as Promessas
+  saem da Promessa Diária: ver
+  [Promessa Diária — Promessas a partir de 09/2026 (V3)](#promessa-diária--promessas-a-partir-de-092026-v3).
 
 **Liga ausente ou com erro de leitura não vira número.**
 `totais["liga_status"]` assume um destes valores:
@@ -1199,6 +1202,172 @@ Liga importada que o RLS esvazia (consultor sem nenhuma proposta) é
 
 **Antes de 09/2026** nada muda: Efetivadas, conversão e faixa continuam
 saindo do export, com a defasagem descrita abaixo.
+
+### Promessa Diária — Promessas a partir de 09/2026 (V3)
+
+**Decisão de 16/10/2026.** A partir da apuração de **09/2026**, as
+**Promessas** do card saem do arquivo **Promessa Diária** do banco
+(`Promessa_diaria.xlsx`, aba `Export`), e não mais do status `PROMESSA`
+do export. Efetivadas continuam da liga, sem mudança. Antes de 09/2026 o
+legado do export fica intocado (Promessas por `dt_fim` em M-1, com
+variação vs mês anterior).
+
+| | Promessa Diária |
+|---|---|
+| Vigência | `_PROMESSA_V3_INICIO = (2026, 9)` em `kpis/reconquista.py`. Constante **própria**: hoje coincide com `_LIGA_INICIO`, mas é outra regra |
+| Granularidade | 1 linha por proposta (`co_adesao` = ADE), **por período**. ADE única por período |
+| Período | **Mês de `dt_promessa`, sem defasagem** |
+| Import (angry-man) | Card "Reconquista — Promessa Diária" (key `reconquista_promessa`), **com período obrigatório** |
+| Tabela / view | `reconquista_promessa` / `v_reconquista_promessa` (migration 137) |
+| RPC | `fn_importar_reconquista_promessa(p_periodo_id, p_rows)`: apaga e regrava **só o período**, set-based |
+| Helpers | `promessa_v3_vigente`, `totais_promessa`, `marcar_efetivada`, `promessas_por_loja`, `promessas_por_consultor` (`kpis/reconquista.py`) |
+
+**Regra de contagem:** Promessas = linhas com `elegivel = true` no
+período.
+- `PROMESSA` e `FDR E PROMESSA` contam as duas (FDR = Fim De
+  Relacionamento).
+- É **fluxo**: todas as promessas feitas no mês, **inclusive as que depois
+  efetivaram**.
+- `retorno_inss` **não filtra** a contagem. Só alimenta o insight do card.
+- `elegivel` é derivado **na RPC**:
+  `translate(upper(trim(flag)), 'ÍÃ', 'IA')` = `ELEGIVEL` → true,
+  = `NAO ELEGIVEL` → false. O texto bruto fica em `flag_elegibilidade`.
+
+**Import (angry-man + RPC):**
+- O arquivo cobre **vários meses**. O importador envia só as linhas com
+  `dt_promessa` no mês do período escolhido e reporta as demais como
+  `descartadas`.
+- Linha sem `co_adesao` é ignorada: linha vazia e o rodapé
+  "Filtros aplicados: ..." (que vem na coluna `nu_matricula`).
+- **ADE duplicada no período bloqueia o import inteiro**: lista as ADEs e
+  nada é gravado. Não há `ON CONFLICT DO NOTHING`, porque "ficar a
+  primeira" esconderia um arquivo inconsistente.
+- **Flag vazia ou desconhecida rejeita a linha** (importador) e recusa o
+  lote (RPC). É o **oposto** do export, onde NULL = ELEGIVEL: aqui a flag
+  é a conta, então ausência é erro, não default.
+- A RPC recusa, **antes do DELETE**: período inexistente, lote vazio
+  (apagaria o período em silêncio), chave fora da lista fechada do
+  payload, ADE duplicada, `dt_promessa` fora do mês do período e flag
+  desconhecida. Recusa = lote inteiro abortado; o que estava gravado fica.
+
+**Atribuição:** igual à liga. Loja pelo `cod_bmg` (prefixo de
+`no_franquia`) com sucessora; consultor pelo nome completo + loja. Se a
+resolução falha, a view usa o texto do arquivo.
+
+**Supervisor:** o critério é o **cadastro**
+(`carregar_supervisores(mes, ano)` + `excluir_supervisores`), **não** a
+coluna `supervisor` do arquivo (guardada só como informativo).
+- Promessa em nome de supervisor fica **fora da visão por consultor**
+  (`promessas_por_consultor`), mas é **contada e listada na loja**
+  (`promessas_por_loja`, card, detalhe).
+- Sem o cadastro, a quebra por consultor **não é montada** (`None`, aviso
+  na tela): incluir supervisor seria número com cara de certo.
+- Caso real: **ERICA CRISTINA MARINS DA SILVA ROSA** aparece como
+  supervisora no arquivo, mas não no cadastro. Conta como consultora. Dos
+  supervisores do arquivo, 9 de 10 estão no cadastro (set e out).
+  Investigado em 16/10/2026: as duas **trocaram de loja em 01/09/2026**
+  (ERICA CARREFOUR → HELP ALCANTARA; MARIANA DE OLIVEIRA RODRIGUES HELP
+  ALCANTARA → CARREFOUR) e o ledger não registrou — correção datada na
+  migration 139 (`fn_aplicar_mudanca_supervisor`, REMANEJAMENTO, origem
+  MANUAL). O nome oficial continua **sem "ROSA"** (decisão de 18/08/2026,
+  migration 081): o arquivo da Promessa Diária usa "ROSA", então a
+  promessa dela fica "sem consultor identificado" e vai para a
+  supervisora vigente de HELP ALCANTARA — ela mesma, após a 139.
+
+**Lead sem consultor identificado vai para o supervisor da loja**
+(decisão de 16/10/2026):
+- "Não identificado" = a RPC não resolveu `consultor_id` (nome do arquivo
+  não casa com nenhum consultor cadastrado **na loja da promessa**). A
+  view expõe `consultor_identificado` (migration 138).
+- O lead **pertence à loja do arquivo**, inclusive quando o nome é de
+  alguém que hoje está em outra loja (ex.: supervisora que foi consultora
+  na loja anterior). A classificação acontece **antes** da exclusão de
+  supervisor.
+- Na quebra por consultor esses leads viram uma linha do **supervisor
+  vigente da loja no cadastro** (competência), rotulada
+  "`<SUPERVISOR> · sem consultor identificado`", só com esses leads —
+  única exceção à regra de supervisor fora das visões por pessoa. As
+  promessas do próprio supervisor (identificado) continuam fora.
+- Loja com mais de um supervisor vigente junta os nomes (`A / B`); loja
+  sem supervisor vigente vira "`Sem supervisor vigente · <LOJA>`". O lead
+  nunca some.
+- View sem a coluna (antes da 138): a quebra por consultor fica
+  indisponível (`None`, aviso), em vez de jogar o lead no nome do arquivo.
+
+**Badge "Efetivada MM/AAAA"** (`marcar_efetivada`):
+- Efetivada = ADE presente na liga com `qtde = 1` num período **maior ou
+  igual** ao mês da promessa. `efetivada_ref` é o primeiro desses
+  períodos.
+- **Fonte única = liga.** O status `EFETIVADA` do export não é usado.
+- A liga do badge é **global, antes do RLS** (`_liga_desde`), e cobre os
+  períodos do mês da promessa até o mês corrente. Motivo: a liga pode
+  atribuir a efetivação a **outra loja**; cruzar com a liga já recortada
+  geraria falso "não efetivada". O cruzamento só expõe um booleano e o
+  mês, nada da linha da liga.
+- **Falha ao ler a liga ⇒ badge "indisponível"** (NA), nunca "não
+  efetivada". `totais["promessas_efetivadas"]` fica `None` e o filtro
+  "Efetivada" do analítico é desabilitado.
+- Chave: `totais["promessas_efetivadas"]`. **Não confundir** com
+  `totais["efetivadas"]`, que é a contagem da liga do card de Efetivadas e
+  do acelerador.
+
+**Promessa Diária ausente ou com erro não vira número.**
+`totais["promessa_status"]`:
+
+| Valor | Quando |
+|---|---|
+| `PROMESSA_FORA` | Apuração anterior a 09/2026; vale o export |
+| `PROMESSA_OK` | Período importado |
+| `PROMESSA_NAO_IMPORTADA` | Período sem nenhuma linha, decidido **antes do RLS** |
+| `PROMESSA_ERRO` | Falha ao ler a view |
+
+Nos dois últimos casos o card mostra "—" e um aviso, as chaves de
+promessa em `totais` ficam `None` e nenhuma quebra é calculada. **Nunca
+0, nunca o número do export.** Período importado que o RLS esvazia é
+`PROMESSA_OK` com 0, um zero legítimo.
+
+**Card Promessas (V3):** valor = elegíveis do mês, **sem comparação com o
+mês anterior** (`totais["promessas_anterior"]` só existe fora da V3).
+Subtexto com insights do próprio dado:
+- "Retorno INSS: X% aceito · N pendentes · N não aceitos" (% sobre as
+  elegíveis; pendente = `retorno_inss` vazio; rótulo fora de `REGISTRO
+  ACEITO`/`NÃO ACEITO` aparece como "outros", não some);
+- "N já efetivadas (liga)" ou "Efetivação indisponível";
+- "+N não elegíveis fora da conta".
+
+**Sub-aba "Promessa Diária"** do analítico (entre Liga e Por Loja; só
+aparece com a V3 vigente):
+- métricas do escopo (os mesmos números do card);
+- detalhe: ADE, Data Promessa, Data Retorno, Retorno INSS, Elegibilidade,
+  Situação mês anterior, Situação atual, Loja, Supervisor, Consultor e
+  Efetivada;
+- filtros do detalhe: Loja, Consultor, Situação, Retorno INSS,
+  Elegibilidade (abre em *Elegíveis*) e Efetivada;
+- quebras Por Loja e Por Consultor sobre **todas** as elegíveis do escopo,
+  sem os filtros do detalhe;
+- CSV do detalhe e de cada quebra.
+
+**Continua do export neste ciclo:** o bloco "Clientes na esteira"
+(`_render_previa_reconquista`) e a coluna Promessas da sub-aba Por Loja.
+Follow-up: rotular os dois como "(export)".
+
+> **LGPD:** não são armazenados, enviados nem exibidos: `nu_matricula`,
+> `no_franqueado` e a cadeia de gerência (`no_gerente_executivo`,
+> `no_gerente_regional`, `no_gerente_canal_proprio`, `no_gerente_loja`,
+> `no_coordenador_loja`). A RPC recusa chave fora da lista fechada, então
+> um importador que vaze `nu_matricula` falha alto.
+
+**Primeiro arquivo (lido em 16/10/2026, antes do primeiro import):**
+
+| Período | Linhas | Elegíveis | Não elegíveis | Retorno entre as elegíveis | FDR E PROMESSA |
+|---|---|---|---|---|---|
+| 09/2026 | 161 | 153 | 8 | 151 aceitos, 2 não aceitos | 77 |
+| 10/2026 (até 15/10) | 55 | 42 | 13 | 10 aceitos, 32 pendentes | 0 |
+
+- 50 das 216 ADEs **não existem** no export.
+- **0** cruzam com a liga de 09/2026 (esperado: a liga só tem 09/2026).
+- O dashboard antigo mostrava **49** Promessas em setembro e **86** em
+  outubro, pelo export. A diferença é a mudança de fonte, não erro.
 
 ### Estados (validados 100% contra o arquivo)
 
@@ -1242,13 +1411,15 @@ arquivo com a flag ser importado). Helper: `_mask_elegivel` (loaders).
 Somar apurações produziria uma conversão que não corresponde a prêmio
 nenhum.
 
-O **analítico** roda em outros recortes. Sub-navegação: **Liga · Por Loja
-· Detalhamento**. Abre em Liga quando o período é contado pela liga, e em
-Por Loja antes disso.
+O **analítico** roda em outros recortes. Sub-navegação: **Liga · Promessa
+Diária · Por Loja · Detalhamento**. Abre em Liga quando o período é
+contado pela liga, e em Por Loja antes disso. "Promessa Diária" só entra
+nas opções com a V3 vigente (`promessa_status != PROMESSA_FORA`).
 
 | Sub-aba | Recorte | Chave do loader |
 |---|---|---|
 | **Liga** | Liga do período selecionado, `qtde` 1 e 0. O filtro "Contabilizada" abre em *Contabilizadas* | `liga` |
+| **Promessa Diária** | Promessa Diária do período selecionado (mês de `dt_promessa`), elegíveis e não elegíveis, com o badge da liga. O filtro "Elegibilidade" abre em *Elegíveis*. Ver [Promessa Diária](#promessa-diária--promessas-a-partir-de-092026-v3) | `promessas`, `promessas_por_loja`, `promessas_por_consultor` |
 | **Por Loja** | Export, `dt_fim` no mês selecionado | `clientes_prox` → `por_loja_mes` |
 | **Detalhamento** | Export, **todos os meses**, do mais recente ao mais antigo, com o mês selecionado destacado | `clientes_todos` |
 
@@ -1508,6 +1679,20 @@ Elegíveis e "sem reconquista" **continuam existindo no cálculo** (base da
 conversão e fila a trabalhar) — saíram apenas do bloco de cards. O bloco de
 prévia (`_render_previa_reconquista`, mesmo módulo, rótulo "Clientes na
 esteira") **não** muda.
+
+**Card ⏳ Promessas por regime** (`promessa_status`):
+
+| Regime | Valor | Subtexto |
+|---|---|---|
+| Antes de 09/2026 (`PROMESSA_FORA`) | Promessas do export (`dt_fim` em M-1) | % da base e variação vs período anterior; "Se efetivadas" só fora da liga |
+| `PROMESSA_OK` (≥ 09/2026) | Elegíveis da Promessa Diária do mês | `_sub_promessas_v3`: retorno INSS, já efetivadas (liga), não elegíveis. **Sem** variação vs mês anterior |
+| `PROMESSA_NAO_IMPORTADA` / `PROMESSA_ERRO` | "—" | "Promessa Diária não importada" / "Falha ao carregar a Promessa Diária", mais aviso acima do bloco |
+
+O caption do bloco passa a dizer "**Promessas** = promessas feitas em
+<mês> (Promessa Diária)" na V3. O percentual do subtexto usa ponto
+(`:.1f`), como o resto do módulo: `_card_contexto` troca "," por "." no
+card inteiro. Regras completas em
+[Promessa Diária](#promessa-diária--promessas-a-partir-de-092026-v3).
 
 > **LGPD:** `nu_matricula` **não** é armazenada. `co_adesao` identifica o
 > contrato, não a pessoa.

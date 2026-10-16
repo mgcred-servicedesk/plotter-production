@@ -39,6 +39,10 @@ from src.dashboard.kpis.reconquista import (
     LIGA_ERRO,
     LIGA_FORA,
     LIGA_NAO_IMPORTADA,
+    PROMESSA_ERRO,
+    PROMESSA_FORA,
+    PROMESSA_NAO_IMPORTADA,
+    _anotar_contadores_promessa,
 )
 from src.dashboard.kpis.prestamista import (
     PRESTAMISTA_ERRO,
@@ -84,8 +88,11 @@ _ICONES_ANALITICOS = {
     "Distribuicao de Produtos": "pie_chart",
 }
 
+# Ordem = ordem da sub-nav. "Promessa Diária" so entra nas options
+# com a Promessa V3 vigente (>= 09/2026) — ver `_render_reconquista`.
 _ICONES_RECONQUISTA = {
     "Liga": "verified",
+    "Promessa Diária": "handshake",
     "Por Loja": "storefront",
     "Detalhamento": "table_chart",
 }
@@ -1156,6 +1163,365 @@ def _render_reconquista_liga(
     )
 
 
+# ── Promessa Diaria (V3, >= 09/2026, migration 137) ─────────────────
+
+_PROM_RETORNO_ACEITO = "Aceito"
+_PROM_RETORNO_PENDENTE = "Pendente"
+_PROM_RETORNO_NAO_ACEITO = "Não aceito"
+_PROM_RETORNO_OUTRO = "Outro"
+_PROM_ELEG_OPCOES = ["Elegíveis", "Não elegíveis", "Todas"]
+_PROM_EFET_OPCOES = ["Todas", "Sim", "Não"]
+
+# Rotulos das quebras (loader: `promessas_por_loja` /
+# `promessas_por_consultor`).
+_PROM_COLS_QUEBRA = {
+    "loja": "Loja",
+    "regiao": "Regiao",
+    "consultor": "Consultor",
+    "promessas": "Promessas",
+    "retorno_aceito": "Retorno Aceito",
+    "retorno_pendente": "Retorno Pendente",
+    "retorno_nao_aceito": "Retorno Não Aceito",
+    "fdr_e_promessa": "FDR e Promessa",
+    "so_promessa": "Só Promessa",
+    "efetivadas": "Já Efetivadas",
+}
+
+
+def _fmt_contagem(valor) -> str:
+    """Contagem do `totais` -> texto; None (indisponivel) -> "—"."""
+    return "—" if valor is None else formatar_numero(valor)
+
+
+def _badge_efetivada(efetivada, ref, csv: bool = False) -> str:
+    """Badge da coluna Efetivada (fonte unica = liga, `marcar_efetivada`).
+
+    NA = liga nao pode ser lida: "indisponivel", nunca "nao efetivada".
+    No CSV o icone vira texto (mesmo criterio do semaforo do
+    Prestamista).
+    """
+    if pd.isna(efetivada):
+        return "indisponível"
+    if bool(efetivada):
+        ref_txt = ref if isinstance(ref, str) and ref else "—"
+        return f"Sim ({ref_txt})" if csv else f"✅ {ref_txt}"
+    return "Não" if csv else "—"
+
+
+def _classificar_retorno_promessa(df: pd.DataFrame) -> pd.Series:
+    """Retorno INSS em 4 classes, pelo MESMO criterio do card.
+
+    Reusa `_anotar_contadores_promessa` (kpis/reconquista.py) para que o
+    filtro bata com os numeros de Aceito/Pendente/Nao aceito: rotulo
+    fora dos dois conhecidos vira "Outro" (nao some em silencio).
+    """
+    anot = _anotar_contadores_promessa(df)
+    classe = pd.Series(_PROM_RETORNO_OUTRO, index=df.index, dtype=object)
+    classe[anot["_aceito"].eq(1)] = _PROM_RETORNO_ACEITO
+    classe[anot["_pendente"].eq(1)] = _PROM_RETORNO_PENDENTE
+    classe[anot["_nao_aceito"].eq(1)] = _PROM_RETORNO_NAO_ACEITO
+    return classe
+
+
+def _quebra_promessa_view(quebra: pd.DataFrame) -> tuple[pd.DataFrame, bool]:
+    """Quebra do loader -> tabela rotulada.
+
+    `efetivadas` vem Int64 com NA quando o badge esta indisponivel:
+    nesse caso a coluna vira o texto "indisponivel" (nunca 0). Devolve
+    tambem se a coluna ficou numerica (para `colunas_numero`).
+    """
+    view = quebra.copy()
+    efet_numerica = True
+    if "efetivadas" in view.columns and view["efetivadas"].isna().any():
+        view["efetivadas"] = "indisponível"
+        efet_numerica = False
+    cols = [c for c in _PROM_COLS_QUEBRA if c in view.columns]
+    return view[cols].rename(columns=_PROM_COLS_QUEBRA), efet_numerica
+
+
+def _tabela_quebra_promessa(
+    quebra: pd.DataFrame, nome: str, key: str
+) -> None:
+    view, efet_numerica = _quebra_promessa_view(quebra)
+    cols_num = [
+        "Promessas", "Retorno Aceito", "Retorno Pendente",
+        "Retorno Não Aceito", "FDR e Promessa", "Só Promessa",
+    ]
+    if efet_numerica:
+        cols_num.append("Já Efetivadas")
+    exibir_tabela(
+        view,
+        colunas_numero=[c for c in cols_num if c in view.columns],
+        paginacao=100,
+        key=key,
+    )
+    _exportar_csv(view, nome, f"exp_{key}")
+
+
+def _render_reconquista_promessa(reconquista: dict) -> None:
+    """Sub-aba "Promessa Diaria" — arquivo do banco do mes selecionado.
+
+    Fonte: `carregar_reconquista` (view `v_reconquista_promessa`, ja
+    pos-RLS). Periodo = mes de `dt_promessa`, sem defasagem. As
+    metricas e as quebras sao do escopo inteiro do perfil; os filtros
+    recortam so o detalhe (que abre em "Elegiveis" — as que contam no
+    card). Badge "Efetivada" vem so da liga; indisponivel nunca vira
+    "nao efetivada". Promessa em nome de supervisor conta e e listada na
+    loja, mas fica fora da quebra por consultor.
+    """
+    totais = reconquista.get("totais") or {}
+    status = totais.get("promessa_status", PROMESSA_FORA)
+    apur_mes = reconquista.get("apuracao_mes")
+    apur_ano = reconquista.get("apuracao_ano")
+    mes_label = f"{apur_mes:02d}/{apur_ano}" if apur_mes else "—"
+
+    if status == PROMESSA_FORA:
+        st.info(
+            "A Promessa Diária é a fonte das Promessas a partir de "
+            f"09/2026. Para {mes_label} vale o export do banco."
+        )
+        return
+    if status == PROMESSA_NAO_IMPORTADA:
+        st.warning(f"Promessa Diária de {mes_label} ainda não importada.")
+        return
+    if status == PROMESSA_ERRO:
+        st.error(
+            f"Não foi possível carregar a Promessa Diária de {mes_label}."
+        )
+        return
+
+    promessas = reconquista.get("promessas")
+    if promessas is None or promessas.empty:
+        st.warning(
+            f"Sem promessas da Promessa Diária de {mes_label} no escopo "
+            "atual."
+        )
+        return
+
+    # ── Metricas do escopo (mesmos numeros do card) ──
+    efet = totais.get("promessas_efetivadas")
+    pct = totais.get("pct_retorno_aceito")
+    c1, c2, c3, c4, c5 = st.columns(5)
+    with c1:
+        st.metric(
+            "Promessas elegíveis", _fmt_contagem(totais.get("promessas")),
+            help="Linhas elegíveis do arquivo no mês — o número do card.",
+        )
+    with c2:
+        st.metric(
+            "Retorno INSS aceito",
+            "—" if pct is None else formatar_percentual(pct),
+            help=(
+                f"{_fmt_contagem(totais.get('retorno_aceito'))} aceitos "
+                "sobre as elegíveis."
+            ),
+        )
+    with c3:
+        st.metric(
+            "Pendentes", _fmt_contagem(totais.get("retorno_pendente")),
+            help="Elegíveis com o retorno INSS ainda vazio.",
+        )
+    with c4:
+        st.metric(
+            "Já efetivadas",
+            "indisponível" if efet is None else formatar_numero(efet),
+            help="Elegíveis com a ADE contabilizada na liga.",
+        )
+    with c5:
+        st.metric(
+            "Não elegíveis", _fmt_contagem(totais.get("nao_elegiveis")),
+            help="Linhas do arquivo fora da conta das Promessas.",
+        )
+
+    df = promessas.copy()
+    df["_retorno"] = _classificar_retorno_promessa(df)
+    df["_elegivel"] = df["elegivel"].eq(True)
+    badge_disponivel = (
+        "efetivada" in df.columns and not df["efetivada"].isna().any()
+    )
+
+    # ── Filtros do detalhe ──
+    retorno_opts = [
+        "Todos", _PROM_RETORNO_ACEITO, _PROM_RETORNO_PENDENTE,
+        _PROM_RETORNO_NAO_ACEITO,
+    ]
+    if df["_retorno"].eq(_PROM_RETORNO_OUTRO).any():
+        retorno_opts.append(_PROM_RETORNO_OUTRO)
+
+    f1, f2, f3 = st.columns(3)
+    with f1:
+        filt_lojas = st.multiselect(
+            "Loja", _opcoes_coluna(df, "loja"), key="rec_prom_lojas",
+            placeholder="Todas",
+        )
+    with f2:
+        filt_cons = st.selectbox(
+            "Consultor", ["Todos"] + _opcoes_coluna(df, "consultor"),
+            key="rec_prom_cons",
+        )
+    with f3:
+        filt_sit = st.selectbox(
+            "Situação",
+            ["Todas"] + _opcoes_coluna(df, "status_cliente_atual"),
+            key="rec_prom_sit",
+        )
+    f4, f5, f6 = st.columns(3)
+    with f4:
+        filt_ret = st.selectbox(
+            "Retorno INSS", retorno_opts, key="rec_prom_retorno",
+        )
+    with f5:
+        filt_eleg = st.selectbox(
+            "Elegibilidade", _PROM_ELEG_OPCOES, key="rec_prom_eleg",
+        )
+    with f6:
+        filt_efet = st.selectbox(
+            "Efetivada", _PROM_EFET_OPCOES, key="rec_prom_efet",
+            disabled=not badge_disponivel,
+            help=(
+                None if badge_disponivel else
+                "Liga indisponível: não dá para saber quais efetivaram."
+            ),
+        )
+
+    df_f = df
+    if filt_lojas:
+        df_f = df_f[df_f["loja"].isin(filt_lojas)]
+    if filt_cons != "Todos":
+        df_f = df_f[df_f["consultor"] == filt_cons]
+    if filt_sit != "Todas":
+        df_f = df_f[df_f["status_cliente_atual"] == filt_sit]
+    if filt_ret != "Todos":
+        df_f = df_f[df_f["_retorno"] == filt_ret]
+    if filt_eleg == "Elegíveis":
+        df_f = df_f[df_f["_elegivel"]]
+    elif filt_eleg == "Não elegíveis":
+        df_f = df_f[~df_f["_elegivel"]]
+    # Desabilitado (badge indisponivel) o filtro nao recorta, mesmo que
+    # o session_state guarde "Sim"/"Nao" de um rerun anterior.
+    if badge_disponivel and filt_efet != "Todas":
+        df_f = df_f[df_f["efetivada"].eq(filt_efet == "Sim")]
+
+    _outros = totais.get("retorno_outros") or 0
+    _outros_txt = (
+        f" · retorno INSS fora de Aceito/Não aceito em "
+        f"{formatar_numero(_outros)} elegível(is) (filtro \"Outro\")"
+        if _outros else ""
+    )
+    st.caption(
+        f"{formatar_numero(len(df_f))} de {formatar_numero(len(df))} "
+        f"linhas da Promessa Diária de **{mes_label}** (após filtros) · "
+        f"só as elegíveis contam no card{_outros_txt}."
+    )
+
+    # ── Detalhe ──
+    df_f = df_f.sort_values(
+        ["dt_promessa", "loja", "co_adesao"],
+        ascending=[False, True, True],
+    )
+    retorno_txt = df_f["retorno_inss"].where(
+        df_f["_retorno"] != _PROM_RETORNO_PENDENTE, _PROM_RETORNO_PENDENTE
+    )
+    if "efetivada" in df_f.columns:
+        efet_col = df_f["efetivada"]
+        ref_col = df_f.get(
+            "efetivada_ref", pd.Series(None, index=df_f.index)
+        )
+    else:
+        efet_col = pd.Series(pd.NA, index=df_f.index, dtype="boolean")
+        ref_col = pd.Series(None, index=df_f.index)
+    detalhe = pd.DataFrame({
+        "ADE": df_f["co_adesao"],
+        "Data Promessa": df_f["dt_promessa"],
+        "Data Retorno": df_f["dt_retorno"],
+        "Retorno INSS": retorno_txt,
+        "Elegibilidade": df_f["flag_elegibilidade"],
+        "Situação mês anterior": df_f["status_mes_anterior"],
+        "Situação atual": df_f["status_cliente_atual"],
+        "Loja": df_f["loja"],
+        "Supervisor": df_f["supervisor"],
+        "Consultor": df_f["consultor"],
+    })
+    view = detalhe.assign(Efetivada=[
+        _badge_efetivada(e, r) for e, r in zip(efet_col, ref_col)
+    ])
+    exibir_tabela(view, paginacao=100, key="rec_prom_tabela")
+    csv = detalhe.assign(Efetivada=[
+        _badge_efetivada(e, r, csv=True) for e, r in zip(efet_col, ref_col)
+    ])
+    _exportar_csv(
+        csv,
+        f"reconquista_promessa_{mes_label.replace('/', '-')}",
+        "exp_rec_prom",
+    )
+
+    # ── Quebras (escopo inteiro, sem os filtros do detalhe) ──
+    st.markdown("#### Quebras das promessas elegíveis")
+    st.caption(
+        "Sobre todas as elegíveis do seu escopo, sem os filtros acima."
+    )
+    sufixo = mes_label.replace("/", "-")
+    aba_loja, aba_cons = st.tabs(["Por Loja", "Por Consultor"])
+    with aba_loja:
+        por_loja = reconquista.get("promessas_por_loja")
+        if por_loja is None or por_loja.empty:
+            st.info("Sem promessas elegíveis por loja no seu escopo.")
+        else:
+            st.caption(
+                "Inclui as promessas em nome de supervisor no total da "
+                "loja."
+            )
+            _tabela_quebra_promessa(
+                por_loja, f"reconquista_promessa_por_loja_{sufixo}",
+                "rec_prom_loja",
+            )
+    with aba_cons:
+        por_cons = reconquista.get("promessas_por_consultor")
+        if por_cons is None:
+            st.warning(
+                "Quebra por consultor indisponível: não foi possível ler "
+                "o cadastro de supervisores do período ou identificar os "
+                "consultores das promessas."
+            )
+        elif por_cons.empty:
+            st.info("Sem promessas elegíveis por consultor no seu escopo.")
+        else:
+            st.caption(
+                "Promessas em nome de supervisor contam só na loja — "
+                "ficam fora desta visão. Promessas sem consultor "
+                "identificado no cadastro vão para o supervisor vigente "
+                "da loja atuar (linha \"· sem consultor identificado\")."
+            )
+            _tabela_quebra_promessa(
+                por_cons, f"reconquista_promessa_por_consultor_{sufixo}",
+                "rec_prom_cons_tab",
+            )
+
+
+def _texto_promessas_caption(totais: dict, ref_label: str) -> str:
+    """Trecho "Promessas: ..." do caption do topo de Reconquista.
+
+    Fora da V3 (< 09/2026) e a contagem do export, com o fim de
+    relacionamento em `ref_label`. Na V3 e a Promessa Diaria do proprio
+    mes; nao importada/erro (ou valor None) vira "—" com o motivo —
+    nunca 0 nem o numero do export.
+    """
+    status = totais.get("promessa_status", PROMESSA_FORA)
+    if status == PROMESSA_FORA:
+        return (
+            f"Promessas: {totais.get('promessas', 0)} "
+            f"(fim de relacionamento em {ref_label})"
+        )
+    if status == PROMESSA_NAO_IMPORTADA:
+        return "Promessas: — (Promessa Diária não importada)"
+    if status == PROMESSA_ERRO:
+        return "Promessas: — (Promessa Diária indisponível)"
+    return (
+        f"Promessas: {_fmt_contagem(totais.get('promessas'))} elegíveis "
+        "(Promessa Diária do mês)"
+    )
+
+
 def _render_reconquista(reconquista: dict | None):
     """Sub-aba Reconquista: liga (apuracao) + export (analitico).
 
@@ -1166,6 +1532,10 @@ def _render_reconquista(reconquista: dict | None):
     Antes de 09/2026 o caption do topo descreve a regra antiga
     (apuracao defasada em 1 mes sobre o export). Ver business-rules.md
     § "Liga".
+
+    Promessa V3 (>= 09/2026, `promessa_status != PROMESSA_FORA`): a
+    sub-aba "Promessa Diária" entra entre Liga e Por Loja, e o caption
+    do topo conta as Promessas pela Promessa Diaria do mes.
     """
     if not reconquista:
         st.info("Sem dados de reconquista para este período.")
@@ -1184,6 +1554,10 @@ def _render_reconquista(reconquista: dict | None):
     liga = reconquista.get("liga", pd.DataFrame())
     liga_status = totais.get("liga_status", LIGA_FORA)
     em_liga = liga_status != LIGA_FORA
+    # Promessa V3 (>= 09/2026): sub-aba propria + caption do topo
+    # passando a falar da Promessa Diaria. Ausente no dict = legado.
+    promessa_status = totais.get("promessa_status", PROMESSA_FORA)
+    em_promessa_v3 = promessa_status != PROMESSA_FORA
 
     ref_label = f"{ref_mes:02d}/{ref_ano}" if ref_mes else "—"
     apur_label = f"{apur_mes:02d}/{apur_ano}" if apur_mes else "—"
@@ -1196,13 +1570,17 @@ def _render_reconquista(reconquista: dict | None):
             )
         st.caption(
             f"**KPIs acima** — apuração {apur_label} · Efetivadas: "
-            f"{efet_txt} · Promessas: {totais.get('promessas', 0)} "
-            f"(fim de relacionamento em {ref_label})"
+            f"{efet_txt} · {_texto_promessas_caption(totais, ref_label)}"
         )
     else:
         _faixa = (totais.get("faixa") or {}).get("rotulo", "—")
         _nao_eleg = int(totais.get("nao_elegivel", 0))
         _nao_eleg_txt = f" ({_nao_eleg} não elegíveis)" if _nao_eleg else ""
+        _prom_txt = (
+            _texto_promessas_caption(totais, ref_label)
+            if em_promessa_v3
+            else f"Promessas: {totais.get('promessas', 0)}"
+        )
         st.caption(
             f"**KPIs acima** — apuração {apur_label}, com defasagem de "
             f"1 mês: fim de relacionamento em **{ref_label}** · "
@@ -1210,7 +1588,7 @@ def _render_reconquista(reconquista: dict | None):
             f"{_nao_eleg_txt} · "
             f"Conversão: **{totais.get('conversao', 0.0):.1f}%** ({_faixa}) · "
             f"Efetivadas: {totais.get('efetivadas', 0)} · "
-            f"Promessas: {totais.get('promessas', 0)} · "
+            f"{_prom_txt} · "
             f"Sem reconquista: {totais.get('sem_reconquista', 0)}"
         )
 
@@ -1220,6 +1598,7 @@ def _render_reconquista(reconquista: dict | None):
         (clientes_todos is None or clientes_todos.empty)
         and (liga is None or liga.empty)
         and not em_liga
+        and not em_promessa_v3
     ):
         return
 
@@ -1228,12 +1607,19 @@ def _render_reconquista(reconquista: dict | None):
     # carrega o recorte de cada sub-aba.
     _periodo_sub = {
         "Liga": apur_label,
+        "Promessa Diária": apur_label,
         "Por Loja": apur_label,
         "Detalhamento": "todos os meses",
     }
+    # "Promessa Diária" (entre Liga e Por Loja) so com a V3 vigente; o
+    # st.pills descarta valor de session_state fora das options.
+    opcoes_sub = [
+        r for r in _ICONES_RECONQUISTA
+        if r != "Promessa Diária" or em_promessa_v3
+    ]
     menu = st.pills(
         "Sub-navegacao de Reconquista",
-        options=list(_ICONES_RECONQUISTA),
+        options=opcoes_sub,
         default="Liga" if em_liga else "Por Loja",
         required=True,
         format_func=lambda r: (
@@ -1245,6 +1631,8 @@ def _render_reconquista(reconquista: dict | None):
 
     if menu == "Liga":
         _render_reconquista_liga(liga, liga_status, apur_label)
+    elif menu == "Promessa Diária":
+        _render_reconquista_promessa(reconquista)
     elif menu == "Por Loja":
         _render_reconquista_por_loja(por_loja, apur_label, ref_label)
     elif menu == "Detalhamento":

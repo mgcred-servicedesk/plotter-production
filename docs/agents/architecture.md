@@ -66,7 +66,9 @@ src/
                                  Recebe frames carregados — não toca o Supabase
       reconquista.py           ← regras da Reconquista e do acelerador: faixas de
                                  prêmio, base elegível, apuração mensal (VIGENCIA_*),
-                                 quebras por loja/consultor. Não toca o Supabase
+                                 quebras por loja/consultor, liga (LIGA_*) e
+                                 Promessa Diária V3 (PROMESSA_*, badge pela liga).
+                                 Não toca o Supabase
       seguros.py               ← BMG Med / Vida Familiar: união das 3 fontes, dedup
                                  por CONTRATO_ID e classificação por SUB_STATUS
       produtos.py              ← KPIs e distribuições por grupo de produto

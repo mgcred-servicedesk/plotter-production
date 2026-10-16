@@ -27,6 +27,9 @@ from src.dashboard.kpis.reconquista import (
     LIGA_ERRO,
     LIGA_FORA,
     LIGA_NAO_IMPORTADA,
+    PROMESSA_ERRO,
+    PROMESSA_FORA,
+    PROMESSA_NAO_IMPORTADA,
 )
 from src.dashboard.kpis.prestamista import (
     PRESTAMISTA_ERRO,
@@ -919,6 +922,44 @@ def _render_barra_reconquista(barra_esq: str, barra_dir: str, cor_barra: str) ->
     )
 
 
+def _sub_promessas_v3(totais: Dict) -> str:
+    """Subtexto do card Promessas na V3 (Promessa Diaria, PROMESSA_OK).
+
+    Insights do proprio arquivo, sem variacao vs periodo anterior
+    (decisao V3). Percentual no padrao do modulo (`:.1f`) e sem virgula
+    literal — `_card_contexto` troca "," por "." no card inteiro.
+    `promessas_efetivadas` None = badge da liga indisponivel: o texto
+    diz isso em vez de mostrar 0.
+    """
+    pct_aceito = float(totais.get("pct_retorno_aceito") or 0.0)
+    pendentes = int(totais.get("retorno_pendente") or 0)
+    nao_aceitos = int(totais.get("retorno_nao_aceito") or 0)
+    outros = int(totais.get("retorno_outros") or 0)
+
+    linha_retorno = (
+        f'Retorno INSS: <strong>{pct_aceito:.1f}%</strong> aceito · '
+        f'{pendentes:,} pendentes · {nao_aceitos:,} não aceitos'
+    )
+    if outros > 0:
+        linha_retorno += f' · {outros:,} outros'
+
+    efetivadas = totais.get("promessas_efetivadas")
+    linha_efet = (
+        "Efetivação indisponível"
+        if efetivadas is None
+        else f"{int(efetivadas):,} já efetivadas (liga)"
+    )
+
+    linhas = [linha_retorno, f'<span style="opacity: 0.8;">{linha_efet}</span>']
+    nao_elegiveis = int(totais.get("nao_elegiveis") or 0)
+    if nao_elegiveis > 0:
+        linhas.append(
+            f'<span style="opacity: 0.8;">+{nao_elegiveis:,} não '
+            f'elegíveis fora da conta</span>'
+        )
+    return "<br>".join(linhas)
+
+
 def render_cards_reconquista(
     dados: Optional[Dict],
     mes: int,
@@ -951,14 +992,30 @@ def render_cards_reconquista(
     em_liga = liga_status != LIGA_FORA
     liga_sem_dado = liga_status in (LIGA_NAO_IMPORTADA, LIGA_ERRO)
     apur_label = f"{_MESES_RECONQ.get(mes, '?')}/{ano}"
+    apur_mm_aaaa = f"{mes:02d}/{ano}"
+
+    # Promessa Diaria (V3, >= 09/2026): Promessas = elegiveis do arquivo
+    # do banco no proprio mes, sem variacao vs periodo anterior. Sem
+    # import (ou com erro de leitura) o card mostra "—", nunca 0.
+    # Chave ausente => legado (FORA), caminho do export intocado.
+    promessa_status = totais.get("promessa_status", PROMESSA_FORA)
+    em_promessa_v3 = promessa_status != PROMESSA_FORA
+    promessa_sem_dado = promessa_status in (
+        PROMESSA_NAO_IMPORTADA, PROMESSA_ERRO,
+    )
+    caption_prom = (
+        f"**Promessas** = promessas feitas em {apur_label} "
+        f"(Promessa Diária)"
+        if em_promessa_v3
+        else f"**Promessas** = fim de relacionamento em {ref_label}"
+    )
 
     st.markdown("---")
     st.markdown("### 🎯 Reconquista")
     if em_liga:
         st.caption(
             f"Apuração {apur_label} · **Efetivadas** = contabilizadas "
-            f"pela liga (banco) em {apur_label} · **Promessas** = fim "
-            f"de relacionamento em {ref_label}"
+            f"pela liga (banco) em {apur_label} · {caption_prom}"
         )
         if liga_status == LIGA_NAO_IMPORTADA:
             st.warning(
@@ -971,15 +1028,33 @@ def render_cards_reconquista(
                 f"Não foi possível carregar a liga de {apur_label} — "
                 f"Efetivadas e faixa do acelerador indisponíveis."
             )
+    elif em_promessa_v3:
+        # Hoje liga e V3 comecam juntas (09/2026); ramo defensivo caso
+        # as vigencias se separem: Efetivadas do export, Promessas da V3.
+        st.caption(
+            f"Apuração {apur_label} · **Efetivadas** = fim de "
+            f"relacionamento em {ref_label} · {caption_prom}"
+        )
     else:
         st.caption(
             f"Apuração {apur_label} · fim de "
             f"relacionamento em **{ref_label}**"
         )
 
-    # Na liga o export vazio nao encerra o bloco: Efetivadas nao
-    # dependem dele.
-    if total == 0 and not em_liga:
+    if promessa_status == PROMESSA_NAO_IMPORTADA:
+        st.warning(
+            f"Promessa Diária de {apur_mm_aaaa} ainda não importada — "
+            f"sem Promessas até o upload no importador."
+        )
+    elif promessa_status == PROMESSA_ERRO:
+        st.error(
+            f"Não foi possível carregar a Promessa Diária de "
+            f"{apur_mm_aaaa} — Promessas indisponíveis."
+        )
+
+    # Na liga / Promessa V3 o export vazio nao encerra o bloco:
+    # Efetivadas e Promessas nao dependem dele.
+    if total == 0 and not em_liga and not em_promessa_v3:
         msg = (
             f"Sem contratos com fim de relacionamento em {ref_label}."
             if total_geral == 0
@@ -990,7 +1065,9 @@ def render_cards_reconquista(
         return
 
     efet = int(totais.get("efetivadas", 0))
-    prom = int(totais.get("promessas", 0))
+    # `promessas` e None na V3 sem dado (nao importada/erro): o 0 aqui
+    # so alimenta as contas do legado — o card V3 sem dado mostra "—".
+    prom = int(totais.get("promessas") or 0)
     # Acelerador novo (vigente a partir de 08/2026). Chave ausente no
     # dict => 0, mesmo tratamento dado aos demais totais opcionais.
     consignavel = int(totais.get("cobranca_consignavel", 0) or 0)
@@ -1077,7 +1154,23 @@ def render_cards_reconquista(
             f'<br><span style="opacity: 0.8;">Se efetivadas: '
             f'<strong>{taxa_potencial:.1f}%</strong> da base</span>'
         )
-    card_prom = _card_contexto("⏳ Promessas", f"{prom:,}", sub_prom)
+    if promessa_sem_dado:
+        card_prom = _card_contexto(
+            "⏳ Promessas",
+            "—",
+            (
+                "Promessa Diária não importada"
+                if promessa_status == PROMESSA_NAO_IMPORTADA
+                else "Falha ao carregar a Promessa Diária"
+            )
+            + f'<br><span style="opacity: 0.8;">{apur_label}</span>',
+        )
+    elif em_promessa_v3:
+        card_prom = _card_contexto(
+            "⏳ Promessas", f"{prom:,}", _sub_promessas_v3(totais),
+        )
+    else:
+        card_prom = _card_contexto("⏳ Promessas", f"{prom:,}", sub_prom)
 
     # Acelerador combinado: soma com Efetivadas para resolver a faixa
     # do consultor (a legenda mostra a soma; a faixa vem por consultor

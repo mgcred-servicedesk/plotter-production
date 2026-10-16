@@ -25,6 +25,12 @@ contagem `qtde = 1` do arquivo da liga do banco no proprio mes, sem
 defasagem (`liga_vigente`, `totais_liga`,
 `efetivadas_por_consultor_liga`). O export segue como analitico.
 
+**A partir de 09/2026 (Promessa Diaria, V3)** as Promessas do card vem
+do arquivo do banco (view `v_reconquista_promessa`, migration 137), pelo
+mes de `dt_promessa`, sem defasagem: `promessa_v3_vigente`,
+`totais_promessa`, `marcar_efetivada` (badge pela liga),
+`promessas_por_loja` e `promessas_por_consultor`.
+
 ## O que NAO veio para ca
 
 `_faixas_acelerador_por_qtd`, `_faixa_agregada_acelerador` e
@@ -92,6 +98,19 @@ LIGA_FORA = "fora"                    # apuracao < 09/2026: regra antiga
 LIGA_OK = "ok"                        # liga do periodo importada
 LIGA_NAO_IMPORTADA = "nao_importada"  # periodo sem linhas na liga
 LIGA_ERRO = "erro"                    # falha ao ler a liga
+
+# Primeira apuracao (ano, mes) com Promessas V3 (arquivo Promessa
+# Diaria, tabela `reconquista_promessa`, migration 137). Constante
+# propria de proposito: coincide hoje com `_LIGA_INICIO`, mas e outra
+# regra. Antes dela, Promessas seguem do export (legado intocado).
+_PROMESSA_V3_INICIO = (2026, 9)
+
+# Estados da Promessa Diaria, analogos aos LIGA_*. NAO_IMPORTADA/ERRO
+# => card "—" + aviso; nunca 0 nem o numero do export.
+PROMESSA_FORA = "fora"                    # apuracao < 09/2026: export
+PROMESSA_OK = "ok"                        # periodo importado
+PROMESSA_NAO_IMPORTADA = "nao_importada"  # periodo sem linhas (pre-RLS)
+PROMESSA_ERRO = "erro"                    # falha ao ler a promessa
 
 
 def _faixa_premio_conversao(pct: float) -> Dict:
@@ -460,6 +479,286 @@ def efetivadas_por_consultor_liga(liga: pd.DataFrame) -> pd.DataFrame:
         .size()
         .reset_index(name="efetivadas")
     )
+
+
+# ══════════════════════════════════════════════════════
+# Reconquista V3 — Promessa Diaria (a partir de 09/2026)
+#
+# Arquivo do banco, 1 linha por ADE (co_adesao) por periodo. Fonte:
+# view `v_reconquista_promessa`. Periodo = mes de dt_promessa, SEM
+# defasagem. Promessas = linhas `elegivel = true` (fluxo: inclui as
+# que depois efetivaram); `retorno_inss` nao filtra a contagem. O
+# badge "Efetivada" vem SO da liga. Ver docs/agents/business-rules.md.
+# ══════════════════════════════════════════════════════
+
+# Rotulos do arquivo, comparados SEM acento dos dois lados: o dado
+# passa por `_rotulo_sem_acento` e as constantes ja sao escritas sem.
+_RETORNO_ACEITO = "REGISTRO ACEITO"
+_RETORNO_NAO_ACEITO = "NAO ACEITO"
+_STATUS_FDR_E_PROMESSA = "FDR E PROMESSA"
+_STATUS_SO_PROMESSA = "PROMESSA"
+
+
+def promessa_v3_vigente(mes: int, ano: int) -> bool:
+    """A apuracao (mes, ano) conta Promessas pela Promessa Diaria?
+
+    Corte por data, como `liga_vigente`. Abaixo de 09/2026 vale o
+    export (legado).
+    """
+    return (ano, mes) >= _PROMESSA_V3_INICIO
+
+
+def _rotulo_sem_acento(serie: pd.Series) -> pd.Series:
+    """Rotulo do arquivo -> chave sem acento (vazio/NaN -> "").
+
+    `fillna` antes: `normalizar_rotulo` faz `astype(str)` e NaN de
+    coluna object viraria o literal "NAN".
+    """
+    return normalizar_nome(serie.fillna("").astype(str))
+
+
+def _mask_elegivel_promessa(df: pd.DataFrame) -> pd.Series:
+    """`elegivel == True` (derivado na RPC). Nulo nao conta."""
+    return df["elegivel"].eq(True)
+
+
+def _badge_disponivel(df: pd.DataFrame) -> bool:
+    """O badge (`marcar_efetivada`) esta no frame e sem NA?"""
+    return "efetivada" in df.columns and not df["efetivada"].isna().any()
+
+
+def _anotar_contadores_promessa(df: pd.DataFrame) -> pd.DataFrame:
+    """Colunas 0/1 de retorno INSS e status — base das quebras."""
+    out = df.copy()
+    retorno = _rotulo_sem_acento(out["retorno_inss"])
+    status = _rotulo_sem_acento(out["status_cliente_atual"])
+    out["_aceito"] = retorno.eq(_RETORNO_ACEITO).astype(int)
+    out["_pendente"] = retorno.eq("").astype(int)
+    out["_nao_aceito"] = retorno.eq(_RETORNO_NAO_ACEITO).astype(int)
+    out["_fdr"] = status.eq(_STATUS_FDR_E_PROMESSA).astype(int)
+    out["_so_prom"] = status.eq(_STATUS_SO_PROMESSA).astype(int)
+    return out
+
+
+def totais_promessa(df: pd.DataFrame) -> Dict:
+    """Card Promessas V3 do periodo (frame ja pos-RLS).
+
+    `promessas` = elegiveis; o resto e contexto sobre elegiveis.
+    Retorno INSS: pendente = vazio; valor fora dos dois rotulos
+    conhecidos cai em `retorno_outros` (nao some em silencio).
+    `efetivadas` = None quando o badge da liga nao esta disponivel —
+    nunca 0 nesse caso. Sem variacao vs mes anterior (decisao V3).
+    """
+    vazio = {
+        "promessas": 0, "nao_elegiveis": 0,
+        "retorno_aceito": 0, "retorno_pendente": 0,
+        "retorno_nao_aceito": 0, "retorno_outros": 0,
+        "pct_retorno_aceito": 0.0,
+        "fdr_e_promessa": 0, "so_promessa": 0,
+        "efetivadas": 0,
+    }
+    if df is None or df.empty:
+        return vazio
+
+    mask = _mask_elegivel_promessa(df)
+    eleg = _anotar_contadores_promessa(df[mask])
+    promessas = len(eleg)
+    aceito = int(eleg["_aceito"].sum())
+    pendente = int(eleg["_pendente"].sum())
+    nao_aceito = int(eleg["_nao_aceito"].sum())
+    efetivadas = (
+        int(eleg["efetivada"].astype(bool).sum())
+        if _badge_disponivel(eleg)
+        else None
+    )
+    return {
+        "promessas": promessas,
+        "nao_elegiveis": int(df["elegivel"].eq(False).sum()),
+        "retorno_aceito": aceito,
+        "retorno_pendente": pendente,
+        "retorno_nao_aceito": nao_aceito,
+        "retorno_outros": promessas - aceito - pendente - nao_aceito,
+        "pct_retorno_aceito": (
+            aceito / promessas * 100 if promessas else 0.0
+        ),
+        "fdr_e_promessa": int(eleg["_fdr"].sum()),
+        "so_promessa": int(eleg["_so_prom"].sum()),
+        "efetivadas": efetivadas,
+    }
+
+
+def marcar_efetivada(
+    promessas: pd.DataFrame, liga: Optional[pd.DataFrame]
+) -> pd.DataFrame:
+    """Badge "Efetivada MM/AAAA": cruza a promessa com a liga por ADE.
+
+    Efetivada = ADE na liga com `qtde = 1` num periodo (ano, mes) >=
+    o da promessa; `efetivada_ref` e o primeiro desses periodos. A liga
+    precisa cobrir os periodos posteriores, nao so o selecionado.
+
+    `liga=None` (falha de leitura) => `efetivada` = NA ("indisponivel"),
+    nunca False. Liga lida e vazia => False (sem cruzamento).
+    """
+    if promessas is None:
+        return pd.DataFrame()
+    df = promessas.copy()
+
+    if liga is None:
+        df["efetivada"] = pd.Series(pd.NA, index=df.index, dtype="boolean")
+        df["efetivada_ref"] = pd.Series(None, index=df.index, dtype=object)
+        return df
+
+    df["efetivada"] = pd.Series(False, index=df.index, dtype="boolean")
+    df["efetivada_ref"] = pd.Series(None, index=df.index, dtype=object)
+    if df.empty or liga.empty:
+        return df
+
+    contab = liga[_mask_contabilizada(liga)]
+    if contab.empty:
+        return df
+    lado_liga = pd.DataFrame({
+        "_ade": pd.to_numeric(contab["co_adesao"], errors="coerce"),
+        "_chave_liga": (
+            pd.to_numeric(contab["ano"], errors="coerce") * 12
+            + pd.to_numeric(contab["mes"], errors="coerce")
+        ),
+    }).dropna()
+    lado_prom = pd.DataFrame({
+        "_linha": range(len(df)),
+        "_ade": pd.to_numeric(df["co_adesao"], errors="coerce").to_numpy(),
+        "_chave_prom": (
+            pd.to_numeric(df["ano"], errors="coerce") * 12
+            + pd.to_numeric(df["mes"], errors="coerce")
+        ).to_numpy(),
+    }).dropna()
+
+    cruz = lado_prom.merge(lado_liga, on="_ade", how="inner")
+    cruz = cruz[cruz["_chave_liga"] >= cruz["_chave_prom"]]
+    if cruz.empty:
+        return df
+    primeira = cruz.groupby("_linha")["_chave_liga"].min().astype(int)
+
+    posicoes = primeira.index.to_numpy()
+    col_efet = df.columns.get_loc("efetivada")
+    col_ref = df.columns.get_loc("efetivada_ref")
+    df.iloc[posicoes, col_efet] = True
+    df.iloc[posicoes, col_ref] = _rotulo_mes(primeira).to_numpy()
+    return df
+
+
+def _quebra_promessa(df: pd.DataFrame, chaves) -> pd.DataFrame:
+    """Agrega elegiveis por `chaves`: promessas, retorno INSS, status e
+    efetivadas (NA na coluna quando o badge nao esta disponivel)."""
+    eleg = _anotar_contadores_promessa(df[_mask_elegivel_promessa(df)])
+    if eleg.empty:
+        return pd.DataFrame()
+    badge = _badge_disponivel(eleg)
+    eleg["_efet"] = eleg["efetivada"].astype(bool).astype(int) if badge else 0
+    g = (
+        eleg.groupby(chaves, dropna=False)
+        .agg(
+            promessas=("co_adesao", "count"),
+            retorno_aceito=("_aceito", "sum"),
+            retorno_pendente=("_pendente", "sum"),
+            retorno_nao_aceito=("_nao_aceito", "sum"),
+            fdr_e_promessa=("_fdr", "sum"),
+            so_promessa=("_so_prom", "sum"),
+            efetivadas=("_efet", "sum"),
+        )
+        .reset_index()
+    )
+    g["efetivadas"] = (
+        g["efetivadas"].astype("Int64")
+        if badge
+        else pd.array([pd.NA] * len(g), dtype="Int64")
+    )
+    return g.sort_values(
+        ["promessas", *chaves], ascending=[False, *([True] * len(chaves))]
+    ).reset_index(drop=True)
+
+
+def promessas_por_loja(df: pd.DataFrame) -> pd.DataFrame:
+    """Quebra por loja/regiao sobre as elegiveis (frame pos-RLS).
+
+    Conta TODAS as elegiveis, inclusive as em nome de supervisor —
+    a exclusao vale so para a visao por pessoa.
+    """
+    if df is None or df.empty or "loja" not in df.columns:
+        return pd.DataFrame()
+    return _quebra_promessa(df, ["loja", "regiao"])
+
+
+SUFIXO_SEM_CONSULTOR = " · sem consultor identificado"
+ROTULO_SEM_SUPERVISOR = "Sem supervisor vigente · {loja}"
+
+
+def _responsavel_sem_consultor(
+    nao_ident: pd.DataFrame, df_sup: Optional[pd.DataFrame]
+) -> pd.Series:
+    """Rotulo da linha que recebe o lead sem consultor identificado.
+
+    Supervisor VIGENTE da loja da promessa no cadastro (`df_sup`, colunas
+    SUPERVISOR/LOJA de `carregar_supervisores(mes, ano)`). Loja com mais
+    de um supervisor vigente junta os nomes; loja sem nenhum cai num
+    rotulo explicito por loja — o lead nunca some.
+    """
+    sup_por_loja: Dict[str, str] = {}
+    if df_sup is not None and not df_sup.empty and {
+        "SUPERVISOR", "LOJA"
+    } <= set(df_sup.columns):
+        vig = df_sup.dropna(subset=["SUPERVISOR", "LOJA"])
+        chave = normalizar_nome(vig["LOJA"].astype(str))
+        for loja_norm, nomes in vig.groupby(chave)["SUPERVISOR"]:
+            sup_por_loja[loja_norm] = " / ".join(sorted(set(nomes)))
+
+    lojas = nao_ident["loja"].fillna("").astype(str)
+    return pd.Series(
+        [
+            sup_por_loja[norm] + SUFIXO_SEM_CONSULTOR
+            if norm in sup_por_loja
+            else ROTULO_SEM_SUPERVISOR.format(loja=loja)
+            for loja, norm in zip(lojas, normalizar_nome(lojas))
+        ],
+        index=nao_ident.index,
+        dtype=object,
+    )
+
+
+def promessas_por_consultor(
+    df: pd.DataFrame, df_sup: Optional[pd.DataFrame]
+) -> pd.DataFrame:
+    """Quebra por consultor sobre as elegiveis, SEM supervisores.
+
+    Criterio de supervisor = cadastro (`df_sup`, coluna SUPERVISOR, de
+    `carregar_supervisores(mes, ano)`), nao a coluna `supervisor` do
+    arquivo. Agrega por NOME, como `_por_consultor_reconquista`.
+
+    Lead com consultor NAO identificado (`consultor_identificado` False,
+    migration 138) vai para o supervisor vigente da loja atuar: linha
+    "<SUPERVISOR> · sem consultor identificado", so com esses leads —
+    unica excecao a exclusao de supervisor. A classificacao vem ANTES da
+    exclusao: nome nao resolvido na loja da promessa (mesmo que seja de
+    um supervisor de outra loja) e lead da loja, nao da pessoa. Sem a
+    coluna levanta KeyError (falha explicita; o loader trata).
+    """
+    if df is None or df.empty or "consultor" not in df.columns:
+        return pd.DataFrame()
+    identificado = df["consultor_identificado"].eq(True)
+    ident = df[identificado]
+    nao_ident = df[~identificado].copy()
+
+    # `excluir_supervisores` casa pela coluna CONSULTOR: renomeia so
+    # para a chamada e devolve o nome do frame da view.
+    sem_sup = excluir_supervisores(
+        ident.rename(columns={"consultor": "CONSULTOR"}), df_sup
+    ).rename(columns={"CONSULTOR": "consultor"})
+    if not nao_ident.empty:
+        nao_ident["consultor"] = _responsavel_sem_consultor(nao_ident, df_sup)
+
+    base = pd.concat([sem_sup, nao_ident])
+    if base.empty:
+        return pd.DataFrame()
+    return _quebra_promessa(base, ["consultor"])
 
 
 def _por_consultor_cobranca_consignavel(

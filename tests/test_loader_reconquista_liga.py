@@ -79,6 +79,19 @@ def ambiente(monkeypatch):
         loaders, "_reconquista_todos", lambda: _export(2026, 8)
     )
     monkeypatch.setattr(loaders, "_liga_periodo", _liga_periodo)
+    # Promessa Diaria (V3) tambem roda em 09/2026: sem estes stubs o
+    # loader chamaria o Supabase REAL. Aqui ela fica "nao importada"
+    # (frame vazio) — o foco deste arquivo e a liga; a Promessa tem o
+    # seu em test_loader_reconquista_promessa.py.
+    monkeypatch.setattr(
+        loaders, "_promessa_periodo", lambda mes, ano: pd.DataFrame()
+    )
+    monkeypatch.setattr(
+        loaders, "_liga_desde",
+        lambda mes, ano: pd.DataFrame(
+            columns=["co_adesao", "ano", "mes", "qtde"]
+        ),
+    )
     monkeypatch.setattr(
         loaders, "_filtro_rls_reconquista", lambda: estado["filtro"]
     )
