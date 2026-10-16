@@ -150,11 +150,17 @@ Regras:
   `v_contratos_dashboard.id` (PK), `v_pagamentos_online_efetivo.proposta`
   (PK), `v_reconquista.co_adesao` (UNIQUE), `consultores.id` (PK),
   `consultor_vigencia.id` (PK), `supervisor_vigencia.id` (PK).
-  `v_reconquista_liga.co_adesao` e `v_reconquista_promessa.co_adesao`
-  são únicos **só por período** (UNIQUE `(periodo_id, co_adesao)`): o
-  keyset por `co_adesao` só vale com `.eq("ano")` + `.eq("mes")`
-  (`_liga_periodo`, `_promessa_periodo`). Leitura de vários períodos é
-  período a período, como `_liga_desde` (badge da Promessa Diária).
+  `v_reconquista_liga.co_adesao`, `v_reconquista_promessa.co_adesao` e
+  `v_reconquista_elegivel.co_adesao` são únicos **só por período**
+  (UNIQUE `(periodo_id, co_adesao)`): o keyset por `co_adesao` só vale
+  com `.eq("ano")` + `.eq("mes")` (`_liga_periodo`, `_promessa_periodo`,
+  `_carteira_periodo`). Leitura de vários períodos é período a período,
+  como `_liga_desde` / `_promessa_desde` (badges da Promessa Diária e da
+  Carteira Elegível).
+- **Loader sob demanda:** `carregar_carteira_elegivel` não entra em
+  `carregar_reconquista` — só a sub-aba *Carteira Elegível* o chama (o
+  card não precisa das ~3 mil linhas). A aba importa o loader direto,
+  como `tabs/produtos.py`.
 - **Nunca paginar por `nome`.** `consultores` tem nomes duplicados de
   propósito (desligamento em linha nova) — é o que
   `_colapsar_cadastro_recente` existe para resolver. Chave repetida

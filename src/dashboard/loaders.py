@@ -50,6 +50,10 @@ from src.dashboard.presets_gestao import (  # noqa: F401
     salvar_preset_gestao,
 )
 from src.dashboard.kpis.reconquista import (  # noqa: F401
+    CARTEIRA_ERRO,
+    CARTEIRA_FORA,
+    CARTEIRA_NAO_IMPORTADA,
+    CARTEIRA_OK,
     COLS_ACELERADOR,
     LIGA_ERRO,
     LIGA_FORA,
@@ -79,12 +83,19 @@ from src.dashboard.kpis.reconquista import (  # noqa: F401
     _por_consultor_reconquista,
     _por_loja_reconquista,
     _totais_reconquista,
+    carteira_elegivel_vigente,
+    carteira_por_consultor,
+    carteira_por_dimensao,
+    carteira_por_loja,
     efetivadas_por_consultor_liga,
     liga_vigente,
     marcar_efetivada,
+    marcar_trabalhado,
+    ordenar_carteira,
     promessa_v3_vigente,
     promessas_por_consultor,
     promessas_por_loja,
+    totais_carteira,
     totais_liga,
     totais_promessa,
 )
@@ -2741,6 +2752,163 @@ def _totais_promessa_no_card(t_prom: Dict) -> Dict:
     out = dict(t_prom)
     out["promessas_efetivadas"] = out.pop("efetivadas")
     return out
+
+
+# ══════════════════════════════════════════════════════
+# Carteira Elegivel (Extrator de Elegiveis, migration 140)
+#
+# So analitico, >= 10/2026: foto mensal da carteira a trabalhar. Loader
+# proprio (nao entra em `carregar_reconquista`): o card nao precisa
+# dela, e so a sub-aba "Carteira Elegivel" paga o fetch.
+# ══════════════════════════════════════════════════════
+
+
+@st.cache_data(ttl=600)
+def _carteira_periodo(mes: int, ano: int) -> pd.DataFrame:
+    """Carteira Elegivel de UM periodo — GLOBAL, sem RLS. TTL 10min.
+
+    Mesmo contrato de `_promessa_periodo`: recorte por perfil e do
+    consumidor; falha de I/O LEVANTA (vira CARTEIRA_ERRO, nunca zero).
+    Keyset por ``co_adesao``, UNICO por periodo
+    (uq_reconquista_elegivel_periodo_adesao).
+    """
+    return pd.DataFrame(
+        _paginar_keyset(
+            lambda limite: (
+                _sb()
+                .from_("v_reconquista_elegivel")
+                .select("*")
+                .eq("ano", ano)
+                .eq("mes", mes)
+                .order("co_adesao")
+                .limit(limite)
+            ),
+            "co_adesao",
+        )
+    )
+
+
+_COLS_PROMESSA_BADGE = ["co_adesao", "ano", "mes"]
+
+
+def _promessa_desde(mes: int, ano: int) -> pd.DataFrame:
+    """Promessa Diaria GLOBAL (sem RLS) de (mes, ano) ate o mes corrente —
+    base do badge "Prometido" da Carteira Elegivel.
+
+    Periodo a periodo via `_promessa_periodo` pelo mesmo motivo de
+    `_liga_desde` (co_adesao so e unico DENTRO do periodo; keyset sobre
+    chave repetida pula linhas). Falha de qualquer periodo LEVANTA — o
+    chamador transforma em "badge indisponivel".
+    """
+    hoje = datetime.now()
+    inicio = ano * 12 + (mes - 1)
+    fim = max(inicio, hoje.year * 12 + (hoje.month - 1))
+    partes = []
+    for chave in range(inicio, fim + 1):
+        p_ano, p_mes0 = divmod(chave, 12)
+        prom_p = _promessa_periodo(p_mes0 + 1, p_ano)
+        if not prom_p.empty:
+            partes.append(prom_p[_COLS_PROMESSA_BADGE])
+    if not partes:
+        return pd.DataFrame(columns=_COLS_PROMESSA_BADGE)
+    return pd.concat(partes, ignore_index=True)
+
+
+def carregar_carteira_elegivel(mes: int, ano: int) -> Dict:
+    """Carteira Elegivel do periodo para a sub-aba (pos-RLS).
+
+    Retorna ``{"status", "carteira", "totais", "por_loja",
+    "por_consultor", "por_banco", "por_regra", "por_motivo"}``:
+      - `status` CARTEIRA_FORA (< 10/2026), CARTEIRA_NAO_IMPORTADA (sem
+        linha no periodo, decidido ANTES do RLS — escopo sem cliente e
+        zero legitimo, periodo sem import nao e), CARTEIRA_ERRO (falha de
+        leitura) ou CARTEIRA_OK. Fora de OK os frames vem vazios e
+        `totais` None: a UI avisa, nunca mostra zero.
+      - `carteira` ja ordenada (prioritarios primeiro) e com os badges
+        `prometido`/`efetivado` (`marcar_trabalhado`), cruzados com a
+        Promessa Diaria e a liga GLOBAIS (uma acao registrada em outra
+        loja nao vira falso "nao trabalhado"). Falha numa das fontes =>
+        badge NA, sem derrubar a sub-aba.
+      - `por_consultor` None quando o cadastro de supervisores falha ou
+        a view nao tem `consultor_identificado`: sem eles a carteira a
+        distribuir iria para o nome errado.
+    """
+    vazio = {
+        "carteira": pd.DataFrame(),
+        "totais": None,
+        "por_loja": pd.DataFrame(),
+        "por_consultor": pd.DataFrame(),
+        "por_banco": pd.DataFrame(),
+        "por_regra": pd.DataFrame(),
+        "por_motivo": pd.DataFrame(),
+    }
+    if not carteira_elegivel_vigente(mes, ano):
+        return {"status": CARTEIRA_FORA, **vazio}
+    try:
+        global_ = _carteira_periodo(mes, ano)
+    except Exception:
+        logger.exception(
+            "Falha ao carregar a Carteira Elegivel (%02d/%d)", mes, ano
+        )
+        return {"status": CARTEIRA_ERRO, **vazio}
+    if global_.empty:
+        return {"status": CARTEIRA_NAO_IMPORTADA, **vazio}
+
+    try:
+        promessas_badge = _promessa_desde(mes, ano)
+    except Exception:
+        logger.exception(
+            "Falha ao carregar a Promessa Diaria para o badge da Carteira "
+            "Elegivel (%02d/%d)", mes, ano,
+        )
+        promessas_badge = None
+    try:
+        liga_badge = _liga_desde(mes, ano)
+    except Exception:
+        logger.exception(
+            "Falha ao carregar a liga para o badge da Carteira Elegivel "
+            "(%02d/%d)", mes, ano,
+        )
+        liga_badge = None
+
+    _filtra = _filtro_rls_reconquista()
+    carteira_rls = _filtra(global_) if _filtra is not None else global_
+    carteira = ordenar_carteira(
+        marcar_trabalhado(carteira_rls, promessas_badge, liga_badge)
+    )
+
+    por_consultor: Optional[pd.DataFrame]
+    try:
+        df_sup = carregar_supervisores(mes, ano)
+    except Exception:
+        logger.exception(
+            "Falha ao carregar supervisores para a Carteira Elegivel por "
+            "consultor (%02d/%d)", mes, ano,
+        )
+        por_consultor = None
+    else:
+        try:
+            por_consultor = carteira_por_consultor(carteira, df_sup)
+        except KeyError:
+            logger.exception(
+                "Carteira Elegivel por consultor indisponivel (%02d/%d): "
+                "coluna ausente na view", mes, ano,
+            )
+            por_consultor = None
+
+    return {
+        "status": CARTEIRA_OK,
+        "carteira": carteira,
+        "totais": totais_carteira(carteira),
+        "por_loja": carteira_por_loja(carteira),
+        "por_consultor": por_consultor,
+        "por_banco": carteira_por_dimensao(carteira, "banco_origem"),
+        "por_regra": carteira_por_dimensao(carteira, "regra_pagamento"),
+        "por_motivo": carteira_por_dimensao(
+            carteira[carteira["baixa_prioridade"].eq(True)],
+            "motivo_impedido_operar",
+        ),
+    }
 
 
 # ══════════════════════════════════════════════════════

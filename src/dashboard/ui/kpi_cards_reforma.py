@@ -30,6 +30,7 @@ from src.dashboard.kpis.reconquista import (
     PROMESSA_ERRO,
     PROMESSA_FORA,
     PROMESSA_NAO_IMPORTADA,
+    carteira_elegivel_vigente,
 )
 from src.dashboard.kpis.prestamista import (
     PRESTAMISTA_ERRO,
@@ -1256,7 +1257,11 @@ def render_cards_reconquista(
     _render_faixa_acelerador_consultor(dados.get("por_consultor"))
 
     # Prévia da apuração seguinte (promessas já se acumulando na esteira).
-    _render_previa_reconquista(dados.get("prox"))
+    # Sai com a Carteira Elegível vigente (>= 10/2026): ela lê o export,
+    # que deixou de ser importado — a prévia ficaria congelada. A lista
+    # de trabalho passa a ser Analíticos › Reconquista › Carteira Elegível.
+    if not carteira_elegivel_vigente(mes, ano):
+        _render_previa_reconquista(dados.get("prox"))
 
     st.markdown(
         '<div style="margin-top: 12px; padding: 10px 16px; '

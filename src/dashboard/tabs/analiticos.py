@@ -4,6 +4,8 @@ cancelados), consultores por produto, producao por regiao e
 distribuicao de produtos.
 """
 
+import logging
+
 import pandas as pd
 import streamlit as st
 import streamlit_antd_components as sac
@@ -36,6 +38,10 @@ from src.dashboard.kpis.produtos import (
     opcoes_banco,
 )
 from src.dashboard.kpis.reconquista import (
+    CARTEIRA_ERRO,
+    CARTEIRA_FORA,
+    CARTEIRA_NAO_IMPORTADA,
+    carteira_elegivel_vigente,
     LIGA_ERRO,
     LIGA_FORA,
     LIGA_NAO_IMPORTADA,
@@ -56,7 +62,10 @@ from src.dashboard.kpis.prestamista import (
     marcar_situacao_por_ade,
     totais_prestamista,
 )
+from src.dashboard.loaders import carregar_carteira_elegivel
 from src.dashboard.ui.kpi_cards_reforma import render_quebras_prestamista
+
+logger = logging.getLogger(__name__)
 
 
 # Compat: alias local mantido — implementação canônica em
@@ -89,13 +98,17 @@ _ICONES_ANALITICOS = {
 }
 
 # Ordem = ordem da sub-nav. "Promessa Diária" so entra nas options
-# com a Promessa V3 vigente (>= 09/2026) — ver `_render_reconquista`.
+# com a Promessa V3 vigente (>= 09/2026); "Carteira Elegível" (>= 10/2026)
+# SUBSTITUI "Por Loja" e "Detalhamento", que leem o export antigo (nao
+# mais importado) — ver `_render_reconquista`.
 _ICONES_RECONQUISTA = {
     "Liga": "verified",
     "Promessa Diária": "handshake",
+    "Carteira Elegível": "assignment",
     "Por Loja": "storefront",
     "Detalhamento": "table_chart",
 }
+_SUB_EXPORT = ("Por Loja", "Detalhamento")
 
 
 def _opcoes_coluna(df: pd.DataFrame, coluna: str) -> list:
@@ -1522,6 +1535,368 @@ def _texto_promessas_caption(totais: dict, ref_label: str) -> str:
     )
 
 
+_CART_PRIORIDADE = "Prioridade"
+_CART_BAIXA = "Baixa prioridade"
+_CART_TRAB_OPCOES = [
+    "Todos", "Não trabalhados", "Prometidos", "Efetivados",
+]
+
+
+def _link_https(serie: pd.Series) -> pd.Series:
+    """So `https://` vira link clicavel; o resto fica vazio (defesa contra
+    `javascript:`/texto solto no arquivo do banco — migration 140)."""
+    txt = serie.fillna("").astype(str).str.strip()
+    return txt.where(txt.str.lower().str.startswith("https://"), None)
+
+
+def _rotulo_prioridade(serie: pd.Series) -> pd.Series:
+    return serie.map({False: _CART_PRIORIDADE, True: _CART_BAIXA})
+
+
+def _badge_trabalhado(prometido, prom_ref, efetivado, efet_ref,
+                      csv: bool = False) -> str:
+    """Coluna "Trabalhado": efetivado vence prometido. Um "sim" de uma
+    fonte vale mesmo com a outra ilegivel; o "nao" so com as duas lidas
+    — fonte NA => "indisponível", nunca "não trabalhado"."""
+    def _ref(r):
+        return r if isinstance(r, str) and r else "—"
+
+    if not pd.isna(efetivado) and bool(efetivado):
+        return (f"Efetivado ({_ref(efet_ref)})" if csv
+                else f"✅ Efetivado {_ref(efet_ref)}")
+    if not pd.isna(prometido) and bool(prometido):
+        return (f"Prometido ({_ref(prom_ref)})" if csv
+                else f"🤝 Prometido {_ref(prom_ref)}")
+    if pd.isna(efetivado) or pd.isna(prometido):
+        return "indisponível"
+    return "Não" if csv else "—"
+
+
+def _tabela_quebra_carteira(
+    quebra: pd.DataFrame, chave_label: dict, nome: str, key: str
+) -> None:
+    """Quebra por loja/consultor da Carteira Elegivel (+ CSV).
+
+    Saldo da carteira omitido da tela e do CSV (decisao do usuario,
+    16/10/2026) — o loader ainda o calcula, so nao e exibido.
+    """
+    view = quebra.drop(columns=["saldo"], errors="ignore").rename(columns={
+        **chave_label,
+        "elegiveis": "Elegíveis",
+        "prioridade": "Prioridade",
+        "baixa_prioridade": "Baixa Prioridade",
+        "fdr_anterior": "FDR Anterior",
+        "prometidos": "Já Prometidos",
+        "efetivados": "Já Efetivados",
+    })
+    for col in ("Já Prometidos", "Já Efetivados"):
+        if col in view.columns and view[col].isna().all():
+            view[col] = "indisponível"
+    cols_num = [
+        c for c in (
+            "Elegíveis", "Prioridade", "Baixa Prioridade", "FDR Anterior",
+            "Já Prometidos", "Já Efetivados",
+        )
+        if c in view.columns and view[c].dtype != object
+    ]
+    exibir_tabela(
+        view,
+        colunas_numero=cols_num,
+        paginacao=100,
+        key=key,
+    )
+    _exportar_csv(view, nome, f"exp_{key}")
+
+
+def _tabela_dimensao_carteira(
+    dim: pd.DataFrame, coluna: str, rotulo: str, key: str, sufixo: str
+) -> None:
+    if dim is None or dim.empty:
+        st.info("Sem dados no seu escopo.")
+        return
+    # Saldo omitido (ver `_tabela_quebra_carteira`).
+    view = dim.drop(columns=["saldo"], errors="ignore").rename(columns={
+        coluna: rotulo, "clientes": "Clientes",
+    })
+    exibir_tabela(view, colunas_numero=["Clientes"])
+    _exportar_csv(view, f"reconquista_carteira_{key}_{sufixo}",
+                  f"exp_rec_cart_{key}")
+
+
+def _render_reconquista_carteira(mes: int, ano: int) -> None:
+    """Sub-aba "Carteira Elegivel" — Extrator de Elegiveis do banco.
+
+    Carregada SO aqui (`carregar_carteira_elegivel`, ja pos-RLS): o card
+    nao usa a carteira. Foto do mes = lista de trabalho; metricas e
+    quebras do escopo inteiro, filtros so no detalhe. Baixa prioridade
+    conta como elegivel mas vem depois das prioritarias (decisao do
+    usuario). Badges "Prometido"/"Efetivado" cruzam a ADE com a Promessa
+    Diaria e a liga dos periodos >= o da carteira; indisponivel nunca
+    vira "nao trabalhado". Ver business-rules.md § "Carteira Elegivel".
+    """
+    mes_label = f"{mes:02d}/{ano}"
+    try:
+        dados = carregar_carteira_elegivel(mes, ano)
+    except Exception:
+        # Falha fora dos estados previstos (ex.: RLS) — avisa, nao zera.
+        logger.exception("Falha ao montar a Carteira Elegivel")
+        dados = {"status": CARTEIRA_ERRO}
+    status = dados.get("status", CARTEIRA_ERRO)
+
+    if status == CARTEIRA_FORA:
+        st.info(
+            "A Carteira Elegível começa em 10/2026 (primeiro Extrator de "
+            f"Elegíveis). Para {mes_label} valem Por Loja e Detalhamento "
+            "do export."
+        )
+        return
+    if status == CARTEIRA_NAO_IMPORTADA:
+        st.warning(f"Carteira Elegível de {mes_label} ainda não importada.")
+        return
+    if status == CARTEIRA_ERRO:
+        st.error(
+            f"Não foi possível carregar a Carteira Elegível de {mes_label}."
+        )
+        return
+
+    carteira = dados.get("carteira")
+    if carteira is None or carteira.empty:
+        st.warning(
+            f"Sem clientes na Carteira Elegível de {mes_label} no escopo "
+            "atual."
+        )
+        return
+
+    t = dados.get("totais") or {}
+
+    # ── Metricas do escopo ──
+    # Sem card de saldo da carteira: informacao omitida no dashboard
+    # (decisao do usuario, 16/10/2026).
+    c1, c2, c3, c4 = st.columns(4)
+    with c1:
+        st.metric(
+            "Elegíveis", _fmt_contagem(t.get("elegiveis")),
+            help="Clientes elegíveis da foto do mês, inclusive os de "
+                 "baixa prioridade.",
+        )
+    with c2:
+        st.metric(
+            "Prioridade", _fmt_contagem(t.get("prioridade")),
+            help="Acionáveis: sem impedimento para operar.",
+        )
+    with c3:
+        st.metric(
+            "Baixa prioridade", _fmt_contagem(t.get("baixa_prioridade")),
+            help="Elegíveis com impedimento para operar (ação judicial, "
+                 "não me perturbe, restrição...). Contam como elegíveis, "
+                 "mas ficam no fim da lista.",
+        )
+    with c4:
+        st.metric(
+            "FDR anterior", _fmt_contagem(t.get("fdr_anterior")),
+            help="Clientes que já tiveram fim de relacionamento antes.",
+        )
+    prom = t.get("prometidos")
+    efet = t.get("efetivados")
+    st.caption(
+        "Desde a foto: "
+        f"**{'indisponível' if prom is None else formatar_numero(prom)}** "
+        "já prometido(s) (Promessa Diária) · "
+        f"**{'indisponível' if efet is None else formatar_numero(efet)}** "
+        "já efetivado(s) (liga) · "
+        f"{_fmt_contagem(t.get('sem_consultor'))} sem consultor "
+        "identificado no cadastro."
+    )
+
+    df = carteira.copy()
+    df["_prioridade"] = _rotulo_prioridade(df["baixa_prioridade"])
+    badges_ok = all(
+        c in df.columns and not df[c].isna().any()
+        for c in ("prometido", "efetivado")
+    )
+
+    # ── Filtros do detalhe ──
+    f1, f2, f3 = st.columns(3)
+    with f1:
+        filt_lojas = st.multiselect(
+            "Loja", _opcoes_coluna(df, "loja"), key="rec_cart_lojas",
+            placeholder="Todas",
+        )
+    with f2:
+        filt_cons = st.selectbox(
+            "Consultor", ["Todos"] + _opcoes_coluna(df, "consultor"),
+            key="rec_cart_cons",
+        )
+    with f3:
+        filt_prio = st.selectbox(
+            "Atuação", ["Todas", _CART_PRIORIDADE, _CART_BAIXA],
+            key="rec_cart_prio",
+        )
+    f4, f5, f6 = st.columns(3)
+    with f4:
+        filt_banco = st.selectbox(
+            "Banco de origem",
+            ["Todos"] + _opcoes_coluna(df, "banco_origem"),
+            key="rec_cart_banco",
+        )
+    with f5:
+        filt_status = st.selectbox(
+            "Situação anterior",
+            ["Todas"] + _opcoes_coluna(df, "status_cliente_anterior"),
+            key="rec_cart_status",
+        )
+    with f6:
+        filt_trab = st.selectbox(
+            "Trabalhado", _CART_TRAB_OPCOES, key="rec_cart_trab",
+            disabled=not badges_ok,
+            help=(
+                None if badges_ok else
+                "Promessa Diária ou liga indisponível: não dá para saber "
+                "quem já foi trabalhado."
+            ),
+        )
+
+    df_f = df
+    if filt_lojas:
+        df_f = df_f[df_f["loja"].isin(filt_lojas)]
+    if filt_cons != "Todos":
+        df_f = df_f[df_f["consultor"] == filt_cons]
+    if filt_prio != "Todas":
+        df_f = df_f[df_f["_prioridade"] == filt_prio]
+    if filt_banco != "Todos":
+        df_f = df_f[df_f["banco_origem"] == filt_banco]
+    if filt_status != "Todas":
+        df_f = df_f[df_f["status_cliente_anterior"] == filt_status]
+    # Desabilitado o filtro nao recorta (session_state pode guardar valor
+    # de um rerun anterior).
+    if badges_ok and filt_trab != "Todos":
+        prometido = df_f["prometido"].astype(bool)
+        efetivado = df_f["efetivado"].astype(bool)
+        if filt_trab == "Não trabalhados":
+            df_f = df_f[~prometido & ~efetivado]
+        elif filt_trab == "Prometidos":
+            df_f = df_f[prometido]
+        else:
+            df_f = df_f[efetivado]
+
+    st.caption(
+        f"{formatar_numero(len(df_f))} de {formatar_numero(len(df))} "
+        f"clientes da Carteira Elegível de **{mes_label}** (após filtros) "
+        "· prioritários primeiro; baixa prioridade no "
+        "fim."
+    )
+
+    # ── Detalhe (ordem do loader: prioridade -> saldo, que segue so como
+    # criterio de ordem — a coluna nao e exibida) ──
+    def _col(nome):
+        return df_f.get(nome, pd.Series(pd.NA, index=df_f.index))
+
+    trab = [
+        _badge_trabalhado(p, pr, e, er)
+        for p, pr, e, er in zip(
+            _col("prometido"), _col("prometido_ref"),
+            _col("efetivado"), _col("efetivado_ref"),
+        )
+    ]
+    trab_csv = [
+        _badge_trabalhado(p, pr, e, er, csv=True)
+        for p, pr, e, er in zip(
+            _col("prometido"), _col("prometido_ref"),
+            _col("efetivado"), _col("efetivado_ref"),
+        )
+    ]
+    detalhe = pd.DataFrame({
+        "ADE": df_f["co_adesao"],
+        "Atuação": df_f["_prioridade"],
+        "Motivo Impedimento": df_f["motivo_impedido_operar"],
+        "Loja": df_f["loja"],
+        "Supervisor (arquivo)": df_f["supervisor"],
+        "Consultor": df_f["consultor"],
+        "Banco Origem": df_f["banco_origem"],
+        "Banco Destino": df_f["banco_destino"],
+        "Regra Pagamento": df_f["regra_pagamento"],
+        "Situação Anterior": df_f["status_cliente_anterior"],
+    })
+    link = _link_https(df_f["link_reconquista"])
+    exibir_tabela(
+        detalhe.assign(Trabalhado=trab, Jornada=link.to_numpy()),
+        column_config={
+            "Jornada": st.column_config.LinkColumn(
+                "Jornada", display_text="Abrir",
+                help="Link da jornada Reconquista Fácil do cliente.",
+            ),
+        },
+        paginacao=100,
+        key="rec_cart_tabela",
+    )
+    sufixo = mes_label.replace("/", "-")
+    _exportar_csv(
+        detalhe.assign(Trabalhado=trab_csv, Jornada=link.to_numpy()),
+        f"reconquista_carteira_elegivel_{sufixo}",
+        "exp_rec_cart",
+    )
+
+    # ── Quebras (escopo inteiro, sem os filtros do detalhe) ──
+    st.markdown("#### Quebras da carteira elegível")
+    st.caption("Sobre todos os elegíveis do seu escopo, sem os filtros "
+               "acima.")
+    aba_loja, aba_cons, aba_banco, aba_regra, aba_motivo = st.tabs([
+        "Por Loja", "Por Consultor", "Banco de Origem",
+        "Regra de Pagamento", "Motivo de Impedimento",
+    ])
+    with aba_loja:
+        por_loja = dados.get("por_loja")
+        if por_loja is None or por_loja.empty:
+            st.info("Sem elegíveis por loja no seu escopo.")
+        else:
+            st.caption(
+                "Inclui a carteira em nome de supervisor e a sem consultor "
+                "identificado. A loja é a do arquivo, mesmo quando o "
+                "consultor está cadastrado em outra loja."
+            )
+            _tabela_quebra_carteira(
+                por_loja, {"loja": "Loja", "regiao": "Regiao"},
+                f"reconquista_carteira_por_loja_{sufixo}", "rec_cart_loja",
+            )
+    with aba_cons:
+        por_cons = dados.get("por_consultor")
+        if por_cons is None:
+            st.warning(
+                "Quebra por consultor indisponível: não foi possível ler "
+                "o cadastro de supervisores do período ou identificar os "
+                "consultores da carteira."
+            )
+        elif por_cons.empty:
+            st.info("Sem elegíveis por consultor no seu escopo.")
+        else:
+            st.caption(
+                "Carteira sem consultor identificado no cadastro e "
+                "carteira em nome de supervisor vão para o supervisor "
+                "vigente da loja distribuir (linha \"· a distribuir\")."
+            )
+            _tabela_quebra_carteira(
+                por_cons, {"consultor": "Consultor"},
+                f"reconquista_carteira_por_consultor_{sufixo}",
+                "rec_cart_cons_tab",
+            )
+    with aba_banco:
+        _tabela_dimensao_carteira(
+            dados.get("por_banco"), "banco_origem", "Banco de Origem",
+            "banco", sufixo,
+        )
+    with aba_regra:
+        _tabela_dimensao_carteira(
+            dados.get("por_regra"), "regra_pagamento", "Regra de Pagamento",
+            "regra", sufixo,
+        )
+    with aba_motivo:
+        st.caption("Só os clientes de baixa prioridade.")
+        _tabela_dimensao_carteira(
+            dados.get("por_motivo"), "motivo_impedido_operar",
+            "Motivo de Impedimento", "motivo", sufixo,
+        )
+
+
 def _render_reconquista(reconquista: dict | None):
     """Sub-aba Reconquista: liga (apuracao) + export (analitico).
 
@@ -1536,6 +1911,11 @@ def _render_reconquista(reconquista: dict | None):
     Promessa V3 (>= 09/2026, `promessa_status != PROMESSA_FORA`): a
     sub-aba "Promessa Diária" entra entre Liga e Por Loja, e o caption
     do topo conta as Promessas pela Promessa Diaria do mes.
+
+    Carteira Elegivel (>= 10/2026, `carteira_elegivel_vigente`): a
+    sub-aba "Carteira Elegível" SUBSTITUI Por Loja e Detalhamento — o
+    export deixou de ser importado (decisao do usuario, 16/10/2026). Os
+    meses anteriores seguem com as sub-abas do export.
     """
     if not reconquista:
         st.info("Sem dados de reconquista para este período.")
@@ -1558,6 +1938,11 @@ def _render_reconquista(reconquista: dict | None):
     # passando a falar da Promessa Diaria. Ausente no dict = legado.
     promessa_status = totais.get("promessa_status", PROMESSA_FORA)
     em_promessa_v3 = promessa_status != PROMESSA_FORA
+    # Carteira Elegivel (>= 10/2026): corte por data, sem ler a carteira
+    # (ela so e carregada se a sub-aba for aberta).
+    em_carteira = bool(apur_mes and apur_ano) and carteira_elegivel_vigente(
+        apur_mes, apur_ano
+    )
 
     ref_label = f"{ref_mes:02d}/{ref_ano}" if ref_mes else "—"
     apur_label = f"{apur_mes:02d}/{apur_ano}" if apur_mes else "—"
@@ -1599,6 +1984,7 @@ def _render_reconquista(reconquista: dict | None):
         and (liga is None or liga.empty)
         and not em_liga
         and not em_promessa_v3
+        and not em_carteira
     ):
         return
 
@@ -1608,19 +1994,29 @@ def _render_reconquista(reconquista: dict | None):
     _periodo_sub = {
         "Liga": apur_label,
         "Promessa Diária": apur_label,
+        "Carteira Elegível": apur_label,
         "Por Loja": apur_label,
         "Detalhamento": "todos os meses",
     }
-    # "Promessa Diária" (entre Liga e Por Loja) so com a V3 vigente; o
-    # st.pills descarta valor de session_state fora das options.
+    # "Promessa Diária" so com a V3 vigente. Com a Carteira Elegivel
+    # vigente, ela entra e as duas sub-abas do export saem (o export nao e
+    # mais importado: Por Loja viria vazia e Detalhamento congelado);
+    # antes disso, o inverso. O st.pills descarta valor de session_state
+    # fora das options.
     opcoes_sub = [
         r for r in _ICONES_RECONQUISTA
-        if r != "Promessa Diária" or em_promessa_v3
+        if (r != "Promessa Diária" or em_promessa_v3)
+        and (r != "Carteira Elegível" or em_carteira)
+        and (r not in _SUB_EXPORT or not em_carteira)
     ]
     menu = st.pills(
         "Sub-navegacao de Reconquista",
         options=opcoes_sub,
-        default="Liga" if em_liga else "Por Loja",
+        default=(
+            "Liga" if em_liga
+            else "Por Loja" if "Por Loja" in opcoes_sub
+            else opcoes_sub[0]
+        ),
         required=True,
         format_func=lambda r: (
             f":material/{_ICONES_RECONQUISTA[r]}: {r} · {_periodo_sub[r]}"
@@ -1633,6 +2029,8 @@ def _render_reconquista(reconquista: dict | None):
         _render_reconquista_liga(liga, liga_status, apur_label)
     elif menu == "Promessa Diária":
         _render_reconquista_promessa(reconquista)
+    elif menu == "Carteira Elegível":
+        _render_reconquista_carteira(apur_mes, apur_ano)
     elif menu == "Por Loja":
         _render_reconquista_por_loja(por_loja, apur_label, ref_label)
     elif menu == "Detalhamento":

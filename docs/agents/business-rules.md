@@ -1349,7 +1349,10 @@ aparece com a V3 vigente):
 
 **Continua do export neste ciclo:** o bloco "Clientes na esteira"
 (`_render_previa_reconquista`) e a coluna Promessas da sub-aba Por Loja.
-Follow-up: rotular os dois como "(export)".
+Follow-up: rotular os dois como "(export)". *Atualização de 16/10/2026:*
+a partir de 10/2026 os dois saem (ver
+[Carteira Elegível](#carteira-elegível--lista-de-trabalho-a-partir-de-102026)).
+O rótulo "(export)" só faria sentido em 09/2026.
 
 > **LGPD:** não são armazenados, enviados nem exibidos: `nu_matricula`,
 > `no_franqueado` e a cadeia de gerência (`no_gerente_executivo`,
@@ -1368,6 +1371,107 @@ Follow-up: rotular os dois como "(export)".
 - **0** cruzam com a liga de 09/2026 (esperado: a liga só tem 09/2026).
 - O dashboard antigo mostrava **49** Promessas em setembro e **86** em
   outubro, pelo export. A diferença é a mudança de fonte, não erro.
+
+### Carteira Elegível — lista de trabalho a partir de 10/2026
+
+**Decisão de 16/10/2026.** O export antigo (`reconquista_YYYYMM.xlsx`,
+tabela `reconquista`) **deixa de ser importado**. A lista de clientes a
+trabalhar passa a ser o **Extrator de Elegíveis** do banco
+(`Extrator_elegiveis.xlsx`, aba `Export`). É **só analítico**: não entra
+em card, apuração nem acelerador.
+
+| | |
+|---|---|
+| Granularidade | **Foto** mensal, 1 linha por cliente (`co_adesao` = ADE, única) |
+| Período | `anomes_referencia` do arquivo; primeiro arquivo = **10/2026** |
+| Import (angry-man) | Card "Reconquista — Carteira Elegível", **com período obrigatório**; reimportar substitui só o mês |
+| Tabela / view / RPC | `reconquista_elegivel` / `v_reconquista_elegivel` / `fn_importar_reconquista_elegivel(p_periodo_id, p_rows)` (migration 140) |
+| Loader | `carregar_carteira_elegivel(mes, ano)` — **próprio**, chamado só pela sub-aba (o card não paga o fetch) |
+| Helpers | `carteira_elegivel_vigente`, `marcar_trabalhado`, `ordenar_carteira`, `totais_carteira`, `carteira_por_loja`, `carteira_por_consultor`, `carteira_por_dimensao` em `kpis/reconquista.py` |
+
+**Import — o arquivo inteiro é recusado** (nada gravado) quando:
+- alguma linha tem `anomes_referencia` ausente ou diferente do período
+  escolhido;
+- há ADE repetida;
+- há linha sem ADE (ou ADE não numérica) que **não** seja o rodapé do BI.
+  Rodapé = até 3 linhas sem ADE com o primeiro campo "Total", vazio ou
+  "Filtros aplicados: ..." e o resto vazio. A soma de `saldo_carteira` é
+  conferida contra o "Total" (só aviso).
+
+Flag de elegibilidade ou de atuação desconhecida **rejeita a linha**
+(reportada; o resto segue), como na Promessa Diária.
+
+**Prioridade:** `flag_atuacao` → `baixa_prioridade` (BAIXA PRIORIDADE =
+true, PRIORIDADE = false). No primeiro arquivo, baixa prioridade equivale
+a ter `de_motivo_impedido_operar` (311 de 311). Baixa prioridade **conta
+como elegível**, mas o detalhe a mostra **depois** de todas as
+prioritárias (ordem: prioridade → maior saldo → ADE).
+
+**Saldo da carteira omitido no dashboard** (decisão do usuário,
+16/10/2026). Nenhum card, coluna ou CSV da sub-aba mostra o
+`saldo_carteira`. O valor continua no banco e no loader (`totais_carteira`
+e as quebras ainda o calculam) e segue **só como critério de ordem**
+dentro de cada faixa de prioridade. Ele também é conferido no import
+contra o "Total" do BI. Reexibir é decisão do usuário: basta tirar o
+`drop` em `_tabela_quebra_carteira` / `_tabela_dimensao_carteira` e
+devolver a métrica e a coluna em `_render_reconquista_carteira`.
+
+**Badges "Prometido" / "Efetivado"** (a foto não muda até o próximo
+import):
+- Prometido = ADE em **qualquer** linha da Promessa Diária (elegível ou
+  não) num período ≥ o da carteira;
+- Efetivado = ADE na liga com `qtde = 1` num período ≥ o da carteira.
+
+As duas fontes são lidas **globais** (antes do RLS). Uma fonte ilegível
+deixa o badge "indisponível", nunca "não trabalhado".
+
+**Quebra Por Consultor — nenhum lead some.** Vão para a linha
+"`<SUPERVISOR VIGENTE DA LOJA> · a distribuir`" (`SUFIXO_A_DISTRIBUIR`):
+- a carteira com consultor **não identificado** na loja;
+- a carteira em nome de **supervisor** do cadastro (match por
+  `normalizar_nome`).
+
+Isso é **diferente** da Promessa Diária, que exclui o supervisor: aqui é
+lista de trabalho, e o supervisor distribui (decisão do usuário). Loja
+sem supervisor vigente vira "Sem supervisor vigente · <LOJA>". A loja é
+sempre a do arquivo, mesmo quando o consultor está cadastrado em outra
+(carteira herdada da loja anterior).
+
+**Link da jornada** (`link_reconquista`): guardado e exibido como link
+"Abrir" (decisão do usuário). É uma URL pública da jornada do cliente; só
+`https://` vira link.
+
+**Saída do export (a partir de 10/2026):**
+- as sub-abas **Por Loja** e **Detalhamento** saem e entra **Carteira
+  Elegível**;
+- o bloco **"Clientes na esteira"** sai do card;
+- os meses anteriores seguem com tudo como estava.
+
+A tabela `reconquista`, o fetch do export em `carregar_reconquista` e as
+funções de render **continuam**: os meses ≤ 08/2026 ainda leem
+Efetivadas, Conversão e o acelerador dela. O card "Reconquista MG CRED"
+do angry-man fica sem uso; removê-lo é decisão do usuário.
+
+> **LGPD:** mesma lista fechada da Promessa Diária. `nu_matricula` é lida
+> pelo importador **só** nas linhas sem ADE, para reconhecer o rodapé, e
+> nunca é enviada.
+
+**Operação (import mensal, log esperado, mensagens de recusa,
+conferência SQL):** `angry-man/docs/importacao.md` § *Reconquista —
+rotina mensal de importação*. Exige angry-man **≥ 1.4.8** e a Edge
+Function `reconquista-rpc` **≥ v13** (modo web).
+
+**Primeiro arquivo (lido em 16/10/2026, antes do import):**
+- 2.926 clientes, 2.615 de prioridade e 311 de baixa prioridade;
+- saldo de R$ 12,98 mi; 310 com FDR anterior;
+- 50 lojas, todas resolvidas por `cod_bmg`;
+- 137 sem consultor identificado (86 nomes inexistentes no cadastro, 51
+  cadastrados em outra loja);
+- 152 em nome de supervisor;
+- 1.679 ADEs estão no export antigo; 355 delas ele marcava `NAO ELEGIVEL`
+  (foto mais antiga);
+- **0** cruzam com a Promessa Diária ou a liga: o extrator já tira quem
+  prometeu ou efetivou.
 
 ### Estados (validados 100% contra o arquivo)
 
@@ -1412,16 +1516,20 @@ Somar apurações produziria uma conversão que não corresponde a prêmio
 nenhum.
 
 O **analítico** roda em outros recortes. Sub-navegação: **Liga · Promessa
-Diária · Por Loja · Detalhamento**. Abre em Liga quando o período é
-contado pela liga, e em Por Loja antes disso. "Promessa Diária" só entra
-nas opções com a V3 vigente (`promessa_status != PROMESSA_FORA`).
+Diária · Por Loja · Detalhamento** até 09/2026, e **Liga · Promessa Diária
+· Carteira Elegível** a partir de 10/2026 (`carteira_elegivel_vigente`;
+ver [Carteira Elegível](#carteira-elegível--lista-de-trabalho-a-partir-de-102026)).
+Abre em Liga quando o período é contado pela liga, e em Por Loja antes
+disso. "Promessa Diária" só entra nas opções com a V3 vigente
+(`promessa_status != PROMESSA_FORA`).
 
 | Sub-aba | Recorte | Chave do loader |
 |---|---|---|
 | **Liga** | Liga do período selecionado, `qtde` 1 e 0. O filtro "Contabilizada" abre em *Contabilizadas* | `liga` |
 | **Promessa Diária** | Promessa Diária do período selecionado (mês de `dt_promessa`), elegíveis e não elegíveis, com o badge da liga. O filtro "Elegibilidade" abre em *Elegíveis*. Ver [Promessa Diária](#promessa-diária--promessas-a-partir-de-092026-v3) | `promessas`, `promessas_por_loja`, `promessas_por_consultor` |
-| **Por Loja** | Export, `dt_fim` no mês selecionado | `clientes_prox` → `por_loja_mes` |
-| **Detalhamento** | Export, **todos os meses**, do mais recente ao mais antigo, com o mês selecionado destacado | `clientes_todos` |
+| **Carteira Elegível** (≥ 10/2026) | Foto do mês: métricas, detalhe (prioritários primeiro, badges, link) e quebras por loja, consultor, banco, regra de pagamento e motivo de impedimento | `carregar_carteira_elegivel` (loader próprio) |
+| **Por Loja** (≤ 09/2026) | Export, `dt_fim` no mês selecionado | `clientes_prox` → `por_loja_mes` |
+| **Detalhamento** (≤ 09/2026) | Export, **todos os meses**, do mais recente ao mais antigo, com o mês selecionado destacado | `clientes_todos` |
 
 `por_loja` (export, apuração defasada) continua no dict e **ninguém na UI o
 lê**.

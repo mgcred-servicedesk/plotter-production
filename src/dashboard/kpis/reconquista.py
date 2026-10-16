@@ -693,14 +693,17 @@ ROTULO_SEM_SUPERVISOR = "Sem supervisor vigente · {loja}"
 
 
 def _responsavel_sem_consultor(
-    nao_ident: pd.DataFrame, df_sup: Optional[pd.DataFrame]
+    nao_ident: pd.DataFrame,
+    df_sup: Optional[pd.DataFrame],
+    sufixo: str = SUFIXO_SEM_CONSULTOR,
 ) -> pd.Series:
     """Rotulo da linha que recebe o lead sem consultor identificado.
 
     Supervisor VIGENTE da loja da promessa no cadastro (`df_sup`, colunas
     SUPERVISOR/LOJA de `carregar_supervisores(mes, ano)`). Loja com mais
     de um supervisor vigente junta os nomes; loja sem nenhum cai num
-    rotulo explicito por loja — o lead nunca some.
+    rotulo explicito por loja — o lead nunca some. `sufixo` muda so o
+    rotulo (a Carteira Elegivel usa `SUFIXO_A_DISTRIBUIR`).
     """
     sup_por_loja: Dict[str, str] = {}
     if df_sup is not None and not df_sup.empty and {
@@ -714,7 +717,7 @@ def _responsavel_sem_consultor(
     lojas = nao_ident["loja"].fillna("").astype(str)
     return pd.Series(
         [
-            sup_por_loja[norm] + SUFIXO_SEM_CONSULTOR
+            sup_por_loja[norm] + sufixo
             if norm in sup_por_loja
             else ROTULO_SEM_SUPERVISOR.format(loja=loja)
             for loja, norm in zip(lojas, normalizar_nome(lojas))
@@ -759,6 +762,260 @@ def promessas_por_consultor(
     if base.empty:
         return pd.DataFrame()
     return _quebra_promessa(base, ["consultor"])
+
+
+# ══════════════════════════════════════════════════════
+# Carteira Elegivel (Extrator de Elegiveis, migration 140)
+#
+# Foto mensal da carteira elegivel a trabalhar — so ANALITICO (sub-aba
+# "Carteira Elegivel"), nao entra em card nem apuracao. Substitui as
+# sub-abas do export (Por Loja / Detalhamento) e o bloco "Clientes na
+# esteira" a partir do primeiro arquivo. Ver business-rules.md
+# § "Carteira Elegivel".
+# ══════════════════════════════════════════════════════
+
+# Primeiro periodo (ano, mes) com Carteira Elegivel (primeiro arquivo do
+# banco). Antes dele as sub-abas do export seguem como estao (legado).
+_CARTEIRA_ELEGIVEL_INICIO = (2026, 10)
+
+# Estados do loader `carregar_carteira_elegivel`, analogos aos LIGA_*.
+CARTEIRA_FORA = "fora"                    # periodo < 10/2026: export
+CARTEIRA_OK = "ok"                        # periodo importado
+CARTEIRA_NAO_IMPORTADA = "nao_importada"  # periodo sem linhas (pre-RLS)
+CARTEIRA_ERRO = "erro"                    # falha ao ler a carteira
+
+# Linha da quebra por consultor que recebe a carteira sem dono
+# acionavel: consultor nao identificado OU carteira em nome de
+# supervisor (decisao do usuario, 16/10/2026).
+SUFIXO_A_DISTRIBUIR = " · a distribuir"
+
+_STATUS_FDR = "FDR"
+
+
+def carteira_elegivel_vigente(mes: int, ano: int) -> bool:
+    """O periodo (mes, ano) usa a Carteira Elegivel no lugar do export?
+
+    Corte por data, como `liga_vigente`. Decide a sub-nav e o bloco
+    "Clientes na esteira" sem precisar ler a carteira.
+    """
+    return (ano, mes) >= _CARTEIRA_ELEGIVEL_INICIO
+
+
+def _mask_elegivel_carteira(df: pd.DataFrame) -> pd.Series:
+    """`elegivel == True` (derivado na RPC). Nulo nao conta."""
+    return df["elegivel"].eq(True)
+
+
+def _badge_carteira_disponivel(df: pd.DataFrame, coluna: str) -> bool:
+    return coluna in df.columns and not df[coluna].isna().any()
+
+
+def marcar_trabalhado(
+    carteira: pd.DataFrame,
+    promessas: Optional[pd.DataFrame],
+    liga: Optional[pd.DataFrame],
+) -> pd.DataFrame:
+    """Badges "Prometido MM/AAAA" e "Efetivado MM/AAAA" na carteira.
+
+    A carteira e uma foto: o cliente pode ter sido trabalhado depois do
+    import. Cruza por ADE com periodos (ano, mes) >= o da carteira:
+      - prometido = ADE em QUALQUER linha da Promessa Diaria (elegivel ou
+        nao — e acao feita sobre o cliente, nao a conta do card);
+      - efetivado = ADE na liga com `qtde = 1`.
+    Mesma mecanica de `marcar_efetivada` (a promessa entra como "liga"
+    com qtde 1). Fonte `None` (falha de leitura) => coluna NA
+    ("indisponivel"), nunca False.
+    """
+    if carteira is None:
+        return pd.DataFrame()
+    prom_como_liga = (
+        None if promessas is None
+        else promessas.assign(qtde=1) if not promessas.empty
+        else promessas
+    )
+    df = marcar_efetivada(carteira, prom_como_liga).rename(columns={
+        "efetivada": "prometido", "efetivada_ref": "prometido_ref",
+    })
+    return marcar_efetivada(df, liga).rename(columns={
+        "efetivada": "efetivado", "efetivada_ref": "efetivado_ref",
+    })
+
+
+def ordenar_carteira(df: pd.DataFrame) -> pd.DataFrame:
+    """Prioritarios primeiro, depois baixa prioridade (decisao do
+    usuario: contam como elegiveis, mas ficam abaixo). Dentro de cada
+    faixa, maior saldo primeiro; ADE desempata para a lista nao "dancar"
+    entre reruns. `baixa_prioridade` nulo vai para o fim."""
+    if df is None or df.empty:
+        return df
+    ordem = df["baixa_prioridade"].map({False: 0, True: 1}).fillna(2)
+    return (
+        df.assign(_ordem=ordem)
+        .sort_values(
+            ["_ordem", "saldo_carteira", "co_adesao"],
+            ascending=[True, False, True],
+            na_position="last",
+        )
+        .drop(columns="_ordem")
+        .reset_index(drop=True)
+    )
+
+
+def _anotar_contadores_carteira(df: pd.DataFrame) -> pd.DataFrame:
+    """Colunas 0/1 / numericas — base dos totais e das quebras."""
+    out = df.copy()
+    baixa = out["baixa_prioridade"].eq(True)
+    status_ant = _rotulo_sem_acento(out["status_cliente_anterior"])
+    out["_prioridade"] = (~baixa).astype(int)
+    out["_baixa"] = baixa.astype(int)
+    out["_fdr"] = status_ant.eq(_STATUS_FDR).astype(int)
+    out["_saldo"] = pd.to_numeric(out["saldo_carteira"], errors="coerce")
+    for col in ("prometido", "efetivado"):
+        out[f"_{col}"] = (
+            out[col].astype(bool).astype(int)
+            if _badge_carteira_disponivel(out, col)
+            else 0
+        )
+    return out
+
+
+def totais_carteira(df: pd.DataFrame) -> Dict:
+    """Resumo da sub-aba (frame ja pos-RLS, com `marcar_trabalhado`).
+
+    `elegiveis` inclui a baixa prioridade. Saldo soma so os elegiveis
+    com valor (ausente nao vira 0 na soma; `saldo_zero` conta os zeros
+    de verdade). `prometidos`/`efetivados` = None quando o badge nao
+    esta disponivel — nunca 0 nesse caso.
+    """
+    vazio = {
+        "elegiveis": 0, "prioridade": 0, "baixa_prioridade": 0,
+        "nao_elegiveis": 0, "fdr_anterior": 0,
+        "saldo_total": 0.0, "saldo_prioridade": 0.0, "saldo_zero": 0,
+        "sem_consultor": 0, "prometidos": 0, "efetivados": 0,
+    }
+    if df is None or df.empty:
+        return vazio
+    eleg = _anotar_contadores_carteira(df[_mask_elegivel_carteira(df)])
+    return {
+        "elegiveis": len(eleg),
+        "prioridade": int(eleg["_prioridade"].sum()),
+        "baixa_prioridade": int(eleg["_baixa"].sum()),
+        "nao_elegiveis": int(df["elegivel"].eq(False).sum()),
+        "fdr_anterior": int(eleg["_fdr"].sum()),
+        "saldo_total": float(eleg["_saldo"].sum()),
+        "saldo_prioridade": float(
+            eleg.loc[eleg["_prioridade"].eq(1), "_saldo"].sum()
+        ),
+        "saldo_zero": int(eleg["_saldo"].eq(0).sum()),
+        # Sem a coluna (view anterior) nao da para saber: None, nao 0.
+        "sem_consultor": (
+            int((~eleg["consultor_identificado"].eq(True)).sum())
+            if "consultor_identificado" in eleg.columns else None
+        ),
+        "prometidos": (
+            int(eleg["_prometido"].sum())
+            if _badge_carteira_disponivel(eleg, "prometido") else None
+        ),
+        "efetivados": (
+            int(eleg["_efetivado"].sum())
+            if _badge_carteira_disponivel(eleg, "efetivado") else None
+        ),
+    }
+
+
+ROTULO_NAO_INFORMADO = "(não informado)"
+
+
+def carteira_por_dimensao(df: pd.DataFrame, coluna: str) -> pd.DataFrame:
+    """Elegiveis por um atributo do arquivo (banco de origem, regra de
+    pagamento, motivo de impedimento): `clientes` e `saldo`. Vazio vira
+    `ROTULO_NAO_INFORMADO` — nao some da soma."""
+    if df is None or df.empty or coluna not in df.columns:
+        return pd.DataFrame(columns=[coluna, "clientes", "saldo"])
+    eleg = df[_mask_elegivel_carteira(df)].copy()
+    eleg[coluna] = eleg[coluna].fillna(ROTULO_NAO_INFORMADO)
+    eleg["_saldo"] = pd.to_numeric(eleg["saldo_carteira"], errors="coerce")
+    return (
+        eleg.groupby(coluna)
+        .agg(clientes=("co_adesao", "count"), saldo=("_saldo", "sum"))
+        .reset_index()
+        .sort_values(["clientes", coluna], ascending=[False, True])
+        .reset_index(drop=True)
+    )
+
+
+def _quebra_carteira(df: pd.DataFrame, chaves) -> pd.DataFrame:
+    """Agrega elegiveis por `chaves`. Prometidos/efetivados ficam NA na
+    coluna quando o badge nao esta disponivel."""
+    eleg = df[_mask_elegivel_carteira(df)]
+    if eleg.empty:
+        return pd.DataFrame()
+    eleg = _anotar_contadores_carteira(eleg)
+    g = (
+        eleg.groupby(chaves, dropna=False)
+        .agg(
+            elegiveis=("co_adesao", "count"),
+            prioridade=("_prioridade", "sum"),
+            baixa_prioridade=("_baixa", "sum"),
+            fdr_anterior=("_fdr", "sum"),
+            saldo=("_saldo", "sum"),
+            prometidos=("_prometido", "sum"),
+            efetivados=("_efetivado", "sum"),
+        )
+        .reset_index()
+    )
+    for col in ("prometido", "efetivado"):
+        g[f"{col}s"] = (
+            g[f"{col}s"].astype("Int64")
+            if _badge_carteira_disponivel(eleg, col)
+            else pd.array([pd.NA] * len(g), dtype="Int64")
+        )
+    return g.sort_values(
+        ["prioridade", "elegiveis", *chaves],
+        ascending=[False, False, *([True] * len(chaves))],
+    ).reset_index(drop=True)
+
+
+def carteira_por_loja(df: pd.DataFrame) -> pd.DataFrame:
+    """Quebra por loja/regiao sobre TODOS os elegiveis do escopo — inclui
+    a carteira em nome de supervisor e a sem consultor identificado."""
+    if df is None or df.empty or "loja" not in df.columns:
+        return pd.DataFrame()
+    return _quebra_carteira(df, ["loja", "regiao"])
+
+
+def carteira_por_consultor(
+    df: pd.DataFrame, df_sup: Optional[pd.DataFrame]
+) -> pd.DataFrame:
+    """Quebra por consultor; nenhum lead some (lista de trabalho).
+
+    Vao para a linha "<SUPERVISOR VIGENTE DA LOJA> · a distribuir"
+    (`_responsavel_sem_consultor`, mesmo criterio da Promessa Diaria):
+      - consultor nao identificado na loja (`consultor_identificado`
+        False, migration 140) — inclui carteira herdada da loja anterior;
+      - carteira em nome de SUPERVISOR do cadastro (`df_sup`, match por
+        `normalizar_nome`, como `excluir_supervisores`) — decisao do
+        usuario: diferente da Promessa, aqui nao se exclui, se distribui.
+    Sem `consultor_identificado` levanta KeyError (o loader trata).
+    """
+    if df is None or df.empty or "consultor" not in df.columns:
+        return pd.DataFrame()
+    identificado = df["consultor_identificado"].eq(True)
+    supervisores = (
+        set(normalizar_nome(df_sup["SUPERVISOR"].dropna()))
+        if df_sup is not None and "SUPERVISOR" in df_sup.columns
+        else set()
+    )
+    eh_sup = normalizar_nome(df["consultor"].fillna("").astype(str)).isin(
+        supervisores
+    )
+    a_distribuir = ~identificado | eh_sup
+    base = df.copy()
+    if a_distribuir.any():
+        base.loc[a_distribuir, "consultor"] = _responsavel_sem_consultor(
+            base[a_distribuir], df_sup, SUFIXO_A_DISTRIBUIR
+        )
+    return _quebra_carteira(base, ["consultor"])
 
 
 def _por_consultor_cobranca_consignavel(
