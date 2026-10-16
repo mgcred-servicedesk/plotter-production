@@ -150,6 +150,11 @@ A tela segue uma ordem de altitude decrescente — de resultado para ação:
 
 1. **Onde estamos** — resumo executivo + 3 KPIs dominantes (realizado, % meta, gap).
 2. **Para onde vamos** — ritmo atual vs. necessário e projeção de fechamento.
+
+% meta, gap, "meta atingida", projeção e ritmo do MIX seguem a
+[regra do MIX](business-rules.md#regra-do-mix--meta-atingida-exige-cada-produto-102026)
+(`avaliar_regra_mix` / `projetar_regra_mix`): nenhum quadro compara o
+total vendido com a meta MIX diretamente.
 3. **Onde agir** — prioridades de ação (produtos/regiões/consultores críticos).
 4. **Exploração** — tabs com tabelas e gráficos detalhados.
 

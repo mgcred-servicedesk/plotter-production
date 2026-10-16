@@ -54,7 +54,12 @@ src/
       gerais.py                ← cálculo puro (calcular_kpis_gerais, _analise, _cancelados,
                                  _qtd_produtos, medias_du_por_nivel, metas_produto_diarias)
                                  + as 6 fachadas cacheadas obter_*_periodo consumidas por
-                                 app.py, serie_diaria_pago (pura) e limpar_cache_kpis
+                                 app.py, serie_diaria_pago (pura) e limpar_cache_kpis.
+                                 Também: PRODUTOS_DASHBOARD (produtos do MIX → categorias),
+                                 regra do MIX (avaliar_regra_mix, projetar_regra_mix) e
+                                 meta do consultor pela loja principal
+                                 (resolver_loja_principal, metas_pontos_consultor,
+                                 metas_produto_loja_principal)
       consolidacao.py          ← regras sobre os contratos pagos: pontuação (com
                                  herança de Portabilidade), fallback de categoria,
                                  diagnóstico, regras de exclusão e classificações.
@@ -64,7 +69,9 @@ src/
                                  quebras por loja/consultor. Não toca o Supabase
       seguros.py               ← BMG Med / Vida Familiar: união das 3 fontes, dedup
                                  por CONTRATO_ID e classificação por SUB_STATUS
-      produtos.py              ← KPIs por produto (PRODUTOS_DASHBOARD)
+      produtos.py              ← KPIs e distribuições por grupo de produto
+                                 (grupo_dashboard, PRODUTO_DETALHADO); PRODUTOS_DASHBOARD
+                                 mora em gerais.py
       regioes.py               ← evolução MoM D.U., análise por produto/região
       rankings.py              ← rankings de lojas, supervisores, consultores
       consultor.py             ← KPIs do dashboard individual do consultor

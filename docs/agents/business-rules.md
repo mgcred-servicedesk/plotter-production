@@ -560,7 +560,8 @@ via `obter_digitacao_diaria_detalhe` (≥ migration 132).
   coluna de valor `PORTABILIDADE`; a contagem `Consignado (Novo/Refin)`
   não muda, Portabilidade já ficava fora dela). As demais telas que usam
   `PRODUTO_DETALHADO` (Rankings, demais Analíticos, Cancelados) seguem
-  somando Portabilidade em `CONSIGNADO`.
+  somando Portabilidade em `CONSIGNADO` — assim como toda visão que
+  compara com meta (`PRODUTOS_DASHBOARD`, ver [Metas](#metas)).
 - **CLT e ANT. DE BENEF. não caem em OUTROS** — o ETL grava os dois sem
   categoria (ver migration 061); a RPC devolve `tipo_produto` **só** nas
   linhas sem categoria e o loader aplica `_preencher_categoria_fallback`,
@@ -762,39 +763,53 @@ do mês; 6 em 08/2026).
 No dashboard de vendas, a meta MIX só está **atingida** quando o total do
 MIX bate `meta_mix` **e** cada produto com meta (CNC, CLT, Consignado,
 Saque, FGTS/Ant./13º) bate **100%** da própria meta. Produto com meta 0
-(Saque hoje) fica fora da regra. Função única: `avaliar_regra_mix`
-(`kpis/gerais.py`).
+(Saque hoje) fica fora da regra. O excedente de um produto **nunca
+compensa** a falta de outro — nem no realizado, nem na projeção.
 
-- **Quanto falta** = o maior entre a falta no total e a **soma das faltas
-  por produto** — o excedente de um produto não cobre a falta de outro.
-  Alimenta o "Falta para Meta" e o "Necessário/dia".
-- **% de atingimento** (card **📊 % Meta Atingida**) = `(meta_mix − falta)
-  ÷ meta_mix` enquanto a regra não fecha — só chega a 100% com tudo
-  batido; o % do total vendido aparece no rodapé ("Total vendido: X% da
-  meta MIX"). Atingida, o card mostra o % real do total (pode passar de
-  100%). Ex. 10/2026: Stella 100,8% no total → 79,4% pela regra.
-  `kpis["perc_ating_valor"]` segue sendo o % do total.
-- **Projeção** pela mesma regra (`projetar_regra_mix`): cada produto
-  projeta pelo próprio ritmo (`projecao` de `calcular_metas_produto_diarias`,
-  a mesma dos cards por produto) contra a própria meta; a sobra
-  projetada de um não compensa a falta de outro. Vale para "Projeção:"
-  do card % Meta Atingida, "Projeção Fim" e "Fecharemos…" do Para Onde e
-  "Proj. MIX" do Resumo. Produto projetado abaixo da meta = ritmo abaixo
-  do necessário: a frase de ritmo do Para Onde e a pill 🔥 do Resumo
-  listam esses produtos em vez do "% acima/abaixo do necessário" do total.
-  O valor em R$ da projeção (card Pagos, Projeção Fim) segue sendo a venda
-  total prevista. Ex. Bruna 10/2026: projeção 202% → 87,1% (CLT e
-  FGTS/Ant./13º abaixo; CNC projeta acima da meta).
-- **Estado parcial** (total ou algum produto já batido, outro ainda
-  abaixo): o quadro não diz "meta atingida" e lista o que falta em cada
-  produto restante (`mensagem_regra_mix`, `ui/kpi_cards_reforma.py`).
-- Superfícies: cards **📊 % Meta Atingida** e **🎯 Falta para Meta**,
-  bloco **Para Onde Estamos Indo**, **Resumo Executivo** (status, Faltam,
-  Gap e ritmo necessário) e **Meta Diária** do consultor (prioridades de
-  ação). `kpis["gap_valor"]` / `kpis["perc_ating_valor"]` seguem sendo o
-  total puro — quem exibe veredito de meta passa por `avaliar_regra_mix`.
-- 10/2026 (dia 16): 6 consultores com o total batido e produto pendente
-  apareciam como "meta atingida".
+Vale para todos os perfis, no escopo de cada um (empresa, região, loja,
+consultor): o produto é comparado somado no escopo contra a meta somada
+do escopo.
+
+**Contas** (`kpis/gerais.py`, fonte única — nenhum quadro refaz a conta):
+
+| Função | Devolve |
+|---|---|
+| `avaliar_regra_mix(metas_produto, total_vendas, meta_mix)` | `atingida`, `parcial`, `pendentes` (produto + falta), `falta`, `perc` |
+| `projetar_regra_mix(metas_produto, projecao, meta_mix)` | a mesma regra sobre a `projecao` de cada produto (a mesma dos cards por produto) |
+
+- **Falta** = o maior entre a falta no total e a **soma das faltas por
+  produto**. Alimenta "Falta para Meta", "Necessário/dia", "Faltam"/"Gap"
+  do Resumo e a Meta Diária do consultor.
+- **% de atingimento** = `(meta_mix − falta) ÷ meta_mix` enquanto a regra
+  não fecha (só chega a 100% com tudo batido). Atingida: o % real do
+  total (pode passar de 100% — não há falta a compensar).
+- **% de projeção** = a mesma conta de `projetar_regra_mix`. Produto
+  projetado abaixo da meta ⇔ ritmo diário abaixo da meta diária restante;
+  esses produtos substituem o "x% acima/abaixo do necessário" do total.
+- **Estado parcial** (total ou algum produto já batido, outro abaixo):
+  nunca "meta atingida"; o quadro lista o que falta por produto
+  (`mensagem_regra_mix`, `ui/kpi_cards_reforma.py`).
+
+**Quadros:**
+
+| Quadro | O que segue a regra |
+|---|---|
+| 📊 % Meta Atingida | % grande e "Projeção:"; rodapé "Total vendido: X% da meta MIX" enquanto não fecha |
+| 🎯 Falta para Meta | valor, "✓ Meta Atingida" e o que falta por produto |
+| Para Onde Estamos Indo | Necessário/dia, % da Projeção Fim, "Fecharemos…", frase de ritmo e linha do que falta |
+| Resumo Executivo | status (✅ só atingida), %, Faltam, Gap, Proj. MIX e pill 🔥 de ritmo |
+| Meta Diária (consultor) | "Meta atingida!", necessário por DU e o que falta |
+
+**Fora da regra, de propósito:** `kpis["perc_ating_valor"]` e
+`kpis["gap_valor"]` seguem sendo o total puro (dado, não veredito); o
+valor em R$ da projeção (card Pagos, Projeção Fim) é a venda total
+prevista; os cards de cada produto já são por produto; a página de
+Pontuação compara pontos com a Meta Prata (outra meta).
+
+Exemplos 10/2026 (dia 16): 6 consultores com o total batido e produto
+pendente liam "meta atingida". Stella: 100,8% no total → 79,4% pela
+regra. Bruna (Consignado a 161%): 106,0% → 73,9%; projeção 202% → 87,1%
+(ritmo abaixo em CLT e FGTS/Ant./13º; CNC projeta acima da meta).
 
 ### Meta diária restante
 
@@ -812,6 +827,12 @@ media_du  = total / du_dec if du_dec > 0 else 0
 projecao  = media_du * du_total
 perc_proj = projecao / meta * 100 if meta > 0 else 0
 ```
+
+A fórmula vale por produto (cards por produto) e para pontos × Meta Prata
+(página de Pontuação). O **% de projeção do MIX em R$** não é
+`projecao / meta_mix`: segue a [regra do MIX](#regra-do-mix--meta-atingida-exige-cada-produto-102026)
+(`projetar_regra_mix`), em que a projeção que sobra num produto não
+compensa a que falta em outro.
 
 ## Emissão de contrato — zeragem de valor
 

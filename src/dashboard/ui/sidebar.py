@@ -258,6 +258,11 @@ def filtrar_metas_ui(
     segue a seleção explícita do usuário. Quando ele seleciona lojas,
     restringe a essas lojas; quando seleciona apenas um consultor,
     usa as lojas presentes nos dados já filtrados (``df_f``).
+
+    No recorte de UM consultor isso ainda pode trazer várias lojas
+    (produziu em duas; ou o gerente marcou N lojas): o ``app.py``
+    reduz o resultado à loja principal com
+    ``metas_produto_loja_principal`` — uma pessoa tem uma meta.
     """
     if "LOJA" not in df_metas.columns:
         return df_metas

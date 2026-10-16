@@ -812,6 +812,11 @@ def criar_cards_metas_produto(produtos: List[Dict]) -> None:
     Linha 1: Mix Geral | CNC | CLT
     Linha 2: Saque | Consignado | pack agregado (PACK_LABEL_AGREGADO)
 
+    **Nao e chamada hoje** (o ``app.py`` so a reexporta). O card "Mix
+    Geral" daqui diz "Meta atingida" com o TOTAL >= meta, sem a regra
+    do MIX (``avaliar_regra_mix``) — se voltar a ser usada, alinhe
+    antes. Remocao pendente de confirmacao do usuario.
+
     Args:
         produtos: Lista de dicts com dados de cada produto
     """

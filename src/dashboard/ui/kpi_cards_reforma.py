@@ -141,8 +141,9 @@ def render_kpis_principais(
             — sustentam a regra do MIX no card "Falta para Meta".
     """
     total_vendas = kpis.get("total_vendas", 0)
-    # % e gap aqui são em VALOR (R$), comparando vendas com a meta-mix.
-    # Meta MIX (produto) = R$ 15.7M; Meta PRATA/OURO = pontos (página à parte).
+    # % e gap aqui são em VALOR (R$) contra a meta MIX, pela regra do
+    # MIX (nao o total puro de kpis["perc_ating_valor"]/["gap_valor"]).
+    # Meta PRATA/OURO = pontos (página à parte).
     meta_mix = kpis.get("meta_mix", 0)
     # Regra do MIX: "Meta Atingida" so com o total E cada produto na
     # meta; o que falta e a soma do que falta em cada produto, e o %

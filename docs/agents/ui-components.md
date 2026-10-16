@@ -369,7 +369,7 @@ Sistema unificado em `src/dashboard/ui/kpi_cards.py`. Variantes:
 | `.mg-prod-card` | Base neutra |
 | `.mg-prod-card--hero` | KPI principal destacado (Total Pago) |
 | `.mg-prod-card--success/warning/danger` | Status por meta |
-| `.mg-prod-card--mix` | KPI primário / mix geral |
+| `.mg-prod-card--mix` | KPI primário / mix geral (hoje só no card "Mix Geral" de `criar_cards_metas_produto`, que não é chamado — o app só o reexporta) |
 | `.mg-prod-card--neutral` | KPI informativo sem meta |
 
 Aliases `.mg-prod-card--accent-teal/indigo` redirecionados para
@@ -378,6 +378,18 @@ Aliases `.mg-prod-card--accent-teal/indigo` redirecionados para
 Sparklines: helper `_sparkline_svg(values, width=180, height=36)`
 retorna SVG inline. Usa classes `.mg-spark-line/area/dot` que herdam
 `--mg-primary`.
+
+### Veredito de meta MIX nos cards — sempre pela regra do MIX
+
+Os quadros que dizem se a meta MIX foi batida (% Meta Atingida, Falta
+para Meta, Para Onde Estamos Indo, Resumo Executivo, Meta Diária do
+consultor) recebem `metas_produto` e passam por `avaliar_regra_mix` /
+`projetar_regra_mix` (`kpis/gerais.py`). Nunca derive o veredito de
+`kpis["perc_ating_valor"]` ou `kpis["gap_valor"]` (total puro). Texto do
+estado parcial: `mensagem_regra_mix` / `nomes_pendentes_mix`
+(`ui/kpi_cards_reforma.py`) — já trocam `$` por `&#36;`, porque duas
+moedas na mesma linha de `st.markdown` viram LaTeX. Regra completa em
+[business-rules.md](business-rules.md#regra-do-mix--meta-atingida-exige-cada-produto-102026).
 
 ### Responsividade dos cards — use `cqi`, não `vw`
 

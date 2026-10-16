@@ -107,3 +107,20 @@ avisar quanto falta nos demais.
   total) derruba 4. Pendência "Fecharemos X% acima" **resolvida**.
 - Observação: o Streamlit local (PID 8179, iniciado 10:18) não recarregou
   `resumo_executivo.py` — usuário viu o Resumo antigo; reiniciar o app.
+
+## Atualização — 2026-10-16 (revisão de documentação)
+
+- `business-rules.md`: seção "Regra do MIX" reescrita (regra → contas →
+  quadros → o que fica fora de propósito → exemplos); "Projeção" explica
+  que o % do MIX em R$ segue `projetar_regra_mix`; quadro "Digitação do
+  Último Dia" deixa explícito que visões com meta somam Portabilidade no
+  Consignado.
+- `conventions.md` (estrutura narrativa), `ui-components.md` (seção
+  "Veredito de meta MIX nos cards" + nota do `.mg-prod-card--mix` só no
+  card morto) e `architecture.md` (`gerais.py` com regra do MIX e meta
+  do consultor; `produtos.py` corrigido — `PRODUTOS_DASHBOARD` mora em
+  `gerais.py`, o doc dizia o contrário).
+- Docstrings/comentários: `obter_kpis_gerais_periodo` (trio de valor é
+  total puro, não veredito), `filtrar_metas_ui` (app reduz à loja
+  principal), comentário do card % Meta Atingida, aviso em
+  `criar_cards_metas_produto` (não chamada, sem a regra).

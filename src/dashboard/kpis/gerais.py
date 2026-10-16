@@ -1504,6 +1504,12 @@ def obter_kpis_gerais_periodo(
     nao existe no calculo puro: e derivacao de apresentacao, feita aqui
     desde a extracao de ``app.py``.
 
+    ``perc_ating_valor`` e ``gap_valor`` sao o TOTAL puro (vendas x meta
+    MIX). Nao sao veredito de meta: quadro que diz "meta atingida",
+    quanto falta ou % de projecao do MIX passa por ``avaliar_regra_mix``
+    / ``projetar_regra_mix`` (o excedente de um produto nao compensa a
+    falta de outro).
+
     **Escopo dos frames.** Todos chegam JA recortados pelo perfil
     (``aplicar_rls``) e pelos filtros da sidebar — esta funcao nao
     aplica RLS. Nenhum frame pre-RLS entra aqui.
