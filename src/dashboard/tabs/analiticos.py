@@ -62,7 +62,10 @@ from src.dashboard.kpis.prestamista import (
     marcar_situacao_por_ade,
     totais_prestamista,
 )
-from src.dashboard.loaders import carregar_carteira_elegivel
+from src.dashboard.loaders import (
+    carregar_carteira_elegivel,
+    carregar_fim_relacionamento_liga,
+)
 from src.dashboard.ui.kpi_cards_reforma import render_quebras_prestamista
 
 logger = logging.getLogger(__name__)
@@ -105,6 +108,7 @@ _ICONES_RECONQUISTA = {
     "Liga": "verified",
     "Promessa Diária": "handshake",
     "Carteira Elegível": "assignment",
+    "Fim de relacionamento — Liga": "person_remove",
     "Por Loja": "storefront",
     "Detalhamento": "table_chart",
 }
@@ -1176,6 +1180,117 @@ def _render_reconquista_liga(
     )
 
 
+def _render_fim_relacionamento_liga(mes: int, ano: int) -> None:
+    """Foto mensal FDR, carregada somente ao abrir a sub-aba.
+
+    O loader entrega somente o escopo autorizado. As metricas descrevem
+    esse escopo; os filtros recortam o detalhe e o CSV. A foto e mantida
+    integralmente, mesmo com datas de saida anteriores a competencia.
+    """
+    mes_label = f"{mes:02d}/{ano}"
+    dados = carregar_fim_relacionamento_liga(mes, ano)
+    status = dados.get("status")
+    if status == "nao_importada":
+        st.warning(
+            f"Fim de relacionamento — Liga de {mes_label} "
+            "ainda não importado."
+        )
+        return
+    if status != "ok":
+        st.error(
+            "Não foi possível carregar Fim de relacionamento — Liga "
+            f"de {mes_label}."
+        )
+        return
+    clientes = dados.get("clientes")
+    if clientes is None or clientes.empty:
+        st.info(
+            "Sem adesões de Fim de relacionamento — Liga "
+            f"de {mes_label} no seu escopo."
+        )
+        return
+
+    df = clientes.copy()
+    df["contabilizada"] = df["qtde"].eq(1).map({True: "Sim", False: "Não"})
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        st.metric(
+            "Adesões listadas", formatar_numero(len(df)),
+            help="Todas as adesões da foto do mês no seu escopo.",
+        )
+    with c2:
+        st.metric(
+            "Contabilizadas", formatar_numero(df["qtde"].eq(1).sum()),
+            help="Qt Fim Relacionamento igual a 1 no arquivo do banco.",
+        )
+    with c3:
+        st.metric(
+            "Não contabilizadas", formatar_numero(df["qtde"].eq(0).sum()),
+            help="Qt Fim Relacionamento igual a 0, preservadas no detalhe.",
+        )
+    st.caption(
+        f"Foto completa de **{mes_label}** no seu escopo, incluindo saídas "
+        "de meses anteriores. As datas do contrato e do fim do "
+        "relacionamento são preservadas conforme o relatório do banco."
+    )
+    sac.divider(
+        label="Detalhamento", icon="table", align="left", color="gray",
+    )
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        contab = st.selectbox(
+            "Contabilizada", ["Todas", "Contabilizadas", "Não contabilizadas"],
+            key="rec_fdr_contab",
+        )
+    with c2:
+        lojas = st.multiselect(
+            "Loja", _opcoes_coluna(df, "loja"), key="rec_fdr_lojas",
+            placeholder="Todas",
+        )
+    with c3:
+        consultor = st.selectbox(
+            "Consultor", ["Todos"] + _opcoes_coluna(df, "consultor"),
+            key="rec_fdr_cons",
+        )
+    df_f = df
+    if contab == "Contabilizadas":
+        df_f = df_f[df_f["qtde"].eq(1)]
+    elif contab == "Não contabilizadas":
+        df_f = df_f[df_f["qtde"].eq(0)]
+    if lojas:
+        df_f = df_f[df_f["loja"].isin(lojas)]
+    if consultor != "Todos":
+        df_f = df_f[df_f["consultor"].eq(consultor)]
+    st.caption(
+        f"{formatar_numero(len(df_f))} de {formatar_numero(len(df))} "
+        "adesões após os filtros do detalhe."
+    )
+    cols = {
+        "co_adesao": "Cod ADE", "qtde": "Qt Fim Relacionamento",
+        "contabilizada": "Contabilizada", "loja": "Loja",
+        "regiao": "Regiao", "consultor": "Consultor",
+        "data_contrato": "Data Contrato",
+        "data_fim_relacionamento": "Data Fim Relacionamento",
+    }
+    view = (
+        df_f.sort_values(["loja", "consultor", "co_adesao"])
+        [list(cols)].copy()
+    )
+    for coluna in ("data_contrato", "data_fim_relacionamento"):
+        view[coluna] = (
+            pd.to_datetime(view[coluna], errors="coerce")
+            .dt.strftime("%d/%m/%Y").fillna("")
+        )
+    view = view.rename(columns=cols)
+    exibir_tabela(
+        view, colunas_numero=["Qt Fim Relacionamento"],
+        paginacao=100, key="rec_fdr_tabela",
+    )
+    _exportar_csv(
+        view, f"fim_relacionamento_liga_{mes:02d}-{ano}", "exp_rec_fdr",
+    )
+
+
 # ── Promessa Diaria (V3, >= 09/2026, migration 137) ─────────────────
 
 _PROM_RETORNO_ACEITO = "Aceito"
@@ -1977,14 +2092,15 @@ def _render_reconquista(reconquista: dict | None):
             f"Sem reconquista: {totais.get('sem_reconquista', 0)}"
         )
 
-    # Nada a navegar so quando nao ha liga nem export no escopo do
-    # perfil.
+    # A foto FDR pode existir mesmo sem export/liga no escopo.
+    tem_periodo = bool(apur_mes and apur_ano)
     if (
         (clientes_todos is None or clientes_todos.empty)
         and (liga is None or liga.empty)
         and not em_liga
         and not em_promessa_v3
         and not em_carteira
+        and not tem_periodo
     ):
         return
 
@@ -1995,6 +2111,7 @@ def _render_reconquista(reconquista: dict | None):
         "Liga": apur_label,
         "Promessa Diária": apur_label,
         "Carteira Elegível": apur_label,
+        "Fim de relacionamento — Liga": apur_label,
         "Por Loja": apur_label,
         "Detalhamento": "todos os meses",
     }
@@ -2007,6 +2124,7 @@ def _render_reconquista(reconquista: dict | None):
         r for r in _ICONES_RECONQUISTA
         if (r != "Promessa Diária" or em_promessa_v3)
         and (r != "Carteira Elegível" or em_carteira)
+        and (r != "Fim de relacionamento — Liga" or tem_periodo)
         and (r not in _SUB_EXPORT or not em_carteira)
     ]
     menu = st.pills(
@@ -2031,6 +2149,8 @@ def _render_reconquista(reconquista: dict | None):
         _render_reconquista_promessa(reconquista)
     elif menu == "Carteira Elegível":
         _render_reconquista_carteira(apur_mes, apur_ano)
+    elif menu == "Fim de relacionamento — Liga":
+        _render_fim_relacionamento_liga(apur_mes, apur_ano)
     elif menu == "Por Loja":
         _render_reconquista_por_loja(por_loja, apur_label, ref_label)
     elif menu == "Detalhamento":

@@ -486,3 +486,136 @@ class TestNrAde:
 
         df = pd.DataFrame({"CONTRATO_ID": [7, 8]})
         assert _nr_ade(df).tolist() == ["7", "8"]
+
+
+# ── Fim de relacionamento — Liga (foto mensal, independente dos KPIs) ──
+
+
+def _fdr_clientes() -> pd.DataFrame:
+    return pd.DataFrame([
+        {"co_adesao": 20, "qtde": 1, "loja": "LOJA A", "regiao": "R1",
+         "consultor": "ANA", "data_contrato": "2026-06-03",
+         "data_fim_relacionamento": "2026-08-16"},
+        {"co_adesao": 21, "qtde": 1, "loja": "LOJA B", "regiao": "R2",
+         "consultor": "BRUNO", "data_contrato": "2026-09-29",
+         "data_fim_relacionamento": "2026-10-18"},
+        {"co_adesao": 22, "qtde": 0, "loja": "LOJA A", "regiao": "R1",
+         "consultor": "ANA", "data_contrato": "2026-07-24",
+         "data_fim_relacionamento": "2026-09-14"},
+    ])
+
+
+def _script_render_fdr(clientes, status, reconquista=None):
+    import streamlit as st
+    from unittest.mock import patch
+    from src.dashboard.tabs import analiticos
+
+    def _load(mes, ano):
+        st.session_state["fdr_cargas"] = st.session_state.get("fdr_cargas", 0) + 1
+        st.session_state["fdr_periodo"] = (mes, ano)
+        return {"clientes": clientes, "status": status}
+
+    with patch.object(analiticos, "carregar_fim_relacionamento_liga", _load):
+        if reconquista is None:
+            analiticos._render_fim_relacionamento_liga(10, 2026)
+        else:
+            analiticos._render_reconquista(reconquista)
+
+
+def _rodar_fdr(status="ok", clientes=None, reconquista=None, **filtros):
+    at = AppTest.from_function(
+        _script_render_fdr,
+        kwargs={"clientes": _fdr_clientes() if clientes is None else clientes,
+                "status": status, "reconquista": reconquista},
+    )
+    for chave, valor in filtros.items():
+        at.session_state[chave] = valor
+    at.run()
+    assert not at.exception
+    return at
+
+
+@pytest.mark.unit
+class TestRenderFimRelacionamentoLiga:
+    def test_foto_inteira_inclui_zero_e_datas_anteriores(self):
+        at = _rodar_fdr()
+        df = _tabela(at)
+        assert df["Cod ADE"].tolist() == [20, 22, 21]
+        assert df["Qt Fim Relacionamento"].tolist() == [1, 0, 1]
+        assert df["Data Contrato"].tolist() == [
+            "03/06/2026", "24/07/2026", "29/09/2026",
+        ]
+        assert df["Data Fim Relacionamento"].tolist() == [
+            "16/08/2026", "14/09/2026", "18/10/2026",
+        ]
+        assert at.selectbox(key="rec_fdr_contab").value == "Todas"
+        assert "Foto completa de **10/2026**" in at.caption[0].value
+
+    def test_zero_fica_acessivel_por_filtro(self):
+        at = _rodar_fdr(rec_fdr_contab="Não contabilizadas")
+        assert _tabela(at)["Cod ADE"].tolist() == [22]
+        assert _tabela(at)["Contabilizada"].tolist() == ["Não"]
+
+    def test_filtro_contabilizadas(self):
+        at = _rodar_fdr(rec_fdr_contab="Contabilizadas")
+        assert _tabela(at)["Cod ADE"].tolist() == [20, 21]
+
+    def test_filtros_loja_e_consultor(self):
+        at = _rodar_fdr(rec_fdr_lojas=["LOJA B"], rec_fdr_cons="BRUNO")
+        assert _tabela(at)["Cod ADE"].tolist() == [21]
+        assert "1 de 3 adesões" in at.caption[-1].value
+
+    def test_filtros_sem_correspondencia_nao_reintroduzem_linhas(self):
+        at = _rodar_fdr(rec_fdr_lojas=["LOJA B"], rec_fdr_cons="ANA")
+        assert len(at.dataframe) == 0
+        assert "0 de 3 adesões" in at.caption[-1].value
+
+    def test_metricas_do_escopo_nao_sao_total_global_ou_do_filtro(self):
+        # Simula o loader apos RLS: somente LOJA A, duas adesoes.
+        clientes = _fdr_clientes().query("loja == 'LOJA A'")
+        at = _rodar_fdr(clientes=clientes, rec_fdr_contab="Não contabilizadas")
+        assert [(m.label, m.value) for m in at.metric] == [
+            ("Adesões listadas", "2"), ("Contabilizadas", "1"),
+            ("Não contabilizadas", "1"),
+        ]
+        assert _tabela(at)["Cod ADE"].tolist() == [22]
+
+    @pytest.mark.parametrize("status,tipo,texto", [
+        ("nao_importada", "warning", "ainda não importado"),
+        ("erro", "error", "Não foi possível carregar"),
+    ])
+    def test_indisponibilidade_nao_vira_zero(self, status, tipo, texto):
+        at = _rodar_fdr(status=status)
+        assert texto in getattr(at, tipo)[0].value
+        assert len(at.metric) == 0
+        assert len(at.dataframe) == 0
+        assert len(at.selectbox) == 0
+
+    def test_carga_sem_dados_no_escopo_tem_mensagem_propria(self):
+        at = _rodar_fdr(clientes=pd.DataFrame())
+        assert "no seu escopo" in at.info[0].value
+        assert len(at.metric) == 0
+        assert len(at.warning) == 0
+
+    def test_navegacao_lazy_nao_carrega_fdr_ao_abrir_liga(self):
+        at = _rodar_fdr(reconquista=_dict_liga())
+        assert "fdr_cargas" not in at.session_state
+        at.button_group(key="nav_reconquista").set_value(
+            "Fim de relacionamento — Liga"
+        ).run()
+        assert not at.exception
+        assert at.session_state["fdr_cargas"] == 1
+        assert at.session_state["fdr_periodo"] == (9, 2026)
+        assert len(_tabela(at)) == 3
+
+    def test_subaba_sem_corte_de_vigencia_ou_dependencia_da_liga(self):
+        reconquista = {
+            "apuracao_mes": 7, "apuracao_ano": 2026,
+            "ref_mes": 6, "ref_ano": 2026,
+        }
+        at = _rodar_fdr(
+            reconquista=reconquista, status="nao_importada",
+            nav_reconquista="Fim de relacionamento — Liga",
+        )
+        assert at.session_state["fdr_periodo"] == (7, 2026)
+        assert "07/2026" in at.warning[0].value

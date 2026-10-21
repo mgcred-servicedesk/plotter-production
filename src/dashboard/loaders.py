@@ -2788,6 +2788,71 @@ def _carteira_periodo(mes: int, ano: int) -> pd.DataFrame:
     )
 
 
+# Fim de relacionamento da Liga: foto mensal independente das efetivadas.
+# O cache guarda somente dados globais; o wrapper reaplica o perfil a
+# cada chamada, inclusive quando o usuario usa "Visualizar Como".
+
+
+def _fetch_fim_relacionamento_liga(mes: int, ano: int) -> pd.DataFrame:
+    """Le a foto completa da competencia, paginada por ADE unica no mes.
+
+    As datas do contrato e da saida sao informativas: nao se recorta a
+    foto por elas nem pela data atual. Falhas levantam, sem cachear vazio.
+    """
+    return pd.DataFrame(
+        _paginar_keyset(
+            lambda limite: (
+                _sb()
+                .from_("v_fim_relacionamento_liga")
+                .select("*")
+                .eq("ano", ano)
+                .eq("mes", mes)
+                .order("co_adesao")
+                .limit(limite)
+            ),
+            "co_adesao",
+        )
+    )
+
+
+@st.cache_data(ttl=600)
+def _fim_relacionamento_liga_atual(mes: int, ano: int) -> pd.DataFrame:
+    return _fetch_fim_relacionamento_liga(mes, ano)
+
+
+@st.cache_data(ttl=86400)
+def _fim_relacionamento_liga_historico(mes: int, ano: int) -> pd.DataFrame:
+    return _fetch_fim_relacionamento_liga(mes, ano)
+
+
+def carregar_fim_relacionamento_liga(mes: int, ano: int) -> Dict:
+    """Analitico FDR da competencia, com clientes ja recortados por RLS.
+
+    Retorna ``{"clientes": DataFrame, "status": str}``, com status
+    ``ok``, ``nao_importada`` ou ``erro``. A ausencia de carga e decidida
+    antes do RLS: uma carga fora do escopo continua ``ok`` com clientes
+    vazios. Nenhum total global ou falha convertida em zero e retornado.
+    Cache raw: 10min no mes atual e 24h no historico, sem dados de perfil.
+    """
+    try:
+        if _eh_mes_atual(mes, ano):
+            global_ = _fim_relacionamento_liga_atual(mes, ano)
+        else:
+            global_ = _fim_relacionamento_liga_historico(mes, ano)
+    except Exception:
+        logger.exception(
+            "Falha ao carregar Fim de relacionamento Liga (%02d/%d)",
+            mes, ano,
+        )
+        return {"clientes": pd.DataFrame(), "status": "erro"}
+    if global_.empty:
+        return {"clientes": global_.copy(), "status": "nao_importada"}
+
+    filtro = _filtro_rls_reconquista()
+    clientes = filtro(global_) if filtro is not None else global_
+    return {"clientes": clientes.copy(), "status": "ok"}
+
+
 _COLS_PROMESSA_BADGE = ["co_adesao", "ano", "mes"]
 
 

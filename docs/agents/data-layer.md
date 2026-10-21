@@ -419,3 +419,31 @@ Cache novo que dependa de feriado entra em `loaders.CACHES_DE_CALENDARIO`.
 A catraca `tests/test_limpeza_cache_calendario.py` deriva a lista do
 código e das migrations (última definição de cada função SQL) e falha
 se faltar alguém.
+
+## Fim de relacionamento — Liga (migration 143)
+
+`fim_relacionamento_liga` armazena a foto completa do arquivo por
+`periodo_id`, inclusive `qtde = 0`; o total contabilizado soma `qtde`.
+A competencia escolhida e a visao do arquivo (10/2026 na primeira carga),
+nao o mes de `data_fim_relacionamento`. As datas de contrato e fim de
+relacionamento sao preservadas. O recorte de 90 dias vem da fonte e nao
+e recalculado pelo relogio do dashboard/importador.
+
+A RPC `fn_importar_fim_relacionamento_liga(p_periodo_id, p_rows)` valida
+TODO o lote antes de substituir a competencia numa unica transacao.
+Rejeita lote vazio, ADE duplicada, qtde fora de 0/1, identificadores
+invalidos e datas ausentes/impossiveis. Trava a linha do periodo para
+serializar reimportacoes concorrentes. Resolve loja por `cod_bmg` com
+sucessora e consultor por nome exato (sem diferenca de caixa) + loja,
+priorizando a loja encontrada; conserva textos quando nao resolve.
+
+A view `v_fim_relacionamento_liga` e `security_invoker`, com os escopos
+`regiao`, `loja` e `consultor`. Tabela/view negam anon/authenticated;
+leitura do dashboard usa service_role e aplica `_filtro_rls_reconquista`
+antes de totais/filtros/render. Escrita e RPC somente service_role,
+via JWT admin/gestor na Edge Function `reconquista-rpc` do Angry-man.
+O novo analitico nao altera os KPIs de Reconquista nem o acelerador.
+
+A migration inclui bloco independente `FDR_VALIDATION_BEGIN` para
+conferir carga/reimportacao, preservacao de qtde 0, competencias
+isoladas, rejeicoes e permissoes dentro de `BEGIN`/`ROLLBACK`.
