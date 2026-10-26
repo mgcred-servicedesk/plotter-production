@@ -71,6 +71,12 @@ def _script_sub_aba(prestamista, pagos, perfil):
     _render_prestamista(prestamista, pagos, perfil)
 
 
+def _script_cards(prestamista, pagos, perfil):
+    from src.dashboard.ui.kpi_cards_reforma import render_cards_prestamista
+
+    render_cards_prestamista(prestamista, 10, 2026, perfil)
+
+
 def _script_pagos(pagos, prestamista):
     import pandas as pd
     import streamlit as st  # noqa: F401
@@ -223,6 +229,45 @@ class TestSubAbaPrestamista:
         rotulos = [b.proto.label for b in at.get("download_button")]
         assert "Exportar prestamista_ipv_por_regiao" in rotulos
         assert "Exportar prestamista_ipv_por_loja" in rotulos
+
+    @pytest.mark.parametrize("perfil", ["admin", "gestor"])
+    @pytest.mark.parametrize("script", [_script_sub_aba, _script_cards])
+    def test_global_ve_ipv_por_consultor_sem_misturar_lojas(
+        self, perfil, script,
+    ):
+        # Mesmo nome em outra loja e outra regiao deve ficar separado.
+        prop = pd.concat([_propostas(), pd.DataFrame({
+            "co_adesao": [105], "qtd_contrato": [1],
+            "qtd_elegivel": [1], "qtd_seguro": [0],
+            "status_apolice": [None], "regiao": ["R2"],
+            "loja": ["L3"], "consultor": ["ANA"],
+        })], ignore_index=True)
+        at = _rodar(
+            script, prestamista=_prestamista(prop=prop), pagos=_pagos(),
+            perfil=perfil,
+        )
+        assert _abas_quebra(at) == [
+            "Por região", "Por loja", "Por consultor",
+        ]
+        aba = next(t for t in at.tabs if t.label == "Por consultor")
+        valor = aba.dataframe[0].value
+        tabela = valor.data if hasattr(valor, "data") else valor
+        assert list(tabela.columns) == [
+            "Região", "Loja", "Consultor", "Elegíveis", "Seguros",
+            "IPV", "Status",
+        ]
+        assert tabela["Elegíveis"].sum() == 3
+        assert tabela["Seguros"].sum() == 1
+        linhas = tabela.set_index(["Região", "Loja", "Consultor"])
+        assert linhas.loc[("R1", "L1", "ANA"), "IPV"] == 100
+        assert linhas.loc[("R2", "L3", "ANA"), "IPV"] == 0
+        assert pd.isna(linhas.loc[("R1", "L2", "CAU"), "IPV"])
+        assert linhas.loc[("R1", "L1", "ANA"), "Status"] == "🟢"
+        assert linhas.loc[("R2", "L3", "ANA"), "Status"] == "🔴"
+        assert linhas.loc[("R1", "L2", "CAU"), "Status"] == ""
+        if script is _script_sub_aba:
+            rotulos = [b.proto.label for b in at.get("download_button")]
+            assert "Exportar prestamista_ipv_por_consultor" in rotulos
 
     def test_consultor_sem_botao_de_quebra(self):
         at = _rodar(

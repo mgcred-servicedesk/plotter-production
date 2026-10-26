@@ -166,8 +166,16 @@ SITUACAO_NAO_ELEGIVEL = "Não elegível"
 # card do dashboard e na sub-aba de Analiticos. Perfil fora do mapa nao
 # ve quebra (fail-closed); o consultor so ve o proprio numero.
 QUEBRAS_POR_PERFIL: Dict[str, list] = {
-    "admin": [("Por região", ["regiao"]), ("Por loja", ["regiao", "loja"])],
-    "gestor": [("Por região", ["regiao"]), ("Por loja", ["regiao", "loja"])],
+    "admin": [
+        ("Por região", ["regiao"]),
+        ("Por loja", ["regiao", "loja"]),
+        ("Por consultor", ["regiao", "loja", "consultor"]),
+    ],
+    "gestor": [
+        ("Por região", ["regiao"]),
+        ("Por loja", ["regiao", "loja"]),
+        ("Por consultor", ["regiao", "loja", "consultor"]),
+    ],
     "gerente_comercial": [
         ("Por loja", ["loja"]),
         ("Por consultor", ["loja", "consultor"]),

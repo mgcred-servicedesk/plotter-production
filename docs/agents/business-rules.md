@@ -1095,7 +1095,8 @@ Aceleradores e a Reconquista.
   (`obter_meta_prestamista_cnc`); antes do primeiro cadastro não há meta e o
   card mostra o IPV sem semáforo.
 - **Visão por perfil** (recorte = `_filtro_rls_reconquista`):
-  admin/gestor → global, abas Por região / Por loja; gerente comercial →
+  admin/gestor → global, abas Por região / Por loja / Por consultor
+  (região + loja + consultor, preservando a atribuição por unidade); gerente comercial →
   própria região, Por loja / Por consultor; supervisor → própria loja, Por
   consultor; consultor → só o próprio IPV (sem tabela).
 - **Estados:** arquivo do mês não importado → aviso; falha de leitura →
