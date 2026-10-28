@@ -80,3 +80,37 @@ Nenhum.
   [rpi-workflow.md](../rpi-workflow.md),
   [business-rules.md](../business-rules.md),
   [data-layer.md](../data-layer.md) e [rls.md](../rls.md).
+
+## Status dos follow-ups (2026-10-28)
+
+> Seção anexada ao fim (append-only): o texto acima é o handoff original e
+> não foi alterado. Detalhes nas entradas
+> [2026-10-27b](2026-10-27b-performance-etapa1-e-suite-verde.md) (Etapa 1) e
+> [2026-10-28](2026-10-28-performance-etapa2-metas-mix-ritmo.md) (Etapa 2).
+
+| Follow-up original | Status | Onde |
+|---|---|---|
+| Orquestrar dados/regras, testes e UI sem dois agentes no mesmo arquivo; revisão Codex | **Feito** (orquestração e posse exclusiva por arquivo nas duas rodadas). Revisão Codex **pendente** com o usuário: D1, bloqueio de meta incompatível, E1 e E2 | 27b, 28 |
+| Etapa 1 — cinco grupos + callback de competência sem pagamentos | **Feito** (commit `0d73059`). Mês com base global vazia é lacuna com aviso, não R$ 0/dia | 27b |
+| Etapa 2 — metas CONSULTOR/loja principal, ausência de meta, `avaliar_regra_mix`, dias futuros | **Feito** (não commitado). Inclui `VINCULO FUTURO` e motivo explícito de SEM META; dias futuros vão até o fim do mês | 28 |
+| Etapa 3 — vínculo × meta por mês, amplitude com elegíveis sem produção, IPV sem zero inventado | **Parcial**. Existem, com teste: IPV por colaborador na Performance; `resumo_performance_time`, `consistencia_performance` e `comparar_historico_proprio`, ainda **não ligados** na aba. Contadores de `sem_vinculo` incluem `VINCULO FUTURO` | 28 |
+| Etapa 4 — coorte de cadastro (30 dias corridos) e idade da fila | **Pendente** (não iniciada; exige trabalho na camada de dados) | — |
+| Regressões, Ruff, type checker, QA desktop/mobile | **Parcial**. Regressões cobertas por teste: sem vínculo, mês sem venda, transferência, ausência de meta, mês parcial. O limite de 30 dias é da Etapa 4. Ruff limpo; não há type checker configurado. QA visual **pendente** | 27b, 28 |
+| Cinco falhas da suíte e whitespace | **Feito**. As falhas eram de FDR Liga/`cache_version` e testes desatualizados; o whitespace era CRLF | 27b |
+
+Suíte: 1761 ✓ / 5 ✗ (partida) → 1848 ✓ / 0 ✗ (27b) → 1870 ✓ / 9 ✗ (HEAD
+`0d73059`) → **1912 ✓ / 0 ✗** (28).
+
+### Follow-ups novos
+
+- [ ] Mesma perda de estado em outros `return` antecipados de
+  `_render_criterios` (data final ainda não escolhida, intervalo sem contrato,
+  `tabela.empty`) — 27b.
+- [ ] Último mês da janela da série indisponível: a variação compara os dois
+  últimos presentes; falta definir a regra — 27b.
+- [ ] CSV da Performance não exporta `VINCULO FUTURO`; com todo o escopo em
+  `VINCULO FUTURO`, a aba diz "Nenhum colaborador dentro do corte" — 28.
+- [ ] Pivô CONSULTOR com `fill_value=0` esconde a ausência de meta por loja
+  (camada de dados) — 28.
+- [ ] `tests/test_loader_fim_relacionamento_liga.py` é o único arquivo CRLF do
+  repositório — 27b.

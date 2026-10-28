@@ -1040,6 +1040,48 @@ inclui quem não vendeu quando "incluir zerados" está ligado. Divergência de
 numerador e de população é esperada; divergência de *definição de média* era o
 defeito corrigido.
 
+#### Metas individuais, MIX e ritmo na Performance
+
+`enriquecer_performance` (`kpis/produtividade.py`) acrescenta a cada pessoa a
+meta do mês, a regra do MIX e o ritmo necessário. Decidido em 2026-10-28:
+
+- **Meta individual integral**: escopo CONSULTOR da loja principal
+  (`resolver_loja_principal`, maior pontuação). Para quem não vendeu, vale a
+  loja do vínculo no ledger. `Loja da meta` e `Origem da meta` tornam a
+  escolha visível. A meta **não** é proporcionalizada por admissão,
+  desligamento ou dias de vínculo.
+- **Regra do MIX canônica** (`avaliar_regra_mix`): o excedente de um produto
+  não cobre a falta de outro, e o pack usa a meta conjunta uma vez.
+- **Dias restantes** contam os dias úteis de vínculo do ledger até o fim do
+  mês, menos os já considerados até a data de referência. Vínculo sem término
+  conhecido conta até o fim do mês; desligamento futuro já conhecido corta a
+  contagem. Férias, faltas e afastamentos não são descontados.
+  - **Ritmo necessário** = falta ÷ dias restantes.
+  - Competência fechada não tem dias futuros: o ritmo é 0 se a meta foi
+    atingida e fica ausente se ficou pendente.
+- **`VINCULO FUTURO`**: com o período aberto, quem tem 0 dia elegível até a
+  data de referência, mas tem dias de vínculo no mês. É a admissão posterior
+  à referência, que é `min(última venda, hoje)`.
+  - Recebe meta integral, falta, dias restantes (o mês inteiro) e ritmo.
+  - Fica **fora** da produtividade por dia: sem R$/dia, fora de corte,
+    ordenação, comparações, benchmarks e da base dos cards "Metas do time".
+  - A aba lista essas pessoas num bloco próprio. Qualquer outro caso com 0 dia
+    continua `SEM VINCULO`.
+- **`SEM META` sempre diz por quê** (`Motivo sem meta`). Vale a primeira causa
+  que se aplica, nesta ordem:
+  1. sem loja para buscar a meta;
+  2. loja fora do pivô;
+  3. componente do MIX ausente do pivô ("não cadastrada");
+  4. componente `NaN`, negativo ou não numérico ("inválida");
+  5. MIX zerado.
+
+  Componente presente com valor 0 é válido e só tira o produto da regra.
+- **Divergência intencional** em relação a `calcular_metas_produto_diarias`
+  (dashboard principal): lá, coluna ausente vira meta 0 e o MIX sai sem o
+  produto; aqui vira `SEM META`, para o MIX não encolher em silêncio. Na
+  prática a borda é rara: o pivô CONSULTOR usa `fill_value=0`, então só uma
+  coluna ausente em **todas** as lojas do mês chega até aqui.
+
 ### Snapshot privado para o Bereshit
 
 A migration 101 materializa a mesma métrica em

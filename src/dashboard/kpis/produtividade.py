@@ -154,6 +154,9 @@ COL_DIAS_RESTANTES = "Dias restantes"
 COL_RITMO_NECESSARIO = "Ritmo necessario R$/dia"
 COL_LOJA_META = "Loja da meta"
 COL_ORIGEM_META = "Origem da meta"
+# Preenchido sempre que a meta nao pode ser resolvida: SEM META nunca
+# fica sem causa. Vazio quando ha meta ou quando nao se aplica.
+COL_MOTIVO_SEM_META = "Motivo sem meta"
 COLUNAS_FALTA_PRODUTO = {
     "CNC": "Falta CNC",
     "CLT": "Falta CLT",
@@ -732,14 +735,33 @@ def enriquecer_performance(
 
     A regra de MIX e a canonica: o excedente de um produto nao cobre a
     falta de outro, e o pack usa sua meta conjunta uma unica vez.
-    Ausencia de alvo fica em branco/SEM META, nunca meta zero inventada.
 
-    ``df_vinculos_mes`` conta os dias de vinculo ate o fim do mes,
-    inclusive vinculos sem termino conhecido. No periodo aberto, dias
-    restantes sao esses dias menos os ja considerados em ``prod``.
-    Sem esse denominador, dias e ritmo ficam ausentes. No fechado nao
-    ha dias futuros: ritmo e ausente se ainda falta, zero se atingiu.
-    Faltas, ferias e afastamentos nao entram neste calculo.
+    SEM META SEMPRE DIZ POR QUE. Ausencia de alvo fica em branco, nunca
+    meta zero inventada, e ``Motivo sem meta`` traz a PRIMEIRA causa,
+    nesta ordem: sem loja para buscar a meta; loja fora do pivot (ou
+    pivot vazio); componente do MIX ausente do pivot ("nao cadastrada");
+    componente NaN, nao numerico, negativo ou infinito ("invalida");
+    soma dos componentes <= 0 ("zerada"). Coluna ausente NAO vira meta
+    0, ao contrario de ``calcular_metas_produto_diarias``: o MIX sairia
+    menor sem aviso. Componente presente com 0 e valido e so tira o
+    produto da regra.
+
+    VINCULO FUTURO. No periodo aberto, quem tem 0 dia elegivel ate a
+    data de referencia mas tem dias de vinculo no mes em
+    ``df_vinculos_mes`` (admissao posterior a referencia) recebe meta
+    integral, falta, pendencias, dias restantes e ritmo como os
+    elegiveis, mas fica FORA da produtividade: dias 0, R$/dia ausente.
+    Qualquer outro 0 dia (competencia fechada, sem ``df_vinculos_mes``,
+    sem dias no mes) segue SEM VINCULO: sem loja, meta, ritmo nem motivo.
+
+    DIAS RESTANTES. ``df_vinculos_mes`` conta os dias de vinculo do
+    ledger ate o fim do mes: vinculo sem termino conhecido conta ate o
+    fim do mes, e desligamento futuro ja conhecido corta a contagem.
+    Faltas, ferias e afastamentos nao sao descontados. No periodo
+    aberto, dias restantes sao esses dias menos os ja considerados em
+    ``prod`` (nenhum, no vinculo futuro). Sem esse denominador, dias e
+    ritmo ficam ausentes. No fechado nao ha dias futuros: ritmo e
+    ausente se ainda falta, zero se atingiu.
     """
     saida = prod.copy()
     for coluna in (
@@ -749,7 +771,10 @@ def enriquecer_performance(
     ):
         saida[coluna] = np.nan
     saida[COL_SITUACAO_MIX] = "SEM META"
-    for coluna in (COL_PENDENCIAS_MIX, COL_LOJA_META, COL_ORIGEM_META):
+    for coluna in (
+        COL_PENDENCIAS_MIX, COL_LOJA_META, COL_ORIGEM_META,
+        COL_MOTIVO_SEM_META,
+    ):
         saida[coluna] = ""
     if saida.empty:
         return saida
@@ -778,10 +803,29 @@ def enriquecer_performance(
             df_vinculos_mes["CONSULTOR"].map(_norm_nome)
         ).sum(min_count=1)
 
+    # Rotulo curto do produto nos motivos, o mesmo de "Produtos pendentes".
+    rotulos = {
+        produto: COLUNAS_FALTA_PRODUTO[produto].removeprefix("Falta ")
+        for produto in PRODUTOS_DASHBOARD
+    }
+    colunas_meta = {
+        produto: PRODUTOS_DASHBOARD_COL_META[produto]
+        for produto in PRODUTOS_DASHBOARD
+    }
+
     for indice, pessoa in saida.iterrows():
         chave = _norm_nome(pessoa[COL_CONSULTOR])
         dias = float(pessoa[COL_DIAS])
         tem_vinculo = np.isfinite(dias) and dias > 0
+        dias_no_mes = float(dias_mes.get(chave, np.nan))
+        # Admitido depois da data de referencia: nenhum dia ainda, mas
+        # vinculo no mes. Tem meta e ritmo; a produtividade nao muda.
+        vinculo_futuro = (
+            periodo_aberto
+            and dias == 0
+            and np.isfinite(dias_no_mes)
+            and dias_no_mes > 0
+        )
         if tem_vinculo:
             if not periodo_aberto:
                 saida.at[indice, COL_DIAS_RESTANTES] = 0.0
@@ -789,6 +833,9 @@ def enriquecer_performance(
                 saida.at[indice, COL_DIAS_RESTANTES] = max(
                     0.0, float(dias_mes[chave]) - dias
                 )
+        elif vinculo_futuro:
+            saida.at[indice, COL_SITUACAO_MIX] = "VINCULO FUTURO"
+            saida.at[indice, COL_DIAS_RESTANTES] = dias_no_mes
         else:
             saida.at[indice, COL_SITUACAO_MIX] = "SEM VINCULO"
             # O cadastro incompleto nao e uma avaliacao da pessoa.
@@ -799,33 +846,53 @@ def enriquecer_performance(
         if producao is not None and not producao.empty:
             loja = principais.get(chave)
             origem = "Maior pontuacao no periodo"
-        elif tem_vinculo:
+        elif tem_vinculo or vinculo_futuro:
             loja = pessoa[COL_LOJA]
             origem = "Vinculo (sem producao)"
         else:
             loja = None
             origem = ""
         if pd.isna(loja) or not str(loja or "").strip():
+            saida.at[indice, COL_MOTIVO_SEM_META] = (
+                "Sem loja para buscar a meta"
+            )
             continue
         saida.at[indice, COL_LOJA_META] = str(loja)
         saida.at[indice, COL_ORIGEM_META] = origem
         alvo = metas_produto_loja_principal(metas, _norm_nome(loja))
         if alvo.empty:
+            saida.at[indice, COL_MOTIVO_SEM_META] = (
+                "Loja sem meta individual no mes"
+            )
             continue
 
-        componentes = [
-            col for col in PRODUTOS_DASHBOARD_COL_META.values()
-            if col in alvo.columns
+        # Coluna ausente do pivot e meta NAO cadastrada, nunca meta 0:
+        # tratar como 0 encolhia o MIX em silencio (sem o pack, 12.000
+        # no lugar de SEM META).
+        ausentes = [
+            rotulos[produto] for produto, coluna in colunas_meta.items()
+            if coluna not in alvo.columns
         ]
+        if ausentes:
+            saida.at[indice, COL_MOTIVO_SEM_META] = (
+                "Meta nao cadastrada no mes: " + ", ".join(ausentes)
+            )
+            continue
         valores_meta = pd.to_numeric(
-            alvo.iloc[0][componentes], errors="coerce"
-        )
-        if (
-            valores_meta.empty
-            or not np.isfinite(valores_meta).all()
-            or (valores_meta < 0).any()
-            or float(valores_meta.sum()) <= 0
-        ):
+            alvo.iloc[0][list(colunas_meta.values())], errors="coerce"
+        ).astype(float)
+        invalidos = [
+            rotulos[produto] for produto, coluna in colunas_meta.items()
+            if not np.isfinite(valores_meta[coluna])
+            or valores_meta[coluna] < 0
+        ]
+        if invalidos:
+            saida.at[indice, COL_MOTIVO_SEM_META] = (
+                "Meta invalida no mes: " + ", ".join(invalidos)
+            )
+            continue
+        if float(valores_meta.sum()) <= 0:
+            saida.at[indice, COL_MOTIVO_SEM_META] = "Meta MIX zerada no mes"
             continue
         meta_mix = float(valores_meta.sum())
         produtos = []
@@ -857,11 +924,11 @@ def enriquecer_performance(
             COLUNAS_FALTA_PRODUTO[p["produto"]].removeprefix("Falta ")
             for p in regra["pendentes"]
         )
-        if not tem_vinculo:
-            continue
-        saida.at[indice, COL_SITUACAO_MIX] = (
-            "ATINGIDO" if regra["atingida"] else "PENDENTE"
-        )
+        # Vinculo futuro mantem a propria situacao, com ou sem meta.
+        if tem_vinculo:
+            saida.at[indice, COL_SITUACAO_MIX] = (
+                "ATINGIDO" if regra["atingida"] else "PENDENTE"
+            )
         restantes = saida.at[indice, COL_DIAS_RESTANTES]
         if regra["atingida"]:
             saida.at[indice, COL_RITMO_NECESSARIO] = 0.0

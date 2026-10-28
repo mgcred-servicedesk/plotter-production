@@ -90,6 +90,7 @@ from src.dashboard.kpis.produtividade import (
     COL_RITMO_NECESSARIO,
     COL_LOJA_META,
     COL_ORIGEM_META,
+    COL_MOTIVO_SEM_META,
     COL_CONSULTOR as COL_CONSULTOR_PROD,
     COL_DIAS as COL_DIAS_PROD,
     COL_IDX_CARTEIRA as COL_IDX_CARTEIRA_PROD,
@@ -1861,6 +1862,40 @@ def _render_ipv_performance(
         )
 
 
+def _render_vinculo_futuro(futuros: pd.DataFrame) -> None:
+    """Quem tem meta no mes e ainda nenhum dia elegivel.
+
+    Admissao apos a data de referencia da apuracao: a meta e o ritmo
+    valem, mas sem dia elegivel nao ha R$/dia — por isso a lista fica
+    a parte, fora do corte, da ordenacao e dos rankings.
+    """
+    if futuros.empty:
+        return
+    with st.expander(f"Vinculo futuro ({len(futuros)} pessoa(s))"):
+        st.caption(
+            "Admissao apos a data de referencia da apuracao: ainda sem "
+            "dia elegivel. A meta e a mensal integral; dias restantes e "
+            "ritmo necessario contam os dias de vinculo ate o fim do "
+            "mes. Ficam fora da produtividade por dia (corte, "
+            "ordenacao, comparacoes e benchmarks) e da base dos cards "
+            "de Metas do time."
+        )
+        exibir_tabela(
+            futuros[[
+                COL_CONSULTOR_PROD, COL_LOJA_PROD,
+                COL_META_MIX, COL_ATINGIMENTO_MIX, COL_FALTA_MIX,
+                COL_DIAS_RESTANTES, COL_RITMO_NECESSARIO, COL_SITUACAO_MIX,
+                COL_PENDENCIAS_MIX, COL_LOJA_META, COL_ORIGEM_META,
+                COL_MOTIVO_SEM_META,
+            ]].sort_values(COL_CONSULTOR_PROD).reset_index(drop=True),
+            colunas_moeda=[
+                COL_META_MIX, COL_FALTA_MIX, COL_RITMO_NECESSARIO,
+            ],
+            colunas_numero=[COL_DIAS_RESTANTES],
+            colunas_percentual=[COL_ATINGIMENTO_MIX],
+        )
+
+
 def _render_performance(
     df: pd.DataFrame,
     df_sup: Optional[pd.DataFrame],
@@ -1945,6 +1980,14 @@ def _render_performance(
         "nao compensa outro produto. Dias restantes seguem os vinculos "
         "cadastrados ate o fim do mes, sem desconto de afastamentos."
     )
+    # Fora da base acima por nao ter dia elegivel; listados a parte.
+    futuros = prod[prod[COL_SITUACAO_MIX] == "VINCULO FUTURO"]
+    if not futuros.empty:
+        st.caption(
+            f"{len(futuros)} pessoa(s) com vinculo futuro (admissao apos "
+            "a data de referencia da apuracao) fora desta base: ver "
+            "'Vinculo futuro' abaixo da tabela por colaborador."
+        )
     if not periodo_aberto:
         st.caption(
             "Competencia fechada: nao ha dias restantes. Ritmo necessario "
@@ -2005,7 +2048,7 @@ def _render_performance(
         with st.expander("Produtos pendentes e origem da meta"):
             exibir_tabela(visao[[
                 COL_CONSULTOR_PROD, COL_PENDENCIAS_MIX,
-                COL_LOJA_META, COL_ORIGEM_META,
+                COL_LOJA_META, COL_ORIGEM_META, COL_MOTIVO_SEM_META,
             ]])
         with st.expander("Comparacoes de produtividade no escopo"):
             _aviso_escopo_dos_percentuais(prod)
@@ -2016,6 +2059,7 @@ def _render_performance(
                 COL_META_MIX, COL_ATINGIMENTO_MIX, COL_SITUACAO_MIX,
                 COL_FALTA_MIX, COL_PENDENCIAS_MIX, COL_DIAS_RESTANTES,
                 COL_RITMO_NECESSARIO, COL_LOJA_META, COL_ORIGEM_META,
+                COL_MOTIVO_SEM_META,
             }
             exibir_tabela(
                 visao[[c for c in visao.columns if c not in colunas_meta]],
@@ -2035,6 +2079,7 @@ def _render_performance(
             icon=":material/download:",
         )
 
+    _render_vinculo_futuro(futuros)
     _render_ipv_performance(prod, prestamista)
 
     bench = benchmark_por(prod, COL_LOJA_PROD)

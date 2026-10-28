@@ -1397,7 +1397,9 @@ def test_grafico_produtividade_explicita_lacunas_entre_meses():
         assert trace.connectgaps is False
 
 
-def _executar_callback_real_gestao(mes=10, ano=2026, referencia=None):
+def _executar_callback_real_gestao(
+    mes=10, ano=2026, referencia=None, **sobrescritas
+):
     """Executa o callback de app.py sem iniciar autenticacao/Streamlit."""
     import ast
     from pathlib import Path
@@ -1451,6 +1453,10 @@ def _executar_callback_real_gestao(mes=10, ano=2026, referencia=None):
             out["DIAS_ELEGIVEIS"] = 10
         return out
 
+    # `df` (consolidado pos-RLS do mes) e `dados_prestamista` sao nomes
+    # livres de _render_gestao; o `ui` falso exige frame autorizado.
+    df_autorizado = cadastro.iloc[:0].copy()
+    df_autorizado.attrs["autorizado"] = True
     render = MagicMock()
     ledger = MagicMock(side_effect=vinculos)
     consolidar = MagicMock(return_value=(pd.DataFrame(), None, None))
@@ -1458,6 +1464,7 @@ def _executar_callback_real_gestao(mes=10, ano=2026, referencia=None):
         "pd": pd, "date": DataFixa, "mes": mes, "ano": ano,
         "data_ref_apuracao": referencia,
         "df_f": cadastro.iloc[:0], "df_sup_f": pd.DataFrame(),
+        "df": df_autorizado, "dados_prestamista": {},
         "carregar_consultores_ativos": lambda: cadastro.copy(),
         "carregar_vinculos_consultores": ledger,
         "carregar_metas_produto_consultor": lambda m, a: pd.DataFrame({
@@ -1468,6 +1475,7 @@ def _executar_callback_real_gestao(mes=10, ano=2026, referencia=None):
         "aplicar_rls_metas": rls_metas, "filtrar_metas_ui": ui_metas,
         "render_tab_gestao": render, "consolidar_dados": consolidar,
     }
+    ambiente.update(sobrescritas)
     exec(compile(modulo, "app.py", "exec"), ambiente)
     ambiente["_render_gestao"]()
     return SimpleNamespace(
@@ -1509,6 +1517,30 @@ def test_callback_gestao_preserva_meta_de_loja_sem_vendas_apos_rls():
     assert executado.eventos.index("rls_metas") < executado.eventos.index("ui_metas")
 
 
+def test_callback_contexto_das_metas_inclui_vinculos_do_mes():
+    """Vinculo do mes fora do universo e sem pagamento (ex.: admissao
+    futura) precisa estar no contexto que autoriza as metas da loja."""
+    lojas_do_contexto = []
+
+    def vinculos(m, a, ate=None):
+        return pd.DataFrame({
+            "CONSULTOR": ["NOVO"], "LOJA": ["C"], "REGIAO": ["R1"],
+            "REGIAO_ATUAL": ["R1"], "DIAS_ELEGIVEIS": [0],
+        })
+
+    def rls_metas(metas, contexto):
+        lojas_do_contexto.extend(contexto["LOJA"])
+        return metas.iloc[:0]
+
+    _executar_callback_real_gestao(
+        carregar_vinculos_consultores=vinculos,
+        aplicar_rls_metas=rls_metas,
+        filtrar_metas_ui=lambda metas, contexto: metas,
+        aplicar_filtros_ui=lambda df: df,
+    )
+    assert "C" in lojas_do_contexto
+
+
 def test_callback_historico_global_vazio_e_lacuna_sem_carregar_ledger():
     executado = _executar_callback_real_gestao()
     callback = executado.render.call_args.kwargs["carregar_competencia"]
@@ -1543,7 +1575,12 @@ def _app_performance_metas(caso):
         "REGIAO_ATUAL": ["R1"], "DIAS_ELEGIVEIS": [5],
         "DU_COMPETENCIA": [20], "DU_DECORRIDOS": [5],
     })
-    metas = pd.DataFrame({"LOJA": ["A"], "CNC": [10000.0]})
+    # Espelha o loader real (pivot com fill_value=0): todas as colunas de
+    # produto presentes; coluna ausente vira SEM META (motivo c).
+    metas = pd.DataFrame({
+        "LOJA": ["A"], "CNC": [10000.0], "CLT": [0.0], "SAQUE": [0.0],
+        "CONSIGNADO": [0.0], "FGTS_ANT_BENEF_13": [0.0],
+    })
     if caso == "sem_producao":
         pago = pago.iloc[:0]
     if caso == "sem_meta":
@@ -1585,3 +1622,152 @@ def test_callback_gestao_futuro_nao_e_periodo_em_curso():
     executado = _executar_callback_real_gestao(11)
     assert executado.render.call_args.kwargs["periodo_aberto"] is False
     assert [c.args for c in executado.ledger.call_args_list] == [(11, 2026)]
+
+def _app_vinculo_futuro(cenario):
+    """Performance com periodo aberto: ANA/CAIO elegiveis, BIA com vinculo futuro.
+
+    Cenario "A": pivot completo na loja A; loja B fora do pivot.
+    Cenario "B": pivot sem a coluna FGTS_ANT_BENEF_13 (coluna ausente).
+    O espiao em st.download_button guarda o CSV exportado no session_state.
+    """
+    from datetime import date
+    from unittest.mock import patch
+
+    import pandas as pd
+    import streamlit as st
+
+    from src.dashboard.tabs.gestao_consultores import _render_performance
+
+    hoje = date.today()
+    pago = pd.DataFrame({
+        "CONSULTOR": ["ANA", "CAIO"], "LOJA": ["A", "B"],
+        "REGIAO": ["R1", "R1"], "categoria_codigo": ["CNC", "CNC"],
+        "VALOR": [1000.0, 500.0], "pontos": [1000.0, 500.0],
+    })
+    vin = pd.DataFrame({
+        "CONSULTOR": ["ANA", "BIA", "CAIO"], "LOJA": ["A", "A", "B"],
+        "REGIAO": ["R1", "R1", "R1"], "REGIAO_ATUAL": ["R1", "R1", "R1"],
+        "DIAS_ELEGIVEIS": [5, 0, 5],
+        "DU_COMPETENCIA": [20, 20, 20], "DU_DECORRIDOS": [5, 5, 5],
+    })
+    vin_mes = vin.assign(DIAS_ELEGIVEIS=[20, 15, 20])
+    metas = pd.DataFrame({
+        "LOJA": ["A"], "CNC": [10000.0], "CLT": [0.0], "SAQUE": [0.0],
+        "CONSIGNADO": [0.0], "FGTS_ANT_BENEF_13": [0.0],
+    })
+    if cenario == "B":
+        metas = metas.drop(columns="FGTS_ANT_BENEF_13")
+
+    original = st.download_button
+
+    def _espiao(*args, **kwargs):
+        st.session_state["_csv"] = kwargs["data"]
+        return original(*args, **kwargs)
+
+    with patch.object(st, "download_button", side_effect=_espiao):
+        _render_performance(
+            pago, None, vin, hoje.month, hoje.year,
+            df_metas=metas, df_vinculos_mes=vin_mes, periodo_aberto=True,
+        )
+
+
+def _expander_por_prefixo(app, prefixo):
+    achados = [e for e in app.expander if e.label.startswith(prefixo)]
+    return achados[0] if achados else None
+
+
+def _rodar_vinculo_futuro(cenario):
+    app = AppTest.from_function(_app_vinculo_futuro, args=(cenario,)).run(timeout=30)
+    assert not app.exception
+    return app
+
+
+@pytest.mark.unit
+class TestVinculoFuturoNaPerformance:
+    """Etapa 2: VINCULO FUTURO fora da base e do CSV, com bloco proprio."""
+
+    def test_bloco_mostra_meta_dias_restantes_e_ritmo(self):
+        bloco = _expander_por_prefixo(_rodar_vinculo_futuro("A"), "Vinculo futuro")
+        assert bloco is not None
+        tab_vf = bloco.dataframe[0].value
+        assert tab_vf["Consultor"].tolist() == ["BIA"]
+        linha = tab_vf.iloc[0]
+        assert linha["Situacao MIX"] == "VINCULO FUTURO"
+        assert linha["Meta MIX"] == 10000.0
+        assert linha["Falta MIX"] == 10000.0
+        assert linha["Dias restantes"] == 15
+        assert linha["Ritmo necessario R$/dia"] == pytest.approx(10000.0 / 15)
+        assert linha["Motivo sem meta"] == ""
+
+    def test_bloco_nao_traz_colunas_de_produtividade(self):
+        tab_vf = _expander_por_prefixo(
+            _rodar_vinculo_futuro("A"), "Vinculo futuro"
+        ).dataframe[0].value
+        for coluna in (
+            "Dias elegiveis", "R$/dia elegivel", "% da loja", "% da regiao",
+            "vs. media da carteira", "Na loja", "Producao paga",
+        ):
+            assert coluna not in tab_vf.columns
+
+    def test_fora_da_tabela_principal_e_da_base_dos_cards(self):
+        app = _rodar_vinculo_futuro("A")
+        principal = app.dataframe[0].value
+        assert "BIA" not in principal["Consultor"].tolist()
+        assert "Motivo sem meta" not in principal.columns
+        card = [m for m in app.metric if m.label == "Time com MIX atingido"][0]
+        # Y = elegiveis (ANA, CAIO); BIA nao entra.
+        assert card.proto.delta.endswith("de 2 elegiveis")
+
+    def test_legenda_de_contagem_presente(self):
+        app = _rodar_vinculo_futuro("A")
+        assert any(
+            c.value.startswith("1 pessoa(s) com vinculo futuro")
+            for c in app.caption
+        )
+
+    def test_motivo_so_no_expander_de_pendencias(self):
+        app = _rodar_vinculo_futuro("A")
+        pend = _expander_por_prefixo(
+            app, "Produtos pendentes e origem da meta"
+        ).dataframe[0].value
+        assert "Motivo sem meta" in pend.columns
+        motivos = dict(zip(pend["Consultor"], pend["Motivo sem meta"]))
+        assert motivos["CAIO"] == "Loja sem meta individual no mes"
+        comp = _expander_por_prefixo(
+            app, "Comparacoes de produtividade no escopo"
+        ).dataframe[0].value
+        assert "Motivo sem meta" not in comp.columns
+
+    def test_csv_tem_motivo_e_nao_exporta_vinculo_futuro(self):
+        csv = _rodar_vinculo_futuro("A").session_state["_csv"]
+        assert "Motivo sem meta" in csv.splitlines()[0]
+        assert "BIA" not in csv
+        assert "ANA" in csv
+
+    def test_bloco_permanece_com_corte_em_zero(self):
+        app = _rodar_vinculo_futuro("A")
+        app.slider(key="perf_corte").set_value(0).run(timeout=30)
+        assert not app.exception
+        assert any("Nenhum colaborador dentro do corte" in i.value for i in app.info)
+        bloco = _expander_por_prefixo(app, "Vinculo futuro")
+        assert bloco is not None
+        assert bloco.dataframe[0].value["Consultor"].tolist() == ["BIA"]
+        # Base dos cards inalterada pelo corte.
+        card = [m for m in app.metric if m.label == "Time com MIX atingido"][0]
+        assert card.proto.delta.endswith("de 2 elegiveis")
+        assert _expander_por_prefixo(app, "Produtos pendentes") is None
+
+    def test_coluna_de_produto_ausente_mostra_motivo_c(self):
+        app = _rodar_vinculo_futuro("B")
+        tab_vf = _expander_por_prefixo(app, "Vinculo futuro").dataframe[0].value
+        assert pd.isna(tab_vf.iloc[0]["Meta MIX"])
+        assert tab_vf.iloc[0]["Motivo sem meta"].startswith(
+            "Meta nao cadastrada no mes:"
+        )
+        pend = _expander_por_prefixo(
+            app, "Produtos pendentes e origem da meta"
+        ).dataframe[0].value
+        motivos = dict(zip(pend["Consultor"], pend["Motivo sem meta"]))
+        assert motivos["ANA"].startswith("Meta nao cadastrada no mes:")
+        # Precedencia a>b>c: loja fora do pivot fica no motivo (b).
+        assert motivos["CAIO"] == "Loja sem meta individual no mes"

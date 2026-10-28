@@ -865,6 +865,279 @@ class TestMetasMixERitmoDaPerformance:
 
 
 @pytest.mark.unit
+class TestVinculoFuturoEMotivoSemMeta:
+    """Vinculo futuro (E1) e motivo de SEM META (E2) em enriquecer_performance.
+
+    Cenario base: ANA tem 10 dias ate a referencia e 21 no mes; NOVA foi
+    admitida depois da referencia (0 dia ate la, 8 dias no mes). Meta
+    individual da loja A: 5000 + 3000 + 0 + 4000 + 2000 = 14000.
+    """
+
+    MOTIVO = "Motivo sem meta"
+
+    def _metas(self, **trocas):
+        metas = pd.DataFrame({
+            "LOJA": ["A"], "CNC": [5000.0], "CLT": [3000.0],
+            "SAQUE": [0.0], "CONSIGNADO": [4000.0],
+            "FGTS_ANT_BENEF_13": [2000.0],
+        })
+        return metas.assign(**trocas)
+
+    def _pago(self, extras=()):
+        linhas = [("ANA", "A", "R1", "CNC", 1000.0)] + list(extras)
+        return pd.DataFrame([
+            {"CONSULTOR": c, "LOJA": lj, "REGIAO": rg,
+             "categoria_codigo": cat, "VALOR": v, "pontos": v}
+            for c, lj, rg, cat, v in linhas
+        ])
+
+    def _rodar(self, pago=None, ate_ref=None, metas=None, mes="padrao",
+               aberto=True):
+        from src.dashboard.kpis.produtividade import enriquecer_performance
+
+        pago = self._pago() if pago is None else pago
+        if ate_ref is None:
+            ate_ref = _vinculos([("ANA", "A", "R1", 10),
+                                 ("NOVA", "A", "R1", 0)])
+        if isinstance(mes, str):
+            mes = _vinculos([("ANA", "A", "R1", 21), ("NOVA", "A", "R1", 8)])
+        metas = self._metas() if metas is None else metas
+        prod = produtividade_por_consultor(pago, ate_ref)
+        return enriquecer_performance(
+            prod, pago, metas, mes, periodo_aberto=aberto
+        )
+
+    def _linha(self, saida, nome="NOVA"):
+        return saida[saida["Consultor"] == nome].iloc[0]
+
+    # ---- E1: vinculo futuro
+
+    def test_admitida_depois_da_referencia_recebe_meta_integral_e_ritmo(self):
+        nova = self._linha(self._rodar())
+        assert nova["Situacao MIX"] == "VINCULO FUTURO"
+        assert nova["Dias elegiveis"] == 0
+        assert nova["Meta MIX"] == 14000.0
+        assert nova["Falta MIX"] == 14000.0
+        assert nova["Dias restantes"] == 8
+        assert nova["Ritmo necessario R$/dia"] == pytest.approx(14000.0 / 8)
+        assert nova["Loja da meta"] == "A"
+        assert nova["Origem da meta"] == "Vinculo (sem producao)"
+        assert nova[self.MOTIVO] == ""
+        assert pd.isna(nova[COL_PROD_DIA])
+
+    def test_vinculo_futuro_nao_altera_benchmark_nem_carteira(self):
+        com = self._rodar()
+        sem = self._rodar(
+            ate_ref=_vinculos([("ANA", "A", "R1", 10)]),
+            mes=_vinculos([("ANA", "A", "R1", 21)]),
+        )
+        assert (
+            benchmark_por(com, COL_LOJA).to_dict()
+            == benchmark_por(sem, COL_LOJA).to_dict()
+        )
+        assert (
+            produtividade_carteira(com)["produtividade"]
+            == produtividade_carteira(sem)["produtividade"]
+        )
+        # ANA continua com a mesma linha: 1000 em 10 dias.
+        assert self._linha(com, "ANA")[COL_PROD_DIA] == pytest.approx(100.0)
+
+    def test_competencia_fechada_mantem_sem_vinculo(self):
+        nova = self._linha(self._rodar(aberto=False))
+        assert nova["Situacao MIX"] == "SEM VINCULO"
+        assert pd.isna(nova["Meta MIX"])
+        assert pd.isna(nova["Dias restantes"])
+        assert nova[self.MOTIVO] == ""
+
+    @pytest.mark.parametrize("caso", ["sem_ledger_do_mes", "dias_do_mes_zero"])
+    def test_sem_dias_no_mes_continua_sem_vinculo(self, caso):
+        mes = (
+            None if caso == "sem_ledger_do_mes"
+            else _vinculos([("ANA", "A", "R1", 21), ("NOVA", "A", "R1", 0)])
+        )
+        nova = self._linha(self._rodar(mes=mes))
+        assert nova["Situacao MIX"] == "SEM VINCULO"
+        assert pd.isna(nova["Meta MIX"])
+        assert pd.isna(nova["Ritmo necessario R$/dia"])
+        assert nova["Loja da meta"] == ""
+        assert nova[self.MOTIVO] == ""
+
+    def test_vinculo_futuro_em_loja_sem_meta_mantem_situacao_e_diz_por_que(
+        self,
+    ):
+        nova = self._linha(self._rodar(metas=self._metas(LOJA="Z")))
+        assert nova["Situacao MIX"] == "VINCULO FUTURO"
+        assert pd.isna(nova["Meta MIX"])
+        assert nova[self.MOTIVO] == "Loja sem meta individual no mes"
+        # Dias restantes existem mesmo sem meta; ritmo nao.
+        assert nova["Dias restantes"] == 8
+        assert pd.isna(nova["Ritmo necessario R$/dia"])
+
+    def test_vinculo_futuro_com_meta_ja_atingida_tem_ritmo_zero(self):
+        # Producao de NOVA na loja B, sem dia elegivel ate a referencia.
+        pago = self._pago(extras=[("NOVA", "B", "R1", "CNC", 20000.0)])
+        metas = pd.concat([self._metas(), self._metas().assign(
+            LOJA="B", CNC=1000.0, CLT=0.0, CONSIGNADO=0.0,
+            FGTS_ANT_BENEF_13=0.0,
+        )])
+        nova = self._linha(self._rodar(pago=pago, metas=metas))
+        assert nova["Situacao MIX"] == "VINCULO FUTURO"
+        assert nova["Loja da meta"] == "B"
+        assert nova["Origem da meta"] == "Maior pontuacao no periodo"
+        assert nova["Falta MIX"] == 0.0
+        assert nova["Ritmo necessario R$/dia"] == 0.0
+
+    # ---- E2: motivo de SEM META
+
+    @pytest.mark.parametrize("caso, esperado", [
+        ("sem_loja", "Sem loja para buscar a meta"),
+        ("loja_fora_do_pivot", "Loja sem meta individual no mes"),
+        ("pivot_sem_colunas", "Loja sem meta individual no mes"),
+        ("componente_ausente", "Meta nao cadastrada no mes: PACK"),
+        ("componente_nan", "Meta invalida no mes: CNC"),
+        ("componente_negativo", "Meta invalida no mes: CLT"),
+        ("componente_nao_numerico", "Meta invalida no mes: Consignado"),
+        ("componente_infinito", "Meta invalida no mes: PACK"),
+        ("tudo_zero", "Meta MIX zerada no mes"),
+    ])
+    def test_cada_motivo_tem_o_texto_exato(self, caso, esperado):
+        pago, ate_ref, metas = None, _vinculos([("ANA", "A", "R1", 10)]), None
+        if caso == "sem_loja":
+            # Sem producao e com LOJA do ledger vazia: nao ha onde buscar.
+            pago = self._pago().iloc[:0]
+            ate_ref = _vinculos([("ANA", "", "R1", 10)])
+        elif caso == "loja_fora_do_pivot":
+            metas = self._metas(LOJA="Z")
+        elif caso == "pivot_sem_colunas":
+            metas = pd.DataFrame()
+        elif caso == "componente_ausente":
+            metas = self._metas().drop(columns=["FGTS_ANT_BENEF_13"])
+        elif caso == "componente_nan":
+            metas = self._metas(CNC=np.nan)
+        elif caso == "componente_negativo":
+            metas = self._metas(CLT=-1.0)
+        elif caso == "componente_nao_numerico":
+            metas = self._metas().astype(object).assign(CONSIGNADO="abc")
+        elif caso == "componente_infinito":
+            metas = self._metas(FGTS_ANT_BENEF_13=np.inf)
+        else:
+            metas = self._metas(
+                CNC=0.0, CLT=0.0, CONSIGNADO=0.0, FGTS_ANT_BENEF_13=0.0
+            )
+        ana = self._linha(
+            self._rodar(pago=pago, ate_ref=ate_ref, metas=metas, mes=None),
+            "ANA",
+        )
+        assert ana["Situacao MIX"] == "SEM META"
+        assert pd.isna(ana["Meta MIX"])
+        assert ana[self.MOTIVO] == esperado
+
+    def test_loja_sem_meta_vence_componente_ausente(self):
+        # Loja fora do pivot E colunas ausentes: a primeira causa e a loja.
+        metas = self._metas(LOJA="Z").drop(columns=["FGTS_ANT_BENEF_13"])
+        ana = self._linha(
+            self._rodar(ate_ref=_vinculos([("ANA", "A", "R1", 10)]),
+                        metas=metas, mes=None),
+            "ANA",
+        )
+        assert ana[self.MOTIVO] == "Loja sem meta individual no mes"
+
+    def test_ausente_vence_invalida_e_nao_acumula_os_dois_motivos(self):
+        # PACK ausente e CNC NaN: so "nao cadastrada" aparece.
+        metas = self._metas(CNC=np.nan).drop(columns=["FGTS_ANT_BENEF_13"])
+        ana = self._linha(
+            self._rodar(ate_ref=_vinculos([("ANA", "A", "R1", 10)]),
+                        metas=metas, mes=None),
+            "ANA",
+        )
+        assert ana[self.MOTIVO] == "Meta nao cadastrada no mes: PACK"
+
+    def test_coluna_ausente_nao_vira_meta_menor(self):
+        # Antes: PACK ausente virava 0 e o MIX saia 12.000 sem aviso.
+        metas = self._metas().drop(columns=["FGTS_ANT_BENEF_13"])
+        ana = self._linha(
+            self._rodar(ate_ref=_vinculos([("ANA", "A", "R1", 10)]),
+                        metas=metas, mes=None),
+            "ANA",
+        )
+        assert ana["Situacao MIX"] == "SEM META"
+        assert pd.isna(ana["Meta MIX"])
+        assert pd.isna(ana["Atingimento MIX %"])
+
+    def test_varios_componentes_ausentes_seguem_a_ordem_do_mix(self):
+        metas = self._metas()[["LOJA", "CNC"]]
+        ana = self._linha(
+            self._rodar(ate_ref=_vinculos([("ANA", "A", "R1", 10)]),
+                        metas=metas, mes=None),
+            "ANA",
+        )
+        assert ana[self.MOTIVO] == (
+            "Meta nao cadastrada no mes: CLT, Saque, Consignado, PACK"
+        )
+
+    def test_varios_componentes_invalidos_seguem_a_ordem_do_mix(self):
+        metas = self._metas(CNC=np.nan, CLT=-1.0, FGTS_ANT_BENEF_13=np.inf)
+        ana = self._linha(
+            self._rodar(ate_ref=_vinculos([("ANA", "A", "R1", 10)]),
+                        metas=metas, mes=None),
+            "ANA",
+        )
+        assert ana[self.MOTIVO] == "Meta invalida no mes: CNC, CLT, PACK"
+
+    def test_saque_zero_presente_e_valido_e_nao_gera_motivo(self):
+        ana = self._linha(
+            self._rodar(ate_ref=_vinculos([("ANA", "A", "R1", 10)]),
+                        mes=None),
+            "ANA",
+        )
+        assert ana["Meta MIX"] == 14000.0
+        assert ana["Situacao MIX"] == "PENDENTE"
+        assert ana[self.MOTIVO] == ""
+
+    def test_motivo_existe_sse_meta_ausente_em_sem_meta_ou_vinculo_futuro(
+        self,
+    ):
+        # Frame misto: com meta, vinculo futuro com e sem meta, sem
+        # vinculo e sem meta por loja fora do pivot.
+        ate_ref = _vinculos([
+            ("ANA", "A", "R1", 10), ("BIA", "Z", "R1", 10),
+            ("NOVA", "A", "R1", 0), ("NOVAZ", "Z", "R1", 0),
+            ("FORA", "A", "R1", 0),
+        ])
+        mes = _vinculos([
+            ("ANA", "A", "R1", 21), ("BIA", "Z", "R1", 21),
+            ("NOVA", "A", "R1", 8), ("NOVAZ", "Z", "R1", 8),
+            ("FORA", "A", "R1", 0),
+        ])
+        saida = self._rodar(ate_ref=ate_ref, mes=mes)
+        assert set(saida["Situacao MIX"]) == {
+            "PENDENTE", "SEM META", "VINCULO FUTURO", "SEM VINCULO",
+        }
+        for _, linha in saida.iterrows():
+            tem_motivo = linha[self.MOTIVO] != ""
+            sem_alvo = (
+                pd.isna(linha["Meta MIX"])
+                and linha["Situacao MIX"] in {"SEM META", "VINCULO FUTURO"}
+            )
+            assert tem_motivo == sem_alvo, linha["Consultor"]
+            if linha["Situacao MIX"] == "SEM META":
+                assert tem_motivo, linha["Consultor"]
+
+    def test_coluna_de_motivo_existe_com_producao_vazia(self):
+        from src.dashboard.kpis.produtividade import (
+            COLUNAS_PRODUTIVIDADE,
+            enriquecer_performance,
+        )
+
+        vazio = enriquecer_performance(
+            pd.DataFrame(columns=COLUNAS_PRODUTIVIDADE),
+            self._pago(), self._metas(),
+        )
+        assert vazio.empty
+        assert self.MOTIVO in vazio.columns
+
+
+@pytest.mark.unit
 class TestConsistenciaEAmplitude:
     def _frame(self, linhas):
         return pd.DataFrame([
