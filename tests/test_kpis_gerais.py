@@ -1414,10 +1414,15 @@ class TestObterMediasPeriodo:
         # `peso_consultores` e `denominador_consultores` entraram com o
         # denominador ponderado (091): o card precisa saber por qual dos
         # dois numeros a media foi dividida para rotular o rodape.
+        # `producao_lojas` e `num_lojas_digitais` entraram com a exclusao
+        # do VAI E VEM da media por loja (e1bcd05, 2026-10-07): o card
+        # (`kpi_cards_reforma.py`) usa a primeira como numerador da media
+        # por loja e a segunda para rotular "lojas fisicas + Digital".
         assert set(cache.keys()) == {
             "media_du_loja", "media_du_consultor", "num_lojas",
             "num_consultores", "producao_consultores", "peso_consultores",
-            "denominador_consultores",
+            "denominador_consultores", "producao_lojas",
+            "num_lojas_digitais",
         }
 
 

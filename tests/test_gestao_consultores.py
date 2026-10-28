@@ -24,6 +24,7 @@ from src.dashboard.kpis.gestao import (
     METRICA_QTD,
     METRICA_SHARE,
     METRICA_TICKET,
+    NIVEL_CONSULTOR,
     NIVEL_LOJA,
     NIVEL_REGIAO,
     NIVEL_SUPERVISOR,
@@ -780,7 +781,7 @@ def test_matriz_metas_col_total_soma_apenas_produtos_monetarios(
     """Invariante mais importante: ``COL_TOTAL`` nunca inclui
     acelerador — unidade diferente (contagem de contratos x R$).
     Aceleradores com valores absurdos não podem mudar o Total."""
-    tabela = construir_tabela(df_gestao, df_sup)
+    tabela = construir_tabela(df_gestao, df_sup, produtos_total=["CNC"])
     df_metas_sem_acel = pd.DataFrame(
         {"LOJA": ["A", "B", "C"], "CNC": [20000.0] * 3}
     )
@@ -1112,3 +1113,300 @@ class TestMediaDoGrupoNaProdutividade:
         # Limiar 600/dia: Joao entra, Maria (2.000/dia) nao, e Pedro
         # nao aparece nem como zero — ficou sem denominador.
         assert set(sem_pedro["Consultor"]) == {"Joao"}
+
+
+@pytest.mark.parametrize("nivel", [NIVEL_LOJA, NIVEL_SUPERVISOR, NIVEL_REGIAO])
+def test_produtividade_agregada_exclui_producao_sem_vinculo(nivel):
+    """Dinheiro sem denominador nao pode inflar a taxa do grupo."""
+    df = pd.DataFrame({
+        "CONSULTOR": ["ANA", "SEM VINCULO"],
+        "LOJA": ["A", "A"],
+        "REGIAO": ["R1", "R1"],
+        "categoria_codigo": ["CNC", "CNC"],
+        "VALOR": [1000.0, 9000.0],
+    })
+    vinculos = pd.DataFrame({
+        "CONSULTOR": ["ANA"], "LOJA": ["A"],
+        "REGIAO": ["R1"], "REGIAO_ATUAL": ["R1"],
+        "DIAS_ELEGIVEIS": [10],
+    })
+    supervisores = pd.DataFrame({"SUPERVISOR": ["CHEFE"], "LOJA": ["A"]})
+    tabela = construir_tabela(
+        df, supervisores, nivel=nivel, metrica=METRICA_PROD_DIA,
+        df_vinculos=vinculos,
+    )
+    assert tabela.iloc[0][COL_TOTAL] == pytest.approx(100.0)
+    assert tabela.iloc[0][COL_DIAS] == 10
+    # A exclusao e especifica da taxa: valor continua auditavel.
+    monetaria = construir_tabela(df, supervisores, nivel=nivel)
+    assert monetaria.iloc[0][COL_TOTAL] == pytest.approx(10000.0)
+    nominal = construir_tabela(
+        df, supervisores, metrica=METRICA_PROD_DIA,
+        df_vinculos=vinculos,
+    ).set_index("Consultor")
+    assert pd.isna(nominal.loc["SEM VINCULO", COL_TOTAL])
+
+
+@pytest.mark.parametrize(
+    "metrica", [METRICA_QTD, METRICA_TICKET, METRICA_SHARE, METRICA_PROD_DIA]
+)
+def test_meta_monetaria_nao_se_aplica_a_unidade_incompativel(metrica):
+    tabela = pd.DataFrame({"Loja": ["A"], "CNC": [1.0], "Emissao": [3.0]})
+    dados_meta = pd.DataFrame({"LOJA": ["A"], "CNC": [10000.0], "EMISSAO": [6.0]})
+    metas = matriz_metas(
+        tabela, dados_meta, produtos_total=["CNC"], metrica=metrica
+    )
+    criterios = {
+        "CNC": {"modo": "ate", "base": BASE_META, "max": 50.0},
+        "Emissao": {"modo": "acima", "base": BASE_META, "min": 50.0},
+    }
+    assert diagnosticar_criterios(tabela, criterios, metas) == ["CNC"]
+    assert metas.loc[0, "Emissao"] == 6.0
+    assert len(filtrar_por_criterios(tabela, criterios, metas=metas)) == 1
+
+
+def test_meta_total_acompanha_somente_produtos_selecionados(df_gestao):
+    tabela = construir_tabela(df_gestao, produtos_total=["CNC"])
+    dados_meta = pd.DataFrame({
+        "LOJA": ["A", "B", "C"], "CNC": [10000.0] * 3,
+        "CLT": [20000.0] * 3, "SAQUE": [30000.0] * 3,
+        "CONSIGNADO": [40000.0] * 3,
+    })
+    metas = matriz_metas(tabela, dados_meta, produtos_total=["CNC"])
+    assert metas[COL_TOTAL].tolist() == [10000.0] * len(tabela)
+    # Chamadas legadas tambem mantem o recorte pelos metadados da tabela.
+    assert matriz_metas(tabela, dados_meta)[COL_TOTAL].equals(metas[COL_TOTAL])
+
+
+def test_meta_total_pack_completo_soma_meta_conjunta_uma_vez():
+    tabela = pd.DataFrame({"Loja": ["A"]})
+    dados_meta = pd.DataFrame({
+        "LOJA": ["A"], "CNC": [10000.0], "FGTS_ANT_BENEF_13": [6000.0],
+    })
+    produtos = ["CNC", "FGTS", "ANT. DE BENEF.", "CNC 13º"]
+    metas = matriz_metas(tabela, dados_meta, produtos_total=produtos)
+    assert metas.loc[0, COL_TOTAL] == pytest.approx(16000.0)
+    # O alvo conjunto nao inventa metas individuais para as tres categorias.
+    for produto in produtos[1:]:
+        assert produto not in metas or pd.isna(metas.loc[0, produto])
+
+
+@pytest.mark.parametrize("produtos", [["FGTS"], ["CNC", "FGTS", "CNC 13º"]])
+def test_meta_total_pack_parcial_fica_indisponivel(produtos):
+    tabela = pd.DataFrame({"Loja": ["A"]})
+    dados_meta = pd.DataFrame({
+        "LOJA": ["A"], "CNC": [10000.0], "FGTS_ANT_BENEF_13": [6000.0],
+    })
+    metas = matriz_metas(tabela, dados_meta, produtos_total=produtos)
+    assert COL_TOTAL not in metas or pd.isna(metas.loc[0, COL_TOTAL])
+
+
+def test_meta_total_nao_trata_produto_sem_meta_como_zero():
+    tabela = pd.DataFrame({"Loja": ["A"]})
+    dados_meta = pd.DataFrame({"LOJA": ["A"], "CNC": [10000.0]})
+    metas = matriz_metas(tabela, dados_meta, produtos_total=["CNC", "CLT"])
+    assert COL_TOTAL not in metas or pd.isna(metas.loc[0, COL_TOTAL])
+
+
+# ══════════════════════════════════════════════════════
+# Producao sem vinculo: o que sai da razao e publicado
+# ══════════════════════════════════════════════════════
+
+_NIVEIS_AGREGADOS = [NIVEL_LOJA, NIVEL_SUPERVISOR, NIVEL_REGIAO]
+
+
+def _pagos_loja_a(*linhas):
+    """Pagos da loja A / R1 a partir de ``(consultor, categoria, valor)``."""
+    return pd.DataFrame(
+        [
+            {
+                "CONSULTOR": c, "LOJA": "A", "REGIAO": "R1",
+                "categoria_codigo": cat, "VALOR": v,
+                "is_bmg_med": cat == "BMG_MED",
+            }
+            for c, cat, v in linhas
+        ]
+    )
+
+
+def _ledger_loja_a(dias):
+    """Vinculos da loja A / R1 a partir de ``{consultor: dias}``."""
+    return pd.DataFrame(
+        [
+            {
+                "CONSULTOR": c, "LOJA": "A", "REGIAO": "R1",
+                "REGIAO_ATUAL": "R1", "DIAS_ELEGIVEIS": d,
+            }
+            for c, d in dias.items()
+        ]
+    )
+
+
+def _tabela_prod_dia(df, vinculos, nivel, *, universo=None, **kwargs):
+    supervisores = pd.DataFrame({"SUPERVISOR": ["CHEFE"], "LOJA": ["A"]})
+    kwargs.setdefault("metrica", METRICA_PROD_DIA)
+    return construir_tabela(
+        df, supervisores, universo, nivel=nivel, df_vinculos=vinculos,
+        **kwargs,
+    )
+
+
+@pytest.mark.unit
+class TestSemVinculoPublicado:
+    """Quem produz sem vinculo sai da razao por dia — e a aba diz quanto.
+
+    Sem dia elegivel nao ha denominador, e a producao dessa pessoa nao
+    pode tomar emprestados os dias dos colegas: ``construir_tabela`` a
+    zera antes de agregar. Calada, a exclusao entregaria uma taxa de
+    grupo com cara de completa; por isso ``attrs["sem_vinculo"]``
+    publica ``{"pessoas": int, "valor": float}`` do que ficou de fora.
+    """
+
+    @pytest.mark.parametrize("nivel", _NIVEIS_AGREGADOS)
+    def test_publica_pessoas_e_valor_que_ficaram_fora(self, nivel):
+        df = _pagos_loja_a(
+            ("ANA", "CNC", 1000.0), ("SEM VINCULO", "CNC", 9000.0)
+        )
+
+        tabela = _tabela_prod_dia(df, _ledger_loja_a({"ANA": 10}), nivel)
+
+        assert tabela.attrs["sem_vinculo"] == {"pessoas": 1, "valor": 9000.0}
+        # E exatamente o que saiu da razao: o grupo ficou so com a ANA.
+        assert tabela.iloc[0][COL_TOTAL] == pytest.approx(100.0)
+
+    @pytest.mark.parametrize("nivel", _NIVEIS_AGREGADOS)
+    def test_o_que_sai_mais_o_que_fica_fecha_a_producao_do_mix(self, nivel):
+        """Nada some e nada conta em dobro entre a razao e a publicacao."""
+        df = _pagos_loja_a(
+            ("ANA", "CNC", 1000.0),
+            ("SEM VINCULO", "CNC", 9000.0),
+            ("SEM VINCULO", "CONSIG_PRIV", 500.0),
+        )
+
+        tabela = _tabela_prod_dia(df, _ledger_loja_a({"ANA": 10}), nivel)
+
+        linha = tabela.iloc[0]
+        ficou = linha[COL_TOTAL] * linha[COL_DIAS]  # R$/dia x dias
+        assert ficou == pytest.approx(1000.0)
+        total_do_mix = 1000.0 + 9000.0 + 500.0
+        sai = tabela.attrs["sem_vinculo"]["valor"]
+        assert ficou + sai == pytest.approx(total_do_mix)
+
+    @pytest.mark.parametrize(
+        "escopo",
+        [
+            pytest.param(None, id="mix_inteiro"),
+            pytest.param(["CNC"], id="so_cnc"),
+            pytest.param(["CLT"], id="so_clt"),
+            pytest.param(["FGTS"], id="so_fgts"),
+        ],
+    )
+    def test_valor_e_o_mix_inteiro_qualquer_que_seja_o_total(self, escopo):
+        """Quem sai, sai com a producao inteira — nao so a dos produtos
+        que o criterio soma no Total."""
+        df = _pagos_loja_a(
+            ("ANA", "CNC", 1000.0),
+            ("SEM VINCULO", "CNC", 9000.0),
+            ("SEM VINCULO", "CONSIG_PRIV", 500.0),  # CLT
+        )
+
+        tabela = _tabela_prod_dia(
+            df, _ledger_loja_a({"ANA": 10}), NIVEL_LOJA,
+            produtos_total=escopo,
+        )
+
+        assert tabela.attrs["sem_vinculo"] == {"pessoas": 1, "valor": 9500.0}
+
+    @pytest.mark.parametrize("nivel", _NIVEIS_AGREGADOS)
+    def test_so_conta_quem_tem_producao_no_mix(self, nivel):
+        """Sem dia elegivel nao basta: tem de ter produzido no MIX."""
+        df = _pagos_loja_a(
+            ("ANA", "CNC", 1000.0),
+            ("SEM VINCULO", "CNC", 9000.0),
+            ("SO ACEL", "BMG_MED", 0.0),  # acelerador: contagem, nao R$
+            ("SO CPT", "CPT", 777.0),  # CPT fica fora do MIX
+        )
+        # ZERADA esta no cadastro do RH e nunca vendeu.
+        universo = pd.DataFrame({
+            "CONSULTOR": ["ANA", "ZERADA"], "LOJA": ["A", "A"],
+            "REGIAO": ["R1", "R1"], "REGIAO_ATUAL": ["R1", "R1"],
+        })
+        vinculos = _ledger_loja_a({"ANA": 10})
+
+        tabela = _tabela_prod_dia(df, vinculos, nivel, universo=universo)
+
+        assert tabela.attrs["sem_vinculo"] == {"pessoas": 1, "valor": 9000.0}
+        # O cenario e o que parece: as quatro estao sem dia elegivel, e
+        # o acelerador da SO ACEL foi contado normalmente no grupo.
+        nominal = _tabela_prod_dia(
+            df, vinculos, NIVEL_CONSULTOR, universo=universo
+        ).set_index("Consultor")
+        assert set(nominal.index[nominal[COL_DIAS] == 0]) == {
+            "SEM VINCULO", "SO ACEL", "SO CPT", "ZERADA",
+        }
+        assert tabela["BMG Med"].sum() == 1
+
+    @pytest.mark.parametrize("nivel", _NIVEIS_AGREGADOS)
+    def test_chave_existe_zerada_quando_todos_tem_vinculo(self, nivel):
+        """Zerada nao e ausente: separa 'ninguem ficou de fora' de 'nao
+        se aplica a esta tabela'."""
+        df = _pagos_loja_a(
+            ("ANA", "CNC", 1000.0), ("SEM VINCULO", "CNC", 9000.0)
+        )
+        vinculos = _ledger_loja_a({"ANA": 10, "SEM VINCULO": 5})
+
+        tabela = _tabela_prod_dia(df, vinculos, nivel)
+
+        assert tabela.attrs["sem_vinculo"] == {"pessoas": 0, "valor": 0.0}
+
+    @pytest.mark.parametrize(
+        "metrica",
+        [
+            METRICA_VALOR, METRICA_QTD, METRICA_TICKET, METRICA_SHARE,
+            METRICA_PROD_DIA,
+        ],
+    )
+    @pytest.mark.parametrize(
+        "nivel", [NIVEL_CONSULTOR, *_NIVEIS_AGREGADOS]
+    )
+    def test_chave_so_existe_em_prod_dia_acima_do_consultor(
+        self, nivel, metrica
+    ):
+        """No consultor a linha ja sai ausente; nas outras metricas nada
+        e excluido — nos dois casos nao ha o que publicar."""
+        df = _pagos_loja_a(
+            ("ANA", "CNC", 1000.0), ("SEM VINCULO", "CNC", 9000.0)
+        )
+
+        tabela = _tabela_prod_dia(
+            df, _ledger_loja_a({"ANA": 10}), nivel, metrica=metrica
+        )
+
+        esperado = metrica == METRICA_PROD_DIA and nivel != NIVEL_CONSULTOR
+        assert ("sem_vinculo" in tabela.attrs) is esperado
+
+    @pytest.mark.parametrize(
+        "dias",
+        [
+            pytest.param({"ANA": 10}, id="com_gente_fora"),
+            pytest.param({"ANA": 10, "SEM": 5}, id="todos_com_vinculo"),
+        ],
+    )
+    def test_tipos_sao_int_e_float_nativos(self, dias):
+        """``type is``: np.float64 e subclasse de float e passaria."""
+        df = _pagos_loja_a(("ANA", "CNC", 1000.0), ("SEM", "CNC", 9000.0))
+
+        publicado = _tabela_prod_dia(
+            df, _ledger_loja_a(dias), NIVEL_LOJA
+        ).attrs["sem_vinculo"]
+
+        assert type(publicado["pessoas"]) is int
+        assert type(publicado["valor"]) is float
+
+    @pytest.mark.parametrize("nivel", _NIVEIS_AGREGADOS)
+    def test_recorte_vazio_volta_sem_atributos(self, nivel):
+        """Sem producao nem universo nao ha o que publicar — nem zerado."""
+        tabela = _tabela_prod_dia(pd.DataFrame(), pd.DataFrame(), nivel)
+
+        assert tabela.empty
+        assert "sem_vinculo" not in tabela.attrs

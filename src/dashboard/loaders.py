@@ -2816,12 +2816,39 @@ def _fetch_fim_relacionamento_liga(mes: int, ano: int) -> pd.DataFrame:
 
 
 @st.cache_data(ttl=600)
-def _fim_relacionamento_liga_atual(mes: int, ano: int) -> pd.DataFrame:
+def _fim_relacionamento_liga_atual(
+    mes: int,
+    ano: int,
+    cache_version: int = 1,  # v1: formato inicial (select * da view)
+) -> pd.DataFrame:
+    """Foto FDR da Liga (global, sem perfil) — mes corrente. TTL 10min.
+
+    ``cache_version`` entra na chave do cache porque o corpo DESTA
+    funcao e uma delegacao de uma linha: o ``st.cache_data`` versiona a
+    funcao decorada, nao as que ela chama. Mudar
+    ``_fetch_fim_relacionamento_liga`` nao invalida nada — a sessao
+    aberta segue servindo o DataFrame do formato antigo ate o TTL
+    vencer. Como o select e ``*``, mudar as colunas de
+    ``v_fim_relacionamento_liga`` por migration tambem muda o formato
+    sem tocar no Python. Mesmo padrao de
+    ``_metas_produto_consultor_atual``. Bump obrigatorio a cada mudanca
+    de formato do fetch ou da view.
+    """
     return _fetch_fim_relacionamento_liga(mes, ano)
 
 
 @st.cache_data(ttl=86400)
-def _fim_relacionamento_liga_historico(mes: int, ano: int) -> pd.DataFrame:
+def _fim_relacionamento_liga_historico(
+    mes: int,
+    ano: int,
+    cache_version: int = 1,  # v1: formato inicial (select * da view)
+) -> pd.DataFrame:
+    """Foto FDR da Liga (global, sem perfil) — historico. TTL 24h.
+
+    Ver ``_fim_relacionamento_liga_atual`` para o porque do
+    ``cache_version`` (TTL de 24h aqui torna a versao ainda mais
+    critica: sem bump, o formato antigo sobrevive um dia inteiro).
+    """
     return _fetch_fim_relacionamento_liga(mes, ano)
 
 
@@ -2836,9 +2863,13 @@ def carregar_fim_relacionamento_liga(mes: int, ano: int) -> Dict:
     """
     try:
         if _eh_mes_atual(mes, ano):
-            global_ = _fim_relacionamento_liga_atual(mes, ano)
+            global_ = _fim_relacionamento_liga_atual(
+                mes, ano, cache_version=1
+            )
         else:
-            global_ = _fim_relacionamento_liga_historico(mes, ano)
+            global_ = _fim_relacionamento_liga_historico(
+                mes, ano, cache_version=1
+            )
     except Exception:
         logger.exception(
             "Falha ao carregar Fim de relacionamento Liga (%02d/%d)",

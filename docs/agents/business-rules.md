@@ -998,9 +998,23 @@ Casos de borda com decisão fixa:
   faria a média da loja **subir** no mês em que mais gente deixou de vender.
 - **Produção sem janela no ledger** fica com produtividade **ausente**
   (`NaN`), nunca 0 e nunca com denominador emprestado; sai dos dois lados de
-  todo benchmark e aparece como diagnóstico nominal na UI.
+  todo benchmark e aparece como diagnóstico nominal na UI. Nos **Critérios**
+  em `prod_dia` acima do nível consultor (Loja/Supervisor/Região), a produção
+  dessas pessoas é zerada antes de agregar e `construir_tabela` publica
+  `attrs["sem_vinculo"] = {"pessoas", "valor"}` — `valor` é o MIX inteiro
+  delas, não só os produtos do Total —, que a aba declara numa legenda. A
+  exclusão é correta; calada, entregaria uma taxa de grupo com cara de
+  completa (decidido em 2026-10-27).
 - **Competência ausente** na série é lacuna, não zero: a variação não compara
   meses não consecutivos, e o gráfico não liga os pontos por cima do buraco.
+  - Base consolidada **global** vazia no mês (antes do início da base ou carga
+    ausente) é competência **indisponível**: o loader devolve `None` e a aba
+    lista esses meses num **único aviso**, nunca R$ 0/dia para quem tinha
+    vínculo. Escopo filtrado sem venda, com a base presente, segue a regra do
+    elegível sem venda (R$ 0/dia).
+  - Sem o mês-calendário anterior à última competência na série, **não há
+    variação** (frame vazio): a falta é do mês, não das pessoas, e não vira
+    "ausente no anterior" para o time inteiro.
 - **Percentual ausente** (`NaN`, quando a loja inteira não vendeu e a soma das
   taxas zera) **sobrevive ao corte** do slider e vai para o **topo** da ordem
   crescente. O `<=` sozinho descartava em silêncio, e `na_position="last"`

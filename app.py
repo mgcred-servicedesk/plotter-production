@@ -925,20 +925,70 @@ def main():
             )
 
         def _render_gestao() -> None:
-            # Universo de consultores ATIVOS: sem ele a aba so enxerga
-            # quem produziu, e um criterio "ate R$ X" perde quem vendeu
-            # nada. Passa pelo mesmo recorte de df_f — aplicar_rls
-            # (perfil) e os filtros granulares da sidebar — para que a
-            # lista nao traga consultor de loja que o usuario filtrou.
-            _univ_cons_gestao = aplicar_filtros_ui(
-                aplicar_rls(carregar_consultores_ativos())
+            # Universo e vinculos sao autorizados ANTES dos filtros da
+            # sidebar. Quem nao vendeu continua no denominador e com meta.
+            _univ_cons_scope = aplicar_rls(carregar_consultores_ativos())
+            _univ_cons_gestao = aplicar_filtros_ui(_univ_cons_scope)
+            _hoje_gestao = date.today()
+            _periodo_aberto = (ano, mes) == (
+                _hoje_gestao.year, _hoje_gestao.month
             )
-            # Metas por produto de escopo CONSULTOR (alvo individual de
-            # cada consultor da loja): sustentam a base "% da meta" nos
-            # criterios. Ausentes, a base e ignorada com aviso na aba.
-            _metas_gestao = filtrar_metas_ui(
-                carregar_metas_produto_consultor(mes, ano), df_f
+            _vinculos_mes_scope = aplicar_rls(
+                carregar_vinculos_consultores(mes, ano)
             )
+            _vinculos_mes_gestao = aplicar_filtros_ui(_vinculos_mes_scope)
+            # Mes fechado usa o mes inteiro, mesmo que a ultima venda
+            # tenha ocorrido antes. No corrente, ambos os lados param
+            # na referencia da apuracao; sem vendas, ate hoje.
+            if _periodo_aberto:
+                _ate_gestao = min(
+                    data_ref_apuracao or _hoje_gestao, _hoje_gestao
+                )
+                _vinculos_gestao = aplicar_filtros_ui(
+                    aplicar_rls(
+                        carregar_vinculos_consultores(mes, ano, _ate_gestao)
+                    )
+                )
+            else:
+                _vinculos_gestao = _vinculos_mes_gestao
+
+            def _carregar_metas_competencia_gestao(m: int, a: int):
+                """Metas individuais no escopo, inclusive lojas sem venda."""
+                metas = carregar_metas_produto_consultor(m, a)
+                if metas.empty or "LOJA" not in metas.columns:
+                    return metas.iloc[0:0].copy()
+                lojas = carregar_universo_lojas(m, a).reindex(
+                    columns=["LOJA", "REGIAO", "REGIAO_ATUAL"]
+                ).drop_duplicates(subset=["LOJA"])
+                # O pivot CONSULTOR nao traz regiao; enriquecer com
+                # cadastro permite RLS por regiao sem inferir escopo
+                # de quem teve contrato pago no periodo.
+                metas = metas.drop(
+                    columns=["REGIAO", "REGIAO_ATUAL"], errors="ignore"
+                ).merge(lojas, on="LOJA", how="left", validate="many_to_one")
+                if (m, a) == (mes, ano):
+                    contextos = [_vinculos_mes_scope, df]
+                    if _periodo_aberto:
+                        contextos.append(_univ_cons_scope)
+                    contexto = pd.concat(contextos, ignore_index=True)
+                else:
+                    contexto = aplicar_rls(carregar_vinculos_consultores(m, a))
+                metas = aplicar_rls_metas(metas, contexto)
+                return filtrar_metas_ui(metas, aplicar_filtros_ui(contexto))
+
+            _metas_gestao = _carregar_metas_competencia_gestao(mes, ano)
+
+            # A carga do IPV ja aplica RLS. A Gestao aplica tambem os
+            # filtros de loja/consultor, preservando status e meta.
+            _prestamista_gestao = dict(dados_prestamista)
+            _propostas_gestao = dados_prestamista.get("propostas")
+            if _propostas_gestao is not None:
+                _propostas_gestao = aplicar_filtros_ui(
+                    _propostas_gestao.rename(columns={
+                        "loja": "LOJA", "consultor": "CONSULTOR",
+                    })
+                ).rename(columns={"LOJA": "loja", "CONSULTOR": "consultor"})
+                _prestamista_gestao["propostas"] = _propostas_gestao
 
             def _carregar_intervalo_gestao(ini, fim, campo):
                 """Contratos pagos num intervalo livre, no escopo do usuario.
@@ -956,19 +1006,6 @@ def main():
                     return bruto, aviso
                 return aplicar_filtros_ui(aplicar_rls(bruto)), aviso
 
-            # Denominador INDIVIDUAL da sub-visao de performance: dias
-            # uteis de vinculo por pessoa (ledger consultor_vigencia).
-            # Passa pelo MESMO recorte de df_f — o escopo sai do
-            # filtro, nunca da producao —, para que numerador e
-            # denominador nunca respondam por populacoes diferentes.
-            _vinculos_gestao = aplicar_filtros_ui(
-                aplicar_rls(
-                    carregar_vinculos_consultores(
-                        mes, ano, data_ref_apuracao
-                    )
-                )
-            )
-
             def _carregar_competencia_gestao(m: int, a: int):
                 """Producao, vinculos e supervisores de UMA competencia.
 
@@ -978,10 +1015,17 @@ def main():
                 VALOR do mes na tela. Mesmo recorte de seguranca de
                 df_f: aplicar_rls (perfil) e depois os filtros
                 granulares da sidebar.
+
+                Base consolidada GLOBAL vazia (antes do RLS) e
+                competencia INDISPONIVEL, nao mes sem venda: devolve
+                ``(None, None, sup_comp)`` e a aba mantem o mes como
+                lacuna, com aviso. Escopo vazio depois do recorte, com
+                a base presente, segue carregando os vinculos — quem
+                tem vinculo e nao vendeu entra a R$ 0/dia.
                 """
                 bruto, _, sup_comp = consolidar_dados(m, a)
                 if bruto.empty:
-                    return bruto, pd.DataFrame(), sup_comp
+                    return None, None, sup_comp
                 return (
                     aplicar_filtros_ui(aplicar_rls(bruto)),
                     aplicar_filtros_ui(
@@ -1000,6 +1044,10 @@ def main():
                 mes=mes,
                 ano=ano,
                 carregar_competencia=_carregar_competencia_gestao,
+                df_vinculos_mes=_vinculos_mes_gestao,
+                periodo_aberto=_periodo_aberto,
+                carregar_metas_competencia=_carregar_metas_competencia_gestao,
+                prestamista=_prestamista_gestao,
             )
 
         # Registro unico das abas: permissao + rotulo + icone + render na

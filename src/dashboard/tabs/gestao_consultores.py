@@ -21,7 +21,11 @@ import pandas as pd
 import streamlit as st
 import streamlit_antd_components as sac
 
-from src.config.settings import MESES_PT
+from src.config.settings import (
+    MESES_PT,
+    PACK_LABEL_AGREGADO,
+    PACK_SPLIT_LABELS,
+)
 from src.dashboard.auth import usuario_logado
 from src.dashboard.components.tables import exibir_tabela
 from src.dashboard.formatters import (
@@ -30,6 +34,13 @@ from src.dashboard.formatters import (
     formatar_numero,
     formatar_percentual,
 )
+from src.dashboard.kpis.prestamista import (
+    PRESTAMISTA_OK,
+    PRESTAMISTA_NAO_IMPORTADO,
+    quebra_prestamista,
+    totais_prestamista,
+)
+from src.dashboard.kpis.rankings import _norm_nome
 from src.dashboard.kpis.gestao import (
     ACEL_SUPER_CONTA,
     BASE_ABSOLUTA,
@@ -70,6 +81,15 @@ from src.dashboard.kpis.gestao import (
 # da matriz de produtos, a outra da tabela nominal de performance.
 from src.dashboard.kpis.produtividade import (
     COL_COMPETENCIA,
+    COL_META_MIX,
+    COL_ATINGIMENTO_MIX,
+    COL_SITUACAO_MIX,
+    COL_FALTA_MIX,
+    COL_PENDENCIAS_MIX,
+    COL_DIAS_RESTANTES,
+    COL_RITMO_NECESSARIO,
+    COL_LOJA_META,
+    COL_ORIGEM_META,
     COL_CONSULTOR as COL_CONSULTOR_PROD,
     COL_DIAS as COL_DIAS_PROD,
     COL_IDX_CARTEIRA as COL_IDX_CARTEIRA_PROD,
@@ -88,6 +108,7 @@ from src.dashboard.kpis.produtividade import (
     SIT_SUBIU,
     SIT_ZERADO_NOS_DOIS,
     benchmark_por,
+    enriquecer_performance,
     linhas_sem_vinculo,
     produtividade_carteira,
     produtividade_por_consultor,
@@ -116,6 +137,9 @@ _PRODUTO_LABELS = list(PRODUTOS_GESTAO)
 # medidos SEMPRE em quantidade de contratos.
 _COLUNAS_CRITERIO = [*_PRODUTO_LABELS, COL_TOTAL, *ROTULOS_ACELERADORES]
 _PRODUTOS_DEFAULT = ["CLT", "CNC", "Consignado"]
+# Os tres itens do pack dividem UMA meta, a conjunta: nenhum tem alvo
+# proprio, e a meta do Total so a inclui com os tres selecionados.
+_PACK_LABELS = list(PACK_SPLIT_LABELS.values())
 
 _COL_LACUNA = "Falta p/ limiar"
 _COL_LACUNA_ACEL = "Falta acelerador (qtd)"
@@ -675,11 +699,73 @@ def _produtividade_do_grupo(resultado: pd.DataFrame) -> float:
     return float(prod.sum() / dias_validos)
 
 
+def _motivo_total_sem_meta(
+    produtos_total: Optional[List[str]],
+    metas: Optional[pd.DataFrame],
+) -> str:
+    """Por que a meta do Total ficou ausente no nivel consultor.
+
+    A meta do Total so existe quando todo produto somado tem meta e o
+    pack entra inteiro, com a meta conjunta somada uma vez
+    (``matriz_metas``). Aqui so se le a matriz que ela devolveu, sem
+    refazer a soma: o motivo sai de quais colunas faltam ou estao
+    vazias. ``produtos_total`` vazio ou ``None`` e o MIX inteiro, como
+    em ``construir_tabela``.
+    """
+    escopo = [
+        r for r in (produtos_total or _PRODUTO_LABELS)
+        if r in _PRODUTO_LABELS
+    ]
+    pack_no_total = [r for r in _PACK_LABELS if r in escopo]
+    individuais = [r for r in escopo if r not in _PACK_LABELS]
+    partes: List[str] = []
+    if pack_no_total and len(pack_no_total) < len(_PACK_LABELS):
+        partes.append(
+            f"o Total pega so parte do pack ({', '.join(pack_no_total)})"
+            " — a meta dele e conjunta, entao os tres itens vao juntos "
+            "ou nenhum"
+        )
+    if metas is not None:
+        sem_meta = [
+            r for r in individuais
+            if r not in metas.columns or metas[r].isna().all()
+        ]
+        if sem_meta:
+            partes.append(
+                f"{', '.join(sem_meta)} sem meta cadastrada para as "
+                "lojas deste recorte no mes"
+            )
+        elif (
+            len(pack_no_total) == len(_PACK_LABELS)
+            and bool(metas[individuais].notna().all(axis=None))
+        ):
+            # Todo produto individual tem meta em toda linha: o Total
+            # so pode ter caido pela meta conjunta do pack.
+            partes.append(
+                "o pack esta inteiro, mas a meta conjunta dele nao foi "
+                "encontrada para as lojas deste recorte no mes"
+            )
+    if not partes:
+        partes.append(
+            "nenhuma loja deste recorte tem, no mes, todas as metas que "
+            "o Total soma ao mesmo tempo"
+        )
+    # A regra do pack so e citada quando ele esta no Total: fora disso
+    # ela so desviaria a atencao do motivo real.
+    regra = "A meta do Total so existe quando todo produto somado tem meta"
+    if pack_no_total:
+        regra += " e o pack entra inteiro"
+    return regra + ": " + "; ".join(partes) + "."
+
+
 def _motivo_meta_indisponivel(
     periodo_ativo: bool,
     nivel: str,
     ignorados: Optional[List[str]] = None,
     metrica: str = METRICA_VALOR,
+    *,
+    produtos_total: Optional[List[str]] = None,
+    metas: Optional[pd.DataFrame] = None,
 ) -> str:
     """Explica por que a base '% da meta' caiu, na ordem que ela cai.
 
@@ -687,29 +773,26 @@ def _motivo_meta_indisponivel(
     quando o motivo real era outro — mandar o gestor investigar a
     coisa errada e pior do que nao avisar.
 
-    O acelerador deixou de ser um motivo ESTRUTURAL: a meta dele
-    existe no escopo CONSULTOR, em quantidade de contratos. Por isso
-    o ramo dele desceu para depois dos bloqueios que derrubam a base
-    inteira (metrica por dia, periodo livre, nivel acima de consultor)
-    e passou a dizer a razao que sobra — nenhuma meta de acelerador
-    gravada para as lojas do recorte. Os tres rotulos do pack (FGTS /
-    ANT. DE BENEF. / CNC 13º) seguem sem alvo por categoria: a meta
-    ``FGTS_ANT_BENEF_13`` e conjunta.
+    Periodo livre e nivel acima de consultor derrubam a base inteira:
+    produto, Total e acelerador. O acelerador TEM meta (escopo
+    CONSULTOR, em contratos) em QUALQUER metrica, entao o que sobra
+    para ele e nenhuma meta gravada para as lojas do recorte. No nivel
+    consultor cada grupo ignorado recebe a propria razao: produto sem
+    meta cadastrada, item do pack (a meta ``FGTS_ANT_BENEF_13`` e
+    conjunta) e Total — ver :func:`_motivo_total_sem_meta`.
+
+    ``produtos_total`` e ``metas`` (saida de ``matriz_metas`` ja
+    calculada) so servem para explicar o Total. Produto e Total com
+    base meta fora de ``valor`` nao chegam aqui: ``_render_criterios``
+    os barra antes, no erro de unidade (``incompativeis``).
     """
     so_aceleradores = bool(ignorados) and all(
         _eh_acelerador(r) for r in ignorados
     )
-    if metrica == METRICA_PROD_DIA:
-        if so_aceleradores:
-            # A meta do acelerador nao e R$, entao a frase do limiar
-            # "dezenas de vezes maior" seria falsa aqui: o que derruba
-            # a base e a aba desligar a meta nesta metrica.
-            return (
-                "Nesta metrica a aba desliga a base '% da meta' (a meta "
-                "e MENSAL e o numero na tela e por DIA) — inclusive "
-                "para os aceleradores. Use valor absoluto, media do "
-                "grupo ou percentil."
-            )
+    if metrica == METRICA_PROD_DIA and not so_aceleradores:
+        # Fora do alcance da aba (o erro de unidade vem antes); fica
+        # para chamada direta. Acelerador nao passa aqui: a meta dele
+        # e contagem e vale em qualquer metrica.
         return (
             "A meta e MENSAL em R$ e a metrica aqui e por DIA: comparar "
             "as duas daria um limiar dezenas de vezes maior que a "
@@ -727,18 +810,42 @@ def _motivo_meta_indisponivel(
             "A base '% da meta' e o alvo individual do consultor "
             f"(gravado por loja) — nao existe no nivel {nivel}."
         )
-    if so_aceleradores:
-        return (
-            "O acelerador TEM alvo individual (quantidade de contratos "
-            "por consultor, nivel PRATA na base), mas nenhuma meta dele "
-            "foi encontrada para as lojas deste recorte no mes. Confira "
-            "as metas de escopo CONSULTOR do mes ou use valor absoluto, "
-            "media do grupo ou percentil."
-        )
-    return (
+
+    motivo_pack = (
         "A base '% da meta' cobre apenas produtos com alvo individual: "
-        "o pack (FGTS / ANT. DE BENEF. / CNC 13º) tem meta conjunta, "
-        "sem alvo por categoria."
+        f"o pack ({PACK_LABEL_AGREGADO}) tem meta conjunta, sem alvo "
+        "por categoria — ela so vale no criterio Total, com os tres "
+        "itens selecionados."
+    )
+    if not ignorados:
+        return motivo_pack
+
+    individuais = [
+        r for r in ignorados
+        if r in _PRODUTO_LABELS and r not in _PACK_LABELS
+    ]
+    acels = [r for r in ignorados if _eh_acelerador(r)]
+    partes: List[str] = []
+    if individuais:
+        partes.append(
+            f"{', '.join(individuais)}: sem meta individual cadastrada "
+            "para as lojas deste recorte no mes (escopo CONSULTOR)."
+        )
+    if any(r in _PACK_LABELS for r in ignorados):
+        partes.append(motivo_pack)
+    if COL_TOTAL in ignorados:
+        partes.append(_motivo_total_sem_meta(produtos_total, metas))
+    if acels:
+        partes.append(
+            f"{', '.join(acels)}: acelerador TEM alvo individual "
+            "(quantidade de contratos por consultor, nivel PRATA na "
+            "base), mas nenhum foi encontrado para as lojas deste "
+            "recorte no mes. Confira as metas de escopo CONSULTOR do "
+            "mes ou use valor absoluto, media do grupo ou percentil."
+        )
+    return " ".join(partes) or (
+        "Nenhuma meta encontrada para esses criterios nas lojas deste "
+        "recorte no mes."
     )
 
 
@@ -943,13 +1050,47 @@ def _render_criterios(
     ]
     acels_sel = [p for p in produtos_sel if _eh_acelerador(p)]
 
-    # A meta e MENSAL em R$: comparar um alvo do mes com um numero por
-    # DIA daria um limiar 20x maior que a realidade. Zerar aqui faz a
-    # base '% da meta' cair no aviso de criterio ignorado, o mesmo
-    # caminho ja usado pelo periodo personalizado.
-    if metrica == METRICA_PROD_DIA:
-        df_metas = None
+    def _config_do_recorte() -> dict:
+        # Um construtor so para os dois caminhos abaixo: o preset salvo
+        # com o bloqueio ativo e o mesmo recorte inteiro do normal. Le
+        # `criterios` no clique de "Salvar", quando ele ja existe.
+        return _config_atual(
+            nivel,
+            metrica,
+            combinacao,
+            minimo,
+            incluir_zerados,
+            produtos_sel,
+            criterios,
+            _periodo_config(
+                periodo_ativo, data_ini, data_fim, campo_data
+            ),
+        )
 
+    if periodo_ativo and metrica == METRICA_PROD_DIA:
+        # Os dias elegiveis sao do mes da sidebar, nao da faixa: a
+        # apuracao para aqui. Criterios e presets seguem renderizados
+        # de proposito — o Streamlit descarta o estado de widget que
+        # sai da tela, e sem eles produtos e limiares voltariam ao
+        # padrao quando o bloqueio saisse.
+        criterios = (
+            _coletar_criterios(produtos_sel, metrica)
+            if produtos_sel
+            else {}
+        )
+        _render_presets(_config_do_recorte)
+        st.warning(
+            "Produtividade por dia indisponivel no periodo personalizado: "
+            "os dias elegiveis pertencem ao mes da barra lateral, nao a "
+            "faixa de datas. Os produtos e limiares acima ficam como "
+            "estao, sem conversao de unidade, e voltam a valer quando o "
+            "bloqueio sair — ao desativar o periodo personalizado ou "
+            "trocar a metrica."
+        )
+        return
+
+    # A matriz de metas valida a unidade por coluna. Aceleradores
+    # continuam em quantidade mesmo quando os produtos usam R$/dia.
     tabela = construir_tabela(
         df,
         df_sup,
@@ -976,6 +1117,22 @@ def _render_criterios(
                 "sub-visao **Performance do time** para o diagnostico "
                 "nominal."
             )
+        # So nos niveis agregados (`construir_tabela` publica a chave):
+        # o valor e de TODO o MIX dessas pessoas, nao so dos produtos
+        # do criterio. Sem a chave, nao ha o que dizer.
+        sem_vinculo = tabela.attrs.get("sem_vinculo") or {}
+        pessoas = int(sem_vinculo.get("pessoas") or 0)
+        if pessoas > 0:
+            valor_fora = float(sem_vinculo.get("valor") or 0.0)
+            st.caption(
+                f"**{pessoas}** pessoa(s) com producao paga e sem "
+                "vinculo no ledger ficam fora da razao por dia — sem "
+                "dias emprestados dos colegas. Producao delas: "
+                f"**{formatar_moeda(valor_fora)}**, somando o MIX "
+                "inteiro, nao so os produtos selecionados. Veja a "
+                "sub-visao **Performance do time** para o diagnostico "
+                "nominal."
+            )
 
     if produtos_total:
         st.caption("Total = " + " + ".join(produtos_total))
@@ -984,25 +1141,31 @@ def _render_criterios(
         _coletar_criterios(produtos_sel, metrica) if produtos_sel else {}
     )
 
-    _render_presets(
-        lambda: _config_atual(
-            nivel,
-            metrica,
-            combinacao,
-            minimo,
-            incluir_zerados,
-            produtos_sel,
-            criterios,
-            _periodo_config(
-                periodo_ativo, data_ini, data_fim, campo_data
-            ),
+    _render_presets(_config_do_recorte)
+
+    incompativeis = [
+        rotulo for rotulo, criterio in criterios.items()
+        if criterio.get("base") == BASE_META
+        and criterio.get("modo") not in _MODOS_SEM_LIMIAR
+        and not _eh_acelerador(rotulo)
+        and metrica != METRICA_VALOR
+    ]
+    if incompativeis:
+        st.error(
+            "Meta monetaria incompativel com a metrica selecionada em: "
+            + ", ".join(incompativeis)
+            + ". Escolha Valor pago (R$) ou outra base de comparacao. "
+            "Metas de aceleradores continuam em quantidade."
         )
-    )
+        return
 
     # A base '% da meta' casa por Loja: so faz sentido no nivel
     # consultor, onde cada linha tem uma loja.
     metas = (
-        matriz_metas(tabela, df_metas)
+        matriz_metas(
+            tabela, df_metas,
+            produtos_total=produtos_total or None, metrica=metrica,
+        )
         if nivel == NIVEL_CONSULTOR
         else None
     )
@@ -1013,7 +1176,8 @@ def _render_criterios(
             + ", ".join(ignorados)
             + ". "
             + _motivo_meta_indisponivel(
-                periodo_ativo, nivel, ignorados, metrica
+                periodo_ativo, nivel, ignorados, metrica,
+                produtos_total=produtos_total, metas=metas,
             )
         )
 
@@ -1031,7 +1195,10 @@ def _render_criterios(
     ]
     if criterios:
         metas_res = (
-            matriz_metas(resultado, df_metas)
+            matriz_metas(
+                resultado, df_metas,
+                produtos_total=produtos_total or None, metrica=metrica,
+            )
             if metas is not None
             else None
         )
@@ -1452,14 +1619,35 @@ def _render_tendencia(
         return
 
     frames: Dict[Tuple[int, int], pd.DataFrame] = {}
+    # Competencia sem base consolidada (``None`` do loader) e LACUNA,
+    # nunca zero: fica fora de ``frames`` e o grafico mostra o buraco.
+    # Escopo sem ninguem (os dois frames vazios) nao e indisponivel — a
+    # base existe, so nao ha colaborador no recorte.
+    indisponiveis: List[Tuple[int, int]] = []
+    sem_colaborador = 0
     with st.spinner("Carregando competencias fechadas..."):
         for m, a in competencias:
             df_c, df_vin_c, df_sup_c = carregar_competencia(m, a)
-            if df_c is None or df_c.empty:
+            if df_c is None or df_vin_c is None:
+                indisponiveis.append((m, a))
+                continue
+            if df_c.empty and df_vin_c.empty:
+                sem_colaborador += 1
                 continue
             frames[(a, m)] = produtividade_por_consultor(
                 df_c, df_vin_c, df_sup_c
             )
+
+    # Um aviso so, em ordem cronologica — inclusive quando a serie
+    # inteira fica vazia.
+    if indisponiveis:
+        st.warning(
+            "Competencia(s) indisponivel(is): "
+            + ", ".join(f"{m:02d}/{a}" for m, a in indisponiveis)
+            + ". Sem base consolidada no mes, ficam como LACUNA na "
+            "serie — o grafico corta a linha em vez de desenhar "
+            "R$ 0/dia."
+        )
 
     serie = serie_por_consultor(frames)
     if serie.empty:
@@ -1502,16 +1690,30 @@ def _render_tendencia(
         else None
     )
 
+    # Cada mes da janela cai em exatamente uma destas contagens, entao
+    # elas somam a janela — nenhum mes pulado fica sem explicacao.
+    composicao = [
+        f"{len(frames)} de {len(competencias)} competencia(s) "
+        "fechada(s) na serie"
+    ]
+    if indisponiveis:
+        composicao.append(f"{len(indisponiveis)} indisponivel(is)")
+    if sem_colaborador:
+        composicao.append(f"{sem_colaborador} sem colaborador no escopo")
     chart_card_open(
         "Evolucao da produtividade",
         icon="📈",
         subtitle=(
-            f"{len(frames)} competencia(s) fechada(s) · base de dias "
-            "de vinculo, sem desconto de afastamento"
+            " · ".join(composicao)
+            + " · base de dias de vinculo, sem desconto de afastamento"
         ),
     )
     st.plotly_chart(
-        criar_grafico_produtividade(carteira, detalhe), width="stretch"
+        criar_grafico_produtividade(
+            carteira, detalhe,
+            competencias=[f"{a:04d}-{m:02d}" for m, a in competencias],
+        ),
+        width="stretch",
     )
     chart_card_close()
 
@@ -1543,8 +1745,9 @@ def _render_tendencia(
         for chave, texto in partes
         if int(contagem.get(chave, 0)) > 0
     ]
+    comparadas = sorted(serie[COL_COMPETENCIA].unique())[-2:]
     st.caption(
-        "Entre as duas ultimas competencias fechadas: "
+        "Variacao entre " + " e ".join(comparadas) + ": "
         + ", ".join(linhas)
         + "."
     )
@@ -1597,6 +1800,67 @@ def _recortar_e_ordenar(
     ).reset_index(drop=True)
 
 
+def _render_ipv_performance(
+    prod: pd.DataFrame, prestamista: Optional[Dict],
+) -> None:
+    """Apresenta a quebra canonica de IPV no universo elegivel em tela."""
+    with st.expander("IPV por colaborador"):
+        if prestamista is None:
+            st.info("IPV indisponivel nesta sessao.")
+            return
+        status = prestamista.get("status")
+        if status != PRESTAMISTA_OK:
+            st.warning(
+                "Prestamista nao importado nesta competencia."
+                if status == PRESTAMISTA_NAO_IMPORTADO
+                else "Falha ao carregar o Prestamista; IPV indisponivel."
+            )
+            return
+        pessoas = prod.loc[
+            prod[COL_DIAS_PROD] > 0, [COL_CONSULTOR_PROD, COL_LOJA_PROD]
+        ].copy()
+        pessoas["_nome"] = pessoas[COL_CONSULTOR_PROD].map(_norm_nome)
+        propostas = prestamista.get("propostas")
+        if propostas is None:
+            st.warning("Base de propostas indisponivel para o IPV.")
+            return
+        propostas = propostas.copy()
+        if not propostas.empty and "consultor" not in propostas.columns:
+            st.warning("Base de IPV sem identificacao do consultor.")
+            return
+        if "consultor" in propostas.columns:
+            propostas["consultor"] = propostas["consultor"].map(_norm_nome)
+            propostas = propostas[
+                propostas["consultor"].isin(pessoas["_nome"])
+            ]
+        totais = totais_prestamista(propostas)
+        quebra = quebra_prestamista(propostas, ["consultor"]).rename(
+            columns={"consultor": "_nome", "elegiveis": "Elegiveis IPV",
+                     "seguros": "Seguros IPV", "ipv": "IPV %"}
+        )
+        tabela = pessoas.merge(quebra, on="_nome", how="left").drop(
+            columns="_nome"
+        )
+        for coluna in ("Elegiveis IPV", "Seguros IPV"):
+            tabela[coluna] = tabela[coluna].fillna(0).astype(int)
+        tabela["IPV %"] = pd.to_numeric(tabela["IPV %"], errors="coerce") * 100
+        ipv = totais["ipv"]
+        st.metric(
+            "IPV do time elegivel",
+            formatar_percentual(ipv * 100) if ipv is not None else "—",
+            delta=f"{totais['seguros']} seguros / {totais['elegiveis']} elegiveis",
+            delta_color="off",
+        )
+        st.caption(
+            "Sem operacao elegivel, IPV fica em branco. A base inclui "
+            "CNC e Super Conta; contagens acompanham cada percentual."
+        )
+        exibir_tabela(
+            tabela, colunas_numero=["Elegiveis IPV", "Seguros IPV"],
+            colunas_percentual=["IPV %"],
+        )
+
+
 def _render_performance(
     df: pd.DataFrame,
     df_sup: Optional[pd.DataFrame],
@@ -1604,6 +1868,11 @@ def _render_performance(
     mes: int,
     ano: int,
     carregar_competencia: Optional[Callable] = None,
+    df_metas: Optional[pd.DataFrame] = None,
+    df_vinculos_mes: Optional[pd.DataFrame] = None,
+    periodo_aberto: bool = False,
+    carregar_metas_competencia: Optional[Callable] = None,
+    prestamista: Optional[Dict] = None,
 ) -> None:
     """Sub-visao nominal: como esta cada colaborador do escopo.
 
@@ -1611,6 +1880,11 @@ def _render_performance(
     nao "quem cabe no recorte", e sim "qual o nivel de cada pessoa do
     time, corrigido pelo tempo que ela teve".
     """
+    hoje = date.today()
+    if (ano, mes) > (hoje.year, hoje.month):
+        st.info("Competencia futura: a performance ainda nao foi apurada.")
+        return
+
     st.markdown(
         "Produtividade de cada colaborador da sua carteira: **producao "
         "paga dividida pelos dias uteis de vinculo** na competencia. "
@@ -1632,6 +1906,13 @@ def _render_performance(
         st.warning("Nenhum colaborador no escopo desta competencia.")
         return
 
+    prod = enriquecer_performance(
+        prod, df,
+        df_metas if df_metas is not None else pd.DataFrame(),
+        df_vinculos_mes,
+        periodo_aberto=periodo_aberto,
+    )
+
     _du_considerado, _du_mes = _du_apuracao(df_vinculos)
     _render_cards_carteira(
         produtividade_carteira(prod), _du_considerado, _du_mes
@@ -1640,12 +1921,40 @@ def _render_performance(
         _du_considerado and _du_mes and _du_considerado < _du_mes
     )
 
+    sac.divider(label="Metas do time", icon="bullseye", align="left")
+    elegiveis = prod[prod[COL_DIAS_PROD] > 0]
+    total_elegiveis = len(elegiveis)
+    atingidos = int((elegiveis[COL_SITUACAO_MIX] == "ATINGIDO").sum())
+    pendentes = int((elegiveis[COL_SITUACAO_MIX] == "PENDENTE").sum())
+    sem_meta = int((elegiveis[COL_SITUACAO_MIX] == "SEM META").sum())
+    col_mix, col_pend, col_sem = st.columns(3)
+    col_mix.metric(
+        "Time com MIX atingido",
+        formatar_percentual(100 * atingidos / total_elegiveis)
+        if total_elegiveis else "—",
+        delta=f"{atingidos} de {total_elegiveis} elegiveis",
+        delta_color="off",
+        help="Base: todos os colaboradores com dias elegiveis, inclusive "
+             "sem venda e sem meta. Sem meta nao recebe veredito de desempenho.",
+    )
+    col_pend.metric("MIX pendente", formatar_numero(pendentes))
+    col_sem.metric("Sem meta individual", formatar_numero(sem_meta))
+    st.caption(
+        "Meta mensal integral, inclusive em admissao ou desligamento. "
+        "MIX atingido exige o total e cada produto com meta; excedente "
+        "nao compensa outro produto. Dias restantes seguem os vinculos "
+        "cadastrados ate o fim do mes, sem desconto de afastamentos."
+    )
+    if not periodo_aberto:
+        st.caption(
+            "Competencia fechada: nao ha dias restantes. Ritmo necessario "
+            "fica em branco quando a meta terminou pendente."
+        )
+
     sac.divider(
         label="Por colaborador", icon="person-badge", align="left",
         color="gray",
     )
-    _aviso_escopo_dos_percentuais(prod)
-
     col_ordem, col_corte = st.columns([1.4, 1])
     with col_ordem:
         ordem = st.selectbox(
@@ -1678,19 +1987,45 @@ def _render_performance(
     if visao.empty:
         st.info("Nenhum colaborador dentro do corte escolhido.")
     else:
-        _legenda_percentuais(
-            prod, len(visao), _parcial, _du_considerado, _du_mes
-        )
+        principais = [
+            COL_CONSULTOR_PROD, COL_LOJA_PROD,
+            COL_PRODUCAO_PROD, COL_DIAS_PROD, COL_PROD_DIA_PROD,
+            COL_META_MIX, COL_ATINGIMENTO_MIX, COL_FALTA_MIX,
+            COL_DIAS_RESTANTES, COL_RITMO_NECESSARIO, COL_SITUACAO_MIX,
+        ]
         exibir_tabela(
-            visao,
-            colunas_moeda=[COL_PRODUCAO_PROD, COL_PROD_DIA_PROD],
-            colunas_numero=[COL_DIAS_PROD],
-            colunas_percentual=[
-                COL_SHARE_LOJA_PROD,
-                COL_SHARE_REGIAO_PROD,
-                COL_IDX_CARTEIRA_PROD,
+            visao[principais],
+            colunas_moeda=[
+                COL_PRODUCAO_PROD, COL_PROD_DIA_PROD, COL_META_MIX,
+                COL_FALTA_MIX, COL_RITMO_NECESSARIO,
             ],
+            colunas_numero=[COL_DIAS_PROD, COL_DIAS_RESTANTES],
+            colunas_percentual=[COL_ATINGIMENTO_MIX],
         )
+        with st.expander("Produtos pendentes e origem da meta"):
+            exibir_tabela(visao[[
+                COL_CONSULTOR_PROD, COL_PENDENCIAS_MIX,
+                COL_LOJA_META, COL_ORIGEM_META,
+            ]])
+        with st.expander("Comparacoes de produtividade no escopo"):
+            _aviso_escopo_dos_percentuais(prod)
+            _legenda_percentuais(
+                prod, len(visao), _parcial, _du_considerado, _du_mes
+            )
+            colunas_meta = {
+                COL_META_MIX, COL_ATINGIMENTO_MIX, COL_SITUACAO_MIX,
+                COL_FALTA_MIX, COL_PENDENCIAS_MIX, COL_DIAS_RESTANTES,
+                COL_RITMO_NECESSARIO, COL_LOJA_META, COL_ORIGEM_META,
+            }
+            exibir_tabela(
+                visao[[c for c in visao.columns if c not in colunas_meta]],
+                colunas_moeda=[COL_PRODUCAO_PROD, COL_PROD_DIA_PROD],
+                colunas_numero=[COL_DIAS_PROD],
+                colunas_percentual=[
+                    COL_SHARE_LOJA_PROD, COL_SHARE_REGIAO_PROD,
+                    COL_IDX_CARTEIRA_PROD,
+                ],
+            )
         st.download_button(
             label="Exportar CSV",
             data=visao.to_csv(index=False, sep=";", decimal=","),
@@ -1699,6 +2034,8 @@ def _render_performance(
             key="perf_export",
             icon=":material/download:",
         )
+
+    _render_ipv_performance(prod, prestamista)
 
     bench = benchmark_por(prod, COL_LOJA_PROD)
     if not bench.empty and len(bench) > 1:
@@ -1772,6 +2109,10 @@ def render_tab_gestao(
     mes: Optional[int] = None,
     ano: Optional[int] = None,
     carregar_competencia: Optional[Callable] = None,
+    df_vinculos_mes: Optional[pd.DataFrame] = None,
+    periodo_aberto: bool = False,
+    carregar_metas_competencia: Optional[Callable] = None,
+    prestamista: Optional[Dict] = None,
 ) -> None:
     """Renderiza a aba de Gestao, com as duas sub-visoes.
 
@@ -1785,6 +2126,13 @@ def render_tab_gestao(
     injetados por ``app.py`` e ja devolvem os dados com RLS e filtros
     da sidebar aplicados. Sem eles, o periodo personalizado e a serie
     historica ficam indisponiveis e a aba segue no mes da sidebar.
+
+    Contrato de ``carregar_competencia``: ``df`` e ``df_vinculos``
+    ``None`` = competencia INDISPONIVEL (base consolidada global vazia,
+    antes do RLS) — a serie a mantem como lacuna, com aviso, e nunca a
+    desenha como zero. Escopo vazio com a base presente devolve
+    DataFrames e continua na serie: quem tem vinculo e nao vendeu sai
+    a R$ 0/dia.
     """
     sac.divider(
         label="Gestao de Consultores",
@@ -1823,4 +2171,9 @@ def render_tab_gestao(
             int(mes or date.today().month),
             int(ano or date.today().year),
             carregar_competencia,
+            df_metas=df_metas,
+            df_vinculos_mes=df_vinculos_mes,
+            periodo_aberto=periodo_aberto,
+            carregar_metas_competencia=carregar_metas_competencia,
+            prestamista=prestamista,
         )

@@ -160,6 +160,8 @@ class TestFotoFdr:
         out = loaders.carregar_fim_relacionamento_liga(10, 2026)
         escolhido = corrente if atual else historico
         outro = historico if atual else corrente
-        escolhido.assert_called_once_with(10, 2026)
+        # `cache_version=1` explicito: contrato da catraca (ver
+        # test_loaders_cache_version.py); o wrapper delega por uma linha.
+        escolhido.assert_called_once_with(10, 2026, cache_version=1)
         outro.assert_not_called()
         assert out["status"] == "ok"

@@ -513,6 +513,20 @@ def construir_tabela(
             sem ele a coluna de dias fica zerada e a produtividade sai
             ausente.
 
+    Em ``prod_dia`` acima do nivel consultor, a producao de quem nao tem
+    dia elegivel e zerada antes de agregar: sem denominador, ela nao
+    pode tomar emprestados os dias dos colegas. A exclusao e correta,
+    mas calada entregaria uma taxa de grupo com cara de completa — por
+    isso ``tabela.attrs["sem_vinculo"]`` publica
+    ``{"pessoas": int, "valor": float}`` (tipos nativos): quantos
+    consultores com producao > 0 ficaram fora e a soma de TODOS os
+    produtos deles, independente de ``produtos_total``. Nesse caso a
+    chave existe sempre, mesmo zerada, para separar "ninguem ficou de
+    fora" de "nao se aplica". No nivel consultor (a linha da pessoa ja
+    sai ausente) e nas demais metricas (nada e excluido) ela nao existe.
+    ``attrs`` tambem leva ``metrica`` e ``produtos_total``, lidos por
+    :func:`matriz_metas`; recorte vazio volta sem atributos.
+
     Espera ``df`` ja filtrado por RLS; nao aplica RLS nem queries aqui.
     """
     matriz = _matriz_por_consultor(
@@ -521,6 +535,21 @@ def construir_tabela(
     if matriz.empty:
         return pd.DataFrame()
 
+    sem_vinculo = None
+    if metrica == METRICA_PROD_DIA and nivel != NIVEL_CONSULTOR:
+        # Sem vinculo, a producao nao pode tomar emprestados os dias
+        # dos colegas. Preserva a identificacao e os aceleradores,
+        # cuja unidade continua sendo quantidade, fora da razao.
+        matriz = matriz.copy()
+        valores = [c for c in matriz.columns if c.startswith("_val_")]
+        sem_dias = matriz["_dias"] <= 0
+        # Medido ANTES de zerar e pela mesma mascara: o que se publica
+        # e exatamente o que saiu da razao. Todos os produtos, nao so
+        # os do Total — quem sai, sai com a producao inteira.
+        fora = matriz.loc[sem_dias, valores].sum(axis=1)
+        fora = fora[fora > 0]
+        sem_vinculo = {"pessoas": int(len(fora)), "valor": float(fora.sum())}
+        matriz.loc[sem_dias, valores] = 0.0
     matriz = _agregar_nivel(matriz, nivel, df_supervisores)
     rotulos = list(PRODUTOS_GESTAO)
     escopo = [r for r in (produtos_total or rotulos) if r in rotulos]
@@ -537,7 +566,12 @@ def construir_tabela(
     # do denominador, nao mais uma coluna de dinheiro.
     cols_dias = [COL_DIAS] if COL_DIAS in tabela.columns else []
     tabela = tabela[[*cols_id, *cols_dias, *rotulos, COL_TOTAL, *cols_acel]]
-    return tabela.sort_values(cols_id).reset_index(drop=True)
+    tabela = tabela.sort_values(cols_id).reset_index(drop=True)
+    tabela.attrs["metrica"] = metrica
+    tabela.attrs["produtos_total"] = escopo
+    if sem_vinculo is not None:
+        tabela.attrs["sem_vinculo"] = sem_vinculo
+    return tabela
 
 
 def vendas_mix_por_consultor(
@@ -621,6 +655,9 @@ _MODOS_COM_TETO = frozenset({MODO_ATE, MODO_ENTRE, "menor"})
 def matriz_metas(
     tabela: pd.DataFrame,
     df_metas: Optional[pd.DataFrame],
+    *,
+    produtos_total: Optional[List[str]] = None,
+    metrica: Optional[str] = None,
 ) -> pd.DataFrame:
     """Meta por linha da tabela e por rotulo, para a base ``meta``.
 
@@ -629,11 +666,11 @@ def matriz_metas(
     cada consultor daquela loja. O casamento e por ``Loja``, entao so
     faz sentido no nivel consultor.
 
-    Os tres rotulos do pack (FGTS, ANT. DE BENEF., CNC 13º) ficam de
-    fora: a meta ``FGTS_ANT_BENEF_13`` e CONJUNTA, nao existe alvo por
-    categoria — dividi-la em tres seria inventar numero. Rotulos sem
-    meta saem como ``NaN`` e o criterio correspondente e ignorado
-    (ver :func:`diagnosticar_criterios`).
+    Os rotulos individuais do pack nao recebem meta: o alvo
+    ``FGTS_ANT_BENEF_13`` e conjunto. No Total, entra uma unica vez
+    somente quando os tres produtos do pack estao selecionados.
+    Selecionar apenas parte do pack deixa a meta Total indisponivel,
+    assim como qualquer produto selecionado sem alvo cadastrado.
 
     Os quatro **aceleradores** tambem saem aqui, no nivel PRATA (a base
     pela convencao fechada: nome nu e PRATA, ``_OURO`` e o contexto).
@@ -643,7 +680,11 @@ def matriz_metas(
     ``COL_TOTAL`` soma **apenas os produtos**: acelerador e contagem de
     contratos e o Total segue a metrica dos produtos (R$ por padrao).
     Misturar as duas unidades numa soma so produziria um numero sem
-    significado.
+    significado. Metas monetarias so se aplicam a ``valor``;
+    aceleradores mantem sua meta de quantidade em qualquer metrica.
+    ``metrica`` e ``produtos_total`` usam os atributos publicados por
+    ``construir_tabela`` quando omitidos, ou valor/MIX completo para
+    tabelas externas sem esses atributos.
     """
     vazia = pd.DataFrame(index=tabela.index)
     if (
@@ -661,15 +702,46 @@ def matriz_metas(
     chave_loja = tabela["Loja"].map(_norm_nome)
 
     saida = pd.DataFrame(index=tabela.index)
-    for rotulo in PRODUTOS_GESTAO:
-        col_meta = PRODUTOS_DASHBOARD_COL_META.get(_chave_mix(rotulo))
-        if col_meta and col_meta in metas.columns:
-            saida[rotulo] = chave_loja.map(metas[col_meta]).astype(float)
-    if not saida.empty:
-        # Total = soma das metas dos PRODUTOS com alvo individual.
-        # Calculado antes dos aceleradores de proposito: eles sao
-        # contagem de contratos e nao podem entrar nesta soma.
-        saida[COL_TOTAL] = saida.sum(axis=1, min_count=1)
+    metrica = metrica or tabela.attrs.get("metrica", METRICA_VALOR)
+    selecionados = (
+        produtos_total if produtos_total is not None
+        else tabela.attrs.get("produtos_total")
+    )
+    escopo = list(dict.fromkeys(
+        r for r in (selecionados or list(PRODUTOS_GESTAO))
+        if r in PRODUTOS_GESTAO
+    ))
+    if metrica == METRICA_VALOR:
+        for rotulo in PRODUTOS_GESTAO:
+            col_meta = PRODUTOS_DASHBOARD_COL_META.get(_chave_mix(rotulo))
+            if col_meta and col_meta in metas.columns:
+                saida[rotulo] = chave_loja.map(metas[col_meta]).astype(float)
+
+        pack = {
+            PACK_SPLIT_LABELS[cat]
+            for cat in PRODUTOS_DASHBOARD["FGTS_ANT_BEN_CNC13"]
+        }
+        pack_selecionado = pack.intersection(escopo)
+        total = pd.Series(0.0, index=tabela.index)
+        completo = bool(escopo) and (
+            not pack_selecionado or pack_selecionado == pack
+        )
+        for rotulo in escopo:
+            if rotulo in pack:
+                continue
+            if rotulo not in saida.columns:
+                completo = False
+                break
+            # Soma ordinaria preserva NaN por loja: falta de uma meta
+            # nao pode virar meta parcial silenciosamente menor.
+            total = total + saida[rotulo]
+        if pack_selecionado == pack:
+            col_pack = PRODUTOS_DASHBOARD_COL_META["FGTS_ANT_BEN_CNC13"]
+            if col_pack in metas.columns:
+                total = total + chave_loja.map(metas[col_pack]).astype(float)
+            else:
+                completo = False
+        saida[COL_TOTAL] = total if completo else float("nan")
     for rotulo in ROTULOS_ACELERADORES:
         col_meta = ACELERADORES_COL_META.get(rotulo)
         if col_meta and col_meta in metas.columns:

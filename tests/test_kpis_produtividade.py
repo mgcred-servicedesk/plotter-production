@@ -643,3 +643,309 @@ class TestSituacaoDaVariacao:
 
         assert var.loc["ANA", "Variacao %"] == pytest.approx(-100.0)
         assert var.loc["ANA", COL_SITUACAO] == SIT_CAIU
+
+
+_COLUNAS_VARIACAO = [
+    COL_CONSULTOR, COL_PROD_DIA, "Anterior", "Variacao %", COL_SITUACAO,
+]
+
+
+@pytest.mark.parametrize(
+    "anterior, atual", [((2026, 7), (2026, 9)), ((2025, 11), (2026, 1))]
+)
+def test_variacao_nao_compara_competencias_nao_consecutivas(anterior, atual):
+    vinculos = _vinculos([("ANA", "A", "R1", 10)])
+    frames = {
+        anterior: produtividade_por_consultor(
+            _producao([("ANA", "A", "R1", 1000.0)]), vinculos
+        ),
+        atual: produtividade_por_consultor(
+            _producao([("ANA", "A", "R1", 2000.0)]), vinculos
+        ),
+    }
+    variacao = variacao_ultima_competencia(serie_por_consultor(frames))
+    # Sem o mes calendario anterior nao ha comparacao nenhuma: o frame
+    # volta VAZIO e com as cinco colunas. "Vazio ou NaN" tambem aceitava
+    # a ANA marcada como ausente no anterior — falta de competencia
+    # relatada como falta de gente.
+    assert variacao.empty
+    assert list(variacao.columns) == _COLUNAS_VARIACAO
+
+
+def test_variacao_consecutiva_na_virada_do_ano():
+    vinculos = _vinculos([("ANA", "A", "R1", 10)])
+    frames = {
+        (2025, 12): produtividade_por_consultor(
+            _producao([("ANA", "A", "R1", 1000.0)]), vinculos
+        ),
+        (2026, 1): produtividade_por_consultor(
+            _producao([("ANA", "A", "R1", 2000.0)]), vinculos
+        ),
+    }
+    variacao = variacao_ultima_competencia(serie_por_consultor(frames))
+    assert variacao.iloc[0]["Variacao %"] == pytest.approx(100.0)
+    assert variacao.iloc[0][COL_SITUACAO] == SIT_SUBIU
+
+
+def _serie_com_nova_no_ultimo(meses):
+    """ANA em todos os meses; NOVA so no ultimo (1.000 em 10 dias cada)."""
+    frames = {}
+    for chave in meses:
+        nomes = ["ANA", "NOVA"] if chave == meses[-1] else ["ANA"]
+        frames[chave] = produtividade_por_consultor(
+            _producao([(n, "A", "R1", 1000.0) for n in nomes]),
+            _vinculos([(n, "A", "R1", 10) for n in nomes]),
+        )
+    return serie_por_consultor(frames)
+
+
+def test_variacao_com_lacuna_no_meio_da_serie_nao_usa_o_penultimo_mes():
+    """O penultimo mes PRESENTE (06) nao e o anterior de 08: falta o 07."""
+    serie = _serie_com_nova_no_ultimo([(2026, 5), (2026, 6), (2026, 8)])
+
+    variacao = variacao_ultima_competencia(serie)
+
+    assert variacao.empty
+    assert list(variacao.columns) == _COLUNAS_VARIACAO
+
+
+def test_ausente_no_anterior_exige_o_mes_anterior_na_serie():
+    """Ausencia de PESSOA so existe quando o mes anterior existe.
+
+    Mesma gente nas duas series (ANA sempre; NOVA so no ultimo mes).
+    Com o mes anterior presente, NOVA e `ausente no anterior` e a ANA
+    nao. Sem ele, ninguem e comparado: o frame vazio diz que falta a
+    competencia, em vez de marcar o time inteiro como ausente.
+    """
+    consecutivo = variacao_ultima_competencia(
+        _serie_com_nova_no_ultimo([(2026, 6), (2026, 7)])
+    )
+    situacao = dict(
+        zip(consecutivo[COL_CONSULTOR], consecutivo[COL_SITUACAO])
+    )
+    assert situacao["NOVA"] == SIT_AUSENTE_ANTERIOR
+    assert situacao["ANA"] != SIT_AUSENTE_ANTERIOR
+
+    com_lacuna = variacao_ultima_competencia(
+        _serie_com_nova_no_ultimo([(2026, 5), (2026, 7)])
+    )
+    assert com_lacuna.empty
+
+
+@pytest.mark.unit
+class TestMetasMixERitmoDaPerformance:
+    """Metas integrais e MIX devem explicar a acao sem trocar unidades."""
+
+    def _dados(self, valores=(10000.0, 10000.0, 5000.0), dias=10):
+        pago = pd.DataFrame({
+            "CONSULTOR": ["ANA"] * 3, "LOJA": ["A"] * 3,
+            "REGIAO": ["R1"] * 3,
+            "categoria_codigo": ["CNC", "CONSIG_PRIV", "FGTS"],
+            "VALOR": valores, "pontos": valores,
+        })
+        vinculos = _vinculos([("ANA", "A", "R1", dias)])
+        metas = pd.DataFrame({
+            "LOJA": ["A"], "CNC": [10000.0], "CLT": [10000.0],
+            "SAQUE": [0.0], "CONSIGNADO": [0.0],
+            "FGTS_ANT_BENEF_13": [5000.0],
+        })
+        return pago, vinculos, metas
+
+    def _calcular(self, pago, vinculos, metas, **kwargs):
+        from src.dashboard.kpis.produtividade import enriquecer_performance
+
+        prod = produtividade_por_consultor(pago, vinculos)
+        return enriquecer_performance(prod, pago, metas, **kwargs).iloc[0]
+
+    def test_meta_mensal_integral_mesmo_com_poucos_dias(self):
+        pago, vin, metas = self._dados(dias=2)
+        linha = self._calcular(pago, vin, metas)
+        assert linha["Meta MIX"] == 25000.0
+        assert linha["Atingimento MIX %"] == pytest.approx(100.0)
+        assert linha["Situacao MIX"] == "ATINGIDO"
+
+    def test_excedente_de_cnc_nao_compensa_clt_e_pack(self):
+        pago, vin, metas = self._dados(valores=(20000.0, 5000.0, 0.0))
+        linha = self._calcular(pago, vin, metas)
+        assert linha["Meta MIX"] == 25000.0
+        assert linha["Falta MIX"] == 10000.0
+        assert linha["Atingimento MIX %"] == pytest.approx(60.0)
+        assert linha["Situacao MIX"] == "PENDENTE"
+        assert "CLT" in linha["Produtos pendentes"]
+
+    def test_pack_e_atingido_pela_soma_das_tres_categorias(self):
+        pago, vin, metas = self._dados(valores=(10000.0, 10000.0, 2000.0))
+        extras = pd.DataFrame({
+            "CONSULTOR": ["ANA", "ANA"], "LOJA": ["A", "A"],
+            "REGIAO": ["R1", "R1"],
+            "categoria_codigo": ["ANT_BENEF", "CNC_13"],
+            "VALOR": [1000.0, 2000.0], "pontos": [1000.0, 2000.0],
+        })
+        linha = self._calcular(pd.concat([pago, extras]), vin, metas)
+        assert linha["Meta MIX"] == 25000.0
+        assert linha["Falta MIX"] == 0.0
+        assert linha["Situacao MIX"] == "ATINGIDO"
+
+    def test_ritmo_usa_dias_restantes_do_vinculo_individual(self):
+        pago, vin, metas = self._dados(valores=(5000.0, 5000.0, 0.0), dias=4)
+        mes = _vinculos([("ANA", "A", "R1", 10)])
+        linha = self._calcular(
+            pago, vin, metas, df_vinculos_mes=mes, periodo_aberto=True
+        )
+        assert linha["Dias restantes"] == 6
+        assert linha["Ritmo necessario R$/dia"] == pytest.approx(2500.0)
+        assert linha["Meta MIX"] == 25000.0
+
+    @pytest.mark.parametrize("dias_mes", [4, 3])
+    def test_sem_dias_futuros_nao_produz_ritmo_infinito(self, dias_mes):
+        pago, vin, metas = self._dados(valores=(0.0, 0.0, 0.0), dias=4)
+        linha = self._calcular(
+            pago, vin, metas,
+            df_vinculos_mes=_vinculos([("ANA", "A", "R1", dias_mes)]),
+            periodo_aberto=True,
+        )
+        assert linha["Dias restantes"] == 0
+        assert pd.isna(linha["Ritmo necessario R$/dia"])
+
+    def test_competencia_fechada_nao_tem_ritmo_futuro(self):
+        pago, vin, metas = self._dados(valores=(5000.0, 5000.0, 0.0))
+        linha = self._calcular(
+            pago, vin, metas,
+            df_vinculos_mes=_vinculos([("ANA", "A", "R1", 20)]),
+            periodo_aberto=False,
+        )
+        assert linha["Dias restantes"] == 0
+        assert pd.isna(linha["Ritmo necessario R$/dia"])
+
+    def test_mes_aberto_sem_ledger_completo_nao_inventa_dias(self):
+        pago, vin, metas = self._dados(valores=(5000.0, 5000.0, 0.0))
+        linha = self._calcular(pago, vin, metas, periodo_aberto=True)
+        assert pd.isna(linha["Dias restantes"])
+        assert pd.isna(linha["Ritmo necessario R$/dia"])
+
+    def test_sem_producao_mantem_elegivel_com_meta_da_loja_do_vinculo(self):
+        pago, vin, metas = self._dados()
+        linha = self._calcular(pago.iloc[:0], vin, metas)
+        assert linha["Loja da meta"] == "A"
+        assert linha["Meta MIX"] == 25000.0
+        assert linha["Atingimento MIX %"] == 0.0
+        assert linha["Falta MIX"] == 25000.0
+        assert linha["Situacao MIX"] == "PENDENTE"
+
+    @pytest.mark.parametrize("caso", ["ausente", "nula", "zerada"])
+    def test_meta_indisponivel_nao_vira_zero_atingimento(self, caso):
+        pago, vin, metas = self._dados()
+        if caso == "ausente":
+            metas = metas.iloc[:0]
+        elif caso == "nula":
+            metas.loc[0, "CNC"] = float("nan")
+        else:
+            metas.loc[0, metas.columns != "LOJA"] = 0.0
+        linha = self._calcular(pago, vin, metas)
+        assert linha["Situacao MIX"] == "SEM META"
+        assert pd.isna(linha["Atingimento MIX %"])
+        assert pd.isna(linha["Falta MIX"])
+
+    def test_producao_sem_vinculo_nao_recebe_avaliacao_individual(self):
+        pago, vin, metas = self._dados()
+        linha = self._calcular(pago, vin.iloc[:0], metas)
+        assert linha["Situacao MIX"] == "SEM VINCULO"
+        assert pd.isna(linha["Atingimento MIX %"])
+        assert pd.isna(linha["Ritmo necessario R$/dia"])
+
+    def test_transferencia_usa_loja_de_maior_pontuacao_e_meta_unica(self):
+        pago, vin, metas = self._dados(valores=(10000.0, 0.0, 0.0))
+        pago.loc[:, "pontos"] = [10.0, 0.0, 0.0]
+        pago.loc[len(pago)] = ["ANA", "B", "R1", "CNC", 1000.0, 100.0]
+        vin = _vinculos([("ANA", "A", "R1", 5), ("ANA", "B", "R1", 5)])
+        metas_b = metas.assign(LOJA="B", CNC=30000.0)
+        linha = self._calcular(pago, vin, pd.concat([metas, metas_b]))
+        assert linha["Loja da meta"] == "B"
+        assert linha["Meta MIX"] == 45000.0
+
+
+@pytest.mark.unit
+class TestConsistenciaEAmplitude:
+    def _frame(self, linhas):
+        return pd.DataFrame([
+            {
+                COL_CONSULTOR: nome, COL_DIAS: dias,
+                COL_PRODUCAO: valor,
+                COL_PROD_DIA: valor / dias if dias else float("nan"),
+                "Situacao MIX": situacao,
+                "Atingimento MIX %": atingimento,
+            }
+            for nome, dias, valor, situacao, atingimento in linhas
+        ])
+
+    def test_amplitude_explica_dois_denominadores_e_exclui_orfao(self):
+        from src.dashboard.kpis.produtividade import resumo_performance_time
+
+        prod = self._frame([
+            ("ANA", 10, 1000, "ATINGIDO", 100),
+            ("BIA", 20, 0, "PENDENTE", 0),
+            ("CLARA", 5, 500, "SEM META", float("nan")),
+            ("ORFA", 0, 9000, "SEM VINCULO", float("nan")),
+        ])
+        resumo = resumo_performance_time(prod)
+        assert resumo["elegiveis"] == 3
+        assert resumo["com_meta"] == 2
+        assert resumo["atingiram_meta"] == 1
+        assert resumo["percentual_atingiram_meta"] == 50.0
+        assert resumo["percentual_atingiram_elegiveis"] == pytest.approx(100 / 3)
+        assert resumo["sem_meta"] == 1
+        assert resumo["sem_producao"] == 1
+        assert resumo["sem_vinculo"] == 1
+        assert resumo["producao_sem_vinculo"] == 9000
+        assert resumo["produtividade"] == pytest.approx(1500 / 35)
+        assert resumo["mediana_atingimento_mix"] == 50.0
+
+    def test_amplitude_sem_meta_nao_vira_zero_porcento(self):
+        from src.dashboard.kpis.produtividade import resumo_performance_time
+
+        resumo = resumo_performance_time(self._frame([
+            ("ANA", 10, 0, "SEM META", float("nan")),
+        ]))
+        assert pd.isna(resumo["percentual_atingiram_meta"])
+        assert resumo["sem_meta"] == 1
+        assert resumo["sem_producao"] == 1
+
+    def test_consistencia_exclui_sem_meta_mas_mediana_inclui_venda_zero(self):
+        from src.dashboard.kpis.produtividade import consistencia_performance
+
+        frames = {
+            (2026, 6): self._frame([("ANA", 10, 1000, "ATINGIDO", 100)]),
+            (2026, 7): self._frame([("ANA", 10, 0, "PENDENTE", 0)]),
+            (2026, 8): self._frame([("ANA", 10, 2000, "SEM META", float("nan"))]),
+            (2026, 9): None,
+            (2026, 10): self._frame([("ANA", 0, 99999, "SEM VINCULO", float("nan"))]),
+        }
+        linha = consistencia_performance(frames).iloc[0]
+        assert linha["Meses elegiveis"] == 3
+        assert linha["Meses com meta"] == 2
+        assert linha["Meses com MIX atingido"] == 1
+        assert linha["Consistencia MIX %"] == 50.0
+        assert linha["Meses produtividade"] == 3
+        assert linha["Mediana propria R$/dia"] == 100.0
+
+    def test_comparacao_pessoal_preserva_consultor_sem_historico(self):
+        from src.dashboard.kpis.produtividade import comparar_historico_proprio
+
+        atual = self._frame([
+            ("ANA", 10, 2000, "ATINGIDO", 100),
+            ("NOVA", 10, 1000, "PENDENTE", 50),
+        ])
+        frames = {(2026, 9): self._frame([("ANA", 10, 1000, "ATINGIDO", 100)])}
+        resultado = comparar_historico_proprio(atual, frames).set_index(COL_CONSULTOR)
+        assert resultado.loc["ANA", "Variacao vs historico %"] == 100.0
+        assert resultado.loc["NOVA", "Meses produtividade"] == 0
+        assert pd.isna(resultado.loc["NOVA", "Variacao vs historico %"])
+
+    def test_historico_zero_nao_produz_crescimento_infinito(self):
+        from src.dashboard.kpis.produtividade import comparar_historico_proprio
+
+        atual = self._frame([("ANA", 10, 1000, "ATINGIDO", 100)])
+        frames = {(2026, 9): self._frame([("ANA", 10, 0, "PENDENTE", 0)])}
+        linha = comparar_historico_proprio(atual, frames).iloc[0]
+        assert linha["Mediana propria R$/dia"] == 0.0
+        assert pd.isna(linha["Variacao vs historico %"])

@@ -137,14 +137,30 @@ def _tabela(at, i=0) -> pd.DataFrame:
 
 @pytest.mark.unit
 class TestSubNav:
+    # "Fim de relacionamento — Liga" (foto FDR) nao depende do corte da
+    # Carteira: entra em qualquer mes COM periodo de apuracao, antes e
+    # depois de 10/2026, apos Liga/Promessa/Carteira e antes do export.
     def test_a_partir_de_10_2026_carteira_substitui_o_export(self):
         nomes = _nomes_nav(_rodar(_reconquista(10, 2026), nav=None))
-        assert nomes == ["Liga", "Promessa Diária", "Carteira Elegível"]
+        assert nomes == ["Liga", "Promessa Diária", "Carteira Elegível",
+                         "Fim de relacionamento — Liga"]
 
     def test_09_2026_mantem_as_sub_abas_do_export(self):
         nomes = _nomes_nav(_rodar(_reconquista(9, 2026), nav=None))
-        assert nomes == ["Liga", "Promessa Diária", "Por Loja",
+        assert nomes == ["Liga", "Promessa Diária",
+                         "Fim de relacionamento — Liga", "Por Loja",
                          "Detalhamento"]
+
+    def test_fdr_some_sem_periodo_de_apuracao(self):
+        """Sem `apuracao_mes`/`apuracao_ano` nao ha competencia para a
+        foto FDR: a sub-aba nao entra e o resto da sub-nav segue (a liga
+        com status `ok` mantem a sub-nav fora do early return)."""
+        reconquista = _reconquista(10, 2026)
+        reconquista["apuracao_mes"] = None
+        reconquista["apuracao_ano"] = None
+        nomes = _nomes_nav(_rodar(reconquista, nav=None))
+        assert "Liga" in nomes
+        assert "Fim de relacionamento — Liga" not in nomes
 
     def test_carteira_so_e_lida_quando_a_sub_aba_abre(self):
         at = _rodar(_reconquista(10, 2026), nav="Liga")

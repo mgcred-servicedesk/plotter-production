@@ -301,11 +301,11 @@ def render_resumo_executivo(
     elif perc_ating >= 80:
         status_class = "mg-status-warning"
         status_icon = "⚠️"
-        status_text = f"{perc_ating:.1f}% da meta MIX atingida (R$)"
+        status_text = f"{perc_ating:.1f}% dos produtos MIX atingidos (R$)"
     else:
         status_class = "mg-status-danger"
         status_icon = "🚨"
-        status_text = f"Apenas {perc_ating:.1f}% da meta MIX atingida (R$)"
+        status_text = f"Apenas {perc_ating:.1f}% dos produtos MIX atingidos (R$)"
 
     if meta_mix <= 0:
         status_sub = (
@@ -431,7 +431,7 @@ def render_resumo_executivo(
         f'<div class="mg-section-title">📈 Projeções do Período</div>'
         f'<div class="mg-metric-grid mg-metric-grid-3">'
         f'<div class="mg-metric-item">'
-        f'<div class="mg-metric-label">Proj. MIX</div>'
+        f'<div class="mg-metric-label">Proj. Prod. MIX</div>'
         f'<div class="mg-metric-value {proj_mix_class}">{perc_proj_mix:.1f}%</div>'
         f'<div class="mg-metric-sub">Projeção em valor financeiro</div>'
         f'</div>'

@@ -105,6 +105,11 @@ import numpy as np
 import pandas as pd
 
 from src.dashboard.kpis.gerais import (
+    PRODUTOS_DASHBOARD,
+    PRODUTOS_DASHBOARD_COL_META,
+    avaliar_regra_mix,
+    metas_produto_loja_principal,
+    resolver_loja_principal,
     excluir_lojas_backoffice,
     excluir_supervisores,
 )
@@ -138,6 +143,25 @@ COLUNAS_PRODUTIVIDADE = [
     COL_SHARE_REGIAO,
     COL_IDX_CARTEIRA,
 ]
+
+# Metas individuais integrais; nenhuma destas colunas mede presenca.
+COL_META_MIX = "Meta MIX"
+COL_ATINGIMENTO_MIX = "Atingimento MIX %"
+COL_SITUACAO_MIX = "Situacao MIX"
+COL_FALTA_MIX = "Falta MIX"
+COL_PENDENCIAS_MIX = "Produtos pendentes"
+COL_DIAS_RESTANTES = "Dias restantes"
+COL_RITMO_NECESSARIO = "Ritmo necessario R$/dia"
+COL_LOJA_META = "Loja da meta"
+COL_ORIGEM_META = "Origem da meta"
+COLUNAS_FALTA_PRODUTO = {
+    "CNC": "Falta CNC",
+    "CLT": "Falta CLT",
+    "SAQUE": "Falta Saque",
+    "CONSIGNADO": "Falta Consignado",
+    "FGTS_ANT_BEN_CNC13": "Falta PACK",
+}
+
 
 # ── Colunas da serie temporal ────────────────────────
 COL_ANO = "Ano"
@@ -617,9 +641,14 @@ def variacao_ultima_competencia(serie: pd.DataFrame) -> pd.DataFrame:
 
     Returns:
         ``[Consultor, R$/dia elegivel, Anterior, Variacao %, Situacao]``.
-        So compara competencias CONSECUTIVAS: se a pessoa nao aparece no
-        mes anterior (entrou depois, saiu e voltou, ou o mes nao foi
-        carregado), a variacao e ``NaN`` — lacuna nao e queda de 100%.
+        So compara competencias CONSECUTIVAS: a base e o mes calendario
+        anterior a ultima competencia da serie, nunca o penultimo mes
+        presente. Se esse mes nao esta na serie (lacuna ou nao
+        carregado), nao ha comparacao e o frame volta VAZIO, com as
+        colunas — a falta e da competencia, nao das pessoas, e nao vira
+        "ausente no anterior". Com o mes presente, quem nao aparece nele
+        (entrou depois, saiu e voltou) fica com variacao ``NaN`` e
+        ``SIT_AUSENTE_ANTERIOR`` — lacuna nao e queda de 100%.
 
         ``Situacao`` existe porque ``Variacao %`` ausente tem QUATRO
         causas diferentes e quem le precisa saber qual: nao estava no
@@ -639,9 +668,19 @@ def variacao_ultima_competencia(serie: pd.DataFrame) -> pd.DataFrame:
         return pd.DataFrame(columns=cols)
 
     atual = serie[serie[COL_COMPETENCIA] == competencias[-1]]
-    anterior = serie[serie[COL_COMPETENCIA] == competencias[-2]].set_index(
-        COL_CONSULTOR
-    )[COL_PROD_DIA]
+    # O penultimo mes presente pode estar separado por uma lacuna.
+    # Buscar o mes calendario anterior preserva a ausencia em vez de
+    # apresentar uma variacao de varios meses como mensal.
+    ultima = pd.Period(competencias[-1], freq="M")
+    competencia_anterior = str(ultima - 1)
+    # Mes anterior fora da serie e falta de COMPETENCIA, nao de gente:
+    # sem ele nao ha comparacao. Seguir adiante marcaria o time inteiro
+    # como ausente no anterior, como se todos tivessem sumido.
+    if competencia_anterior not in competencias:
+        return pd.DataFrame(columns=cols)
+    anterior = serie[
+        serie[COL_COMPETENCIA] == competencia_anterior
+    ].set_index(COL_CONSULTOR)[COL_PROD_DIA]
 
     saida = atual[[COL_CONSULTOR, COL_PROD_DIA]].copy()
     saida["Anterior"] = saida[COL_CONSULTOR].map(anterior)
@@ -671,3 +710,308 @@ def variacao_ultima_competencia(serie: pd.DataFrame) -> pd.DataFrame:
         default=SIT_ESTAVEL,
     )
     return saida[cols].reset_index(drop=True)
+
+
+
+def enriquecer_performance(
+    prod: pd.DataFrame,
+    df_pago: pd.DataFrame,
+    df_metas: pd.DataFrame,
+    df_vinculos_mes: Optional[pd.DataFrame] = None,
+    *,
+    periodo_aberto: bool = False,
+) -> pd.DataFrame:
+    """Acrescenta meta individual integral, MIX e ritmo necessario.
+
+    Recebe os mesmos recortes pos-RLS da produtividade. ``df_metas``
+    deve ser o pivot CONSULTOR, nunca as metas de loja. A meta nao e
+    proporcionalizada por admissao, desligamento ou dias de vinculo.
+    A loja do alvo vem de ``resolver_loja_principal`` (maior pontuacao);
+    somente quem nao tem producao usa a loja do ledger em ``prod``.
+    ``Loja da meta`` e ``Origem da meta`` tornam essa escolha explicita.
+
+    A regra de MIX e a canonica: o excedente de um produto nao cobre a
+    falta de outro, e o pack usa sua meta conjunta uma unica vez.
+    Ausencia de alvo fica em branco/SEM META, nunca meta zero inventada.
+
+    ``df_vinculos_mes`` conta os dias de vinculo ate o fim do mes,
+    inclusive vinculos sem termino conhecido. No periodo aberto, dias
+    restantes sao esses dias menos os ja considerados em ``prod``.
+    Sem esse denominador, dias e ritmo ficam ausentes. No fechado nao
+    ha dias futuros: ritmo e ausente se ainda falta, zero se atingiu.
+    Faltas, ferias e afastamentos nao entram neste calculo.
+    """
+    saida = prod.copy()
+    for coluna in (
+        COL_META_MIX, COL_ATINGIMENTO_MIX, COL_FALTA_MIX,
+        COL_DIAS_RESTANTES, COL_RITMO_NECESSARIO,
+        *COLUNAS_FALTA_PRODUTO.values(),
+    ):
+        saida[coluna] = np.nan
+    saida[COL_SITUACAO_MIX] = "SEM META"
+    for coluna in (COL_PENDENCIAS_MIX, COL_LOJA_META, COL_ORIGEM_META):
+        saida[coluna] = ""
+    if saida.empty:
+        return saida
+
+    pagos = excluir_lojas_backoffice(df_pago).copy()
+    if "CONSULTOR" in pagos.columns:
+        pagos["CONSULTOR"] = pagos["CONSULTOR"].map(_norm_nome)
+    principais = resolver_loja_principal(pagos)
+    por_pessoa = (
+        dict(tuple(pagos.groupby("CONSULTOR")))
+        if "CONSULTOR" in pagos.columns else {}
+    )
+    metas = df_metas.copy()
+    if "LOJA" in metas.columns:
+        metas["LOJA"] = metas["LOJA"].map(_norm_nome)
+
+    dias_mes = pd.Series(dtype=float)
+    if (
+        df_vinculos_mes is not None
+        and {"CONSULTOR", "DIAS_ELEGIVEIS"}.issubset(df_vinculos_mes.columns)
+    ):
+        valores = pd.to_numeric(
+            df_vinculos_mes["DIAS_ELEGIVEIS"], errors="coerce"
+        )
+        dias_mes = valores.groupby(
+            df_vinculos_mes["CONSULTOR"].map(_norm_nome)
+        ).sum(min_count=1)
+
+    for indice, pessoa in saida.iterrows():
+        chave = _norm_nome(pessoa[COL_CONSULTOR])
+        dias = float(pessoa[COL_DIAS])
+        tem_vinculo = np.isfinite(dias) and dias > 0
+        if tem_vinculo:
+            if not periodo_aberto:
+                saida.at[indice, COL_DIAS_RESTANTES] = 0.0
+            elif chave in dias_mes and pd.notna(dias_mes[chave]):
+                saida.at[indice, COL_DIAS_RESTANTES] = max(
+                    0.0, float(dias_mes[chave]) - dias
+                )
+        else:
+            saida.at[indice, COL_SITUACAO_MIX] = "SEM VINCULO"
+            # O cadastro incompleto nao e uma avaliacao da pessoa.
+            # Mantem toda a producao no diagnostico, sem atribuir meta.
+            continue
+
+        producao = por_pessoa.get(chave)
+        if producao is not None and not producao.empty:
+            loja = principais.get(chave)
+            origem = "Maior pontuacao no periodo"
+        elif tem_vinculo:
+            loja = pessoa[COL_LOJA]
+            origem = "Vinculo (sem producao)"
+        else:
+            loja = None
+            origem = ""
+        if pd.isna(loja) or not str(loja or "").strip():
+            continue
+        saida.at[indice, COL_LOJA_META] = str(loja)
+        saida.at[indice, COL_ORIGEM_META] = origem
+        alvo = metas_produto_loja_principal(metas, _norm_nome(loja))
+        if alvo.empty:
+            continue
+
+        componentes = [
+            col for col in PRODUTOS_DASHBOARD_COL_META.values()
+            if col in alvo.columns
+        ]
+        valores_meta = pd.to_numeric(
+            alvo.iloc[0][componentes], errors="coerce"
+        )
+        if (
+            valores_meta.empty
+            or not np.isfinite(valores_meta).all()
+            or (valores_meta < 0).any()
+            or float(valores_meta.sum()) <= 0
+        ):
+            continue
+        meta_mix = float(valores_meta.sum())
+        produtos = []
+        total_mix = 0.0
+        for produto, categorias in PRODUTOS_DASHBOARD.items():
+            realizado = 0.0
+            if producao is not None and not producao.empty:
+                realizado = float(pd.to_numeric(
+                    producao.loc[
+                        producao["categoria_codigo"].isin(categorias), "VALOR"
+                    ], errors="coerce"
+                ).fillna(0.0).sum())
+            total_mix += realizado
+            produtos.append({
+                "produto": produto,
+                "valor_atual": realizado,
+                "meta_total": float(valores_meta.get(
+                    PRODUTOS_DASHBOARD_COL_META[produto], 0.0
+                )),
+            })
+        regra = avaliar_regra_mix(produtos, total_mix, meta_mix)
+        saida.at[indice, COL_META_MIX] = meta_mix
+        saida.at[indice, COL_ATINGIMENTO_MIX] = regra["perc"]
+        saida.at[indice, COL_FALTA_MIX] = regra["falta"]
+        pendencias = {p["produto"]: p["falta"] for p in regra["pendentes"]}
+        for produto, coluna in COLUNAS_FALTA_PRODUTO.items():
+            saida.at[indice, coluna] = pendencias.get(produto, 0.0)
+        saida.at[indice, COL_PENDENCIAS_MIX] = ", ".join(
+            COLUNAS_FALTA_PRODUTO[p["produto"]].removeprefix("Falta ")
+            for p in regra["pendentes"]
+        )
+        if not tem_vinculo:
+            continue
+        saida.at[indice, COL_SITUACAO_MIX] = (
+            "ATINGIDO" if regra["atingida"] else "PENDENTE"
+        )
+        restantes = saida.at[indice, COL_DIAS_RESTANTES]
+        if regra["atingida"]:
+            saida.at[indice, COL_RITMO_NECESSARIO] = 0.0
+        elif pd.notna(restantes) and restantes > 0:
+            saida.at[indice, COL_RITMO_NECESSARIO] = (
+                regra["falta"] / restantes
+            )
+    return saida
+
+
+
+def resumo_performance_time(prod: pd.DataFrame) -> Dict[str, float]:
+    """Amplitude do resultado, com os denominadores explicitos.
+
+    O percentual com meta divide somente pelas pessoas avaliaveis;
+    a amplitude divide por TODOS os elegiveis, inclusive sem meta e
+    sem producao. Ausencia de meta e publicada separadamente, para que
+    amplitude nao seja interpretada como reprovacao dos nao avaliados.
+    Sem denominador, percentuais e produtividade ficam ausentes.
+    """
+    if prod.empty:
+        elegiveis = prod
+        com_meta = pd.Series(dtype=bool)
+        atingidos = pd.Series(dtype=bool)
+        sem_vinculo = prod
+    else:
+        elegiveis = prod[prod[COL_DIAS] > 0]
+        sem_vinculo = prod[prod[COL_DIAS] <= 0]
+        situacao = elegiveis.get(
+            COL_SITUACAO_MIX, pd.Series("SEM META", index=elegiveis.index)
+        )
+        com_meta = situacao.isin(["ATINGIDO", "PENDENTE"])
+        atingidos = situacao.eq("ATINGIDO")
+    n = len(elegiveis)
+    n_meta = int(com_meta.sum())
+    n_atingidos = int(atingidos.sum())
+    produtividade = produtividade_carteira(prod)
+    return {
+        "elegiveis": n,
+        "com_meta": n_meta,
+        "atingiram_meta": n_atingidos,
+        "percentual_atingiram_meta": (
+            n_atingidos / n_meta * 100.0 if n_meta else np.nan
+        ),
+        "percentual_atingiram_elegiveis": (
+            n_atingidos / n * 100.0 if n else np.nan
+        ),
+        "sem_meta": n - n_meta,
+        "sem_producao": produtividade["sem_producao"],
+        "sem_vinculo": len(sem_vinculo),
+        "producao_sem_vinculo": (
+            float(sem_vinculo[COL_PRODUCAO].sum())
+            if not sem_vinculo.empty else 0.0
+        ),
+        "mediana_atingimento_mix": (
+            float(elegiveis.loc[com_meta, COL_ATINGIMENTO_MIX].median())
+            if n_meta else np.nan
+        ),
+        "produtividade": produtividade["produtividade"] if n else np.nan,
+    }
+
+
+def consistencia_performance(
+    frames: Dict[Tuple[int, int], pd.DataFrame],
+) -> pd.DataFrame:
+    """Historico individual em competencias FECHADAS enriquecidas.
+
+    O chamador escolhe a janela. Competencia indisponivel ou pessoa
+    sem vinculo nao vira zero. Elegivel sem venda entra com zero na
+    mediana; sem meta sai apenas do denominador de consistencia MIX.
+    Os dois tamanhos de amostra acompanham seus indicadores.
+    """
+    colunas = [
+        COL_CONSULTOR, "Meses elegiveis", "Meses com meta",
+        "Meses com MIX atingido", "Consistencia MIX %",
+        "Mediana propria R$/dia", "Meses produtividade",
+    ]
+    partes = []
+    for (ano, mes), frame in sorted(frames.items()):
+        if frame is None or frame.empty:
+            continue
+        elegiveis = frame.loc[frame[COL_DIAS] > 0].copy()
+        if elegiveis.empty:
+            continue
+        elegiveis["_key"] = elegiveis[COL_CONSULTOR].map(_norm_nome)
+        elegiveis[COL_COMPETENCIA] = _competencia(ano, mes)
+        if COL_SITUACAO_MIX not in elegiveis.columns:
+            elegiveis[COL_SITUACAO_MIX] = "SEM META"
+        partes.append(elegiveis[[
+            "_key", COL_CONSULTOR, COL_COMPETENCIA, COL_PROD_DIA,
+            COL_SITUACAO_MIX,
+        ]])
+    if not partes:
+        return pd.DataFrame(columns=colunas)
+    serie = pd.concat(partes, ignore_index=True).drop_duplicates(
+        ["_key", COL_COMPETENCIA], keep="last"
+    )
+    linhas = []
+    for _, grupo in serie.groupby("_key", sort=True):
+        taxas = pd.to_numeric(grupo[COL_PROD_DIA], errors="coerce")
+        taxas = taxas[np.isfinite(taxas)]
+        com_meta = grupo[COL_SITUACAO_MIX].isin(["ATINGIDO", "PENDENTE"])
+        atingidos = grupo[COL_SITUACAO_MIX].eq("ATINGIDO")
+        meses_meta = int(com_meta.sum())
+        meses_atingidos = int(atingidos.sum())
+        linhas.append({
+            COL_CONSULTOR: grupo[COL_CONSULTOR].iloc[-1],
+            "Meses elegiveis": len(grupo),
+            "Meses com meta": meses_meta,
+            "Meses com MIX atingido": meses_atingidos,
+            "Consistencia MIX %": (
+                meses_atingidos / meses_meta * 100.0
+                if meses_meta else np.nan
+            ),
+            "Mediana propria R$/dia": (
+                float(taxas.median()) if len(taxas) else np.nan
+            ),
+            "Meses produtividade": len(taxas),
+        })
+    return pd.DataFrame(linhas, columns=colunas)
+
+
+def comparar_historico_proprio(
+    prod: pd.DataFrame,
+    frames: Dict[Tuple[int, int], pd.DataFrame],
+) -> pd.DataFrame:
+    """Compara R$/dia atual com a mediana propria, preservando lacunas.
+
+    ``frames`` deve conter somente competencias fechadas ANTERIORES
+    a competencia de ``prod``: o chamador conhece essa competencia e
+    evita incluir a propria observacao na referencia. Referencia zero
+    nao gera infinito nem variacao inventada; permanece ausente.
+    """
+    historico = consistencia_performance(frames)
+    historico["_key"] = historico[COL_CONSULTOR].map(_norm_nome)
+    historico = historico.set_index("_key")
+    saida = prod.copy()
+    chaves = saida[COL_CONSULTOR].map(_norm_nome)
+    for coluna in historico.columns:
+        if coluna != COL_CONSULTOR:
+            saida[coluna] = chaves.map(historico[coluna])
+    contagens = [
+        "Meses elegiveis", "Meses com meta", "Meses com MIX atingido",
+        "Meses produtividade",
+    ]
+    for coluna in contagens:
+        saida[coluna] = saida[coluna].fillna(0).astype(int)
+    mediana = pd.to_numeric(saida["Mediana propria R$/dia"], errors="coerce")
+    atual = pd.to_numeric(saida[COL_PROD_DIA], errors="coerce")
+    saida["Variacao vs historico %"] = (
+        atual / mediana.where(mediana > 0) - 1.0
+    ) * 100.0
+    return saida

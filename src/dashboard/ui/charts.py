@@ -534,6 +534,7 @@ def criar_grafico_media_regiao(df_media):
 def criar_grafico_produtividade(
     df_carteira,
     df_consultores=None,
+    competencias=None,
 ):
     """Evolucao da produtividade por dia elegivel, em competencias.
 
@@ -549,6 +550,27 @@ def criar_grafico_produtividade(
     t = _template()
     fig = go.Figure()
 
+    # connectgaps=False so interrompe pontos explicitamente ausentes.
+    # Completar a grade evita ligar julho a setembro por cima de agosto.
+    available = []
+    for frame in (df_carteira, df_consultores):
+        if frame is not None and not frame.empty:
+            available.extend(frame["Competencia"].dropna().tolist())
+    available.extend(competencias or [])
+    calendar = (
+        pd.period_range(min(available), max(available), freq="M")
+        .astype(str).tolist()
+        if available else []
+    )
+
+    def complete_months(frame):
+        return (
+            frame.set_index("Competencia")
+            .reindex(calendar)
+            .rename_axis("Competencia")
+            .reset_index()
+        )
+
     if df_consultores is not None and not df_consultores.empty:
         cores = [
             CHART_COLORS["secondary"],
@@ -560,6 +582,7 @@ def criar_grafico_produtividade(
         for i, (nome, grupo) in enumerate(
             df_consultores.groupby("Consultor", sort=False)
         ):
+            grupo = complete_months(grupo)
             fig.add_trace(
                 go.Scatter(
                     x=grupo["Competencia"],
@@ -577,6 +600,7 @@ def criar_grafico_produtividade(
             )
 
     if df_carteira is not None and not df_carteira.empty:
+        df_carteira = complete_months(df_carteira)
         fig.add_trace(
             go.Scatter(
                 x=df_carteira["Competencia"],

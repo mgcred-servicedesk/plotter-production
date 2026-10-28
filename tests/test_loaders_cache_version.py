@@ -48,6 +48,16 @@ fora dela quebra o teste. A lista só pode ENCOLHER — quando alguém
 adiciona ``cache_version`` de verdade a um desses (pagando a dívida),
 ``test_allowlist_fica_honesta_quando_a_divida_e_paga`` força a remoção
 do nome da lista, para ela nunca virar papel.
+
+## O par FDR da Liga (2026-10-27)
+
+``_fim_relacionamento_liga_atual``/``_historico`` (11469a9, 2026-10-21)
+nasceram sem ``cache_version`` e esta catraca os pegou como wrappers
+novos fora da allowlist. Em vez de entrarem na lista, foram versionados
+na origem (``cache_version: int = 1``, passado explicitamente por
+``carregar_fim_relacionamento_liga``) e passaram a constar nos três
+testes de proteção abaixo: assinatura, dispatcher e invalidação real do
+cache.
 """
 import ast
 import inspect
@@ -183,15 +193,18 @@ class TestCatracaCacheVersionEmWrappersQueDelegam:
         )
 
     def test_wrappers_ja_protegidos_nao_regridem(self):
-        """Os 4 wrappers corrigidos no incidente de 09/2026 continuam
-        com `cache_version` — trava contra alguém remover o parâmetro
-        num refactor futuro sem perceber o motivo dele existir."""
+        """Os wrappers já versionados — os 4 do incidente de 09/2026 e o
+        par FDR da Liga — continuam com `cache_version`: trava contra
+        alguém remover o parâmetro num refactor futuro sem perceber o
+        motivo dele existir."""
         wrappers = _wrappers_cache_data_que_delegam()
         protegidos = {
             "_metas_produto_consultor_atual",
             "_metas_produto_consultor_historico",
             "_consolidar_atual",
             "_consolidar_historico",
+            "_fim_relacionamento_liga_atual",
+            "_fim_relacionamento_liga_historico",
         }
         for nome in protegidos:
             assert wrappers.get(nome) is True, (
@@ -209,6 +222,11 @@ class TestCatracaCacheVersionEmWrappersQueDelegam:
             (
                 "consolidar_dados",
                 ("_consolidar_atual", "_consolidar_historico"),
+            ),
+            (
+                "carregar_fim_relacionamento_liga",
+                ("_fim_relacionamento_liga_atual",
+                 "_fim_relacionamento_liga_historico"),
             ),
         ],
     )
@@ -248,6 +266,8 @@ class TestCatracaCacheVersionEmWrappersQueDelegam:
         ("_metas_produto_consultor_historico", "_fetch_metas_produto_consultor", 1),
         ("_consolidar_atual", "_executar_consolidacao", 4),
         ("_consolidar_historico", "_executar_consolidacao", 4),
+        ("_fim_relacionamento_liga_atual", "_fetch_fim_relacionamento_liga", 1),
+        ("_fim_relacionamento_liga_historico", "_fetch_fim_relacionamento_liga", 1),
     ],
 )
 def test_versao_invalida_cache_real(

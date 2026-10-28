@@ -143,10 +143,13 @@ class TestSubNavPromessa:
         at = _rodar(_dict("fora"), nav=None)
         assert not any("Promessa Diária" in o for o in _opcoes_nav(at))
 
-    def test_ordem_liga_promessa_por_loja_detalhamento(self):
+    def test_ordem_liga_promessa_fdr_por_loja_detalhamento(self):
+        # `_dict()` e 09/2026: antes da Carteira (>= 10/2026), logo as
+        # sub-abas do export seguem e a foto FDR entra antes delas.
         opcoes = _opcoes_nav(_rodar(_dict("ok"), nav=None))
         nomes = [o.split(":")[-1].split("·")[0].strip() for o in opcoes]
-        assert nomes == ["Liga", "Promessa Diária", "Por Loja",
+        assert nomes == ["Liga", "Promessa Diária",
+                         "Fim de relacionamento — Liga", "Por Loja",
                          "Detalhamento"]
 
 
