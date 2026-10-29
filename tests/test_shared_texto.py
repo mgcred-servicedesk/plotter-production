@@ -49,6 +49,9 @@ class TestNormalizarNome:
     @pytest.mark.parametrize("variante", [
         "JOÃO DA SILVA", "joao da silva", "  João Da Silva  ",
         "JOAO DA SILVA", "joão da silva",
+        # Mesma regra de `public.fn_normalizar_nome` (migration 144):
+        # espaço interno repetido, tabulação e espaço não separável.
+        "JOÃO  DA   SILVA", "joao\tda silva", "João da Silva",
     ])
     def test_todas_as_grafias_dao_a_mesma_chave(self, variante):
         assert normalizar_nome(

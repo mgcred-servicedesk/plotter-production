@@ -45,12 +45,19 @@ def normalizar_rotulo(serie: pd.Series) -> pd.Series:
 
 
 def normalizar_nome(serie: pd.Series) -> pd.Series:
-    """Chave de comparacao de nome de pessoa: rotulo + acento dobrado.
+    """Chave de comparacao de nome de pessoa: rotulo + acento dobrado +
+    espaco interno colapsado.
 
-    ``JOÃO DA SILVA``, ``joao da silva`` e ``  João Da Silva  `` viram
+    ``JOÃO DA SILVA``, ``joao  da silva`` e ``  João Da Silva  `` viram
     a mesma chave. Usada em todo merge/`isin` que cruza nome de
     consultor ou supervisor entre fontes diferentes (cadastro,
     reconquista, cobranca consignavel, supervisor_vigencia).
+
+    E a mesma regra de ``public.fn_normalizar_nome`` (migration 144), que
+    gera ``nome_normalizado`` nos ledgers e e usada pelo Caderno. Ate a
+    144 cada lado fazia metade: o SQL colapsava espaco e nao dobrava
+    acento; aqui era o contrario. Mudar uma das duas sem a outra volta a
+    separar dashboard e Caderno sobre quem e supervisor.
 
     Implementacao: a decomposicao NFKD separa a letra do diacritico
     (``Ç`` -> ``C`` + cedilha), e o ``replace`` apaga o bloco Unicode
@@ -72,4 +79,9 @@ def normalizar_nome(serie: pd.Series) -> pd.Series:
         # sequence" — as colunas de texto sao Arrow-backed e vao para o
         # RE2 do pyarrow, que nao entende \\u.
         .str.replace("[\u0300-\u036f]", "", regex=True)
+        # Espaco repetido no meio vira um so. O NFKD acima ja trocou o
+        # espaco nao separavel (U+00A0) por espaco comum; `\s` e entendido
+        # pelo `re` e pelo RE2, entao aqui a string crua e segura.
+        .str.replace(r"\s+", " ", regex=True)
+        .str.strip()
     )

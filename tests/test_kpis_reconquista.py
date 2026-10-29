@@ -384,8 +384,12 @@ class TestNormTexto:
         oposta: `normalizar_rotulo` preserva (ver `shared/texto.py`)."""
         assert _norm_texto(pd.Series(["João"])).tolist() == ["JOAO"]
 
-    def test_NAO_colapsa_espaco_interno(self):
-        assert _norm_texto(pd.Series(["A  B"])).tolist() == ["A  B"]
+    def test_colapsa_espaco_interno(self):
+        """Desde 2026-10-29 a chave de nome colapsa espaço interno, como
+        `public.fn_normalizar_nome` (migration 144). Antes não colapsava
+        só por convenção; nenhuma fonte da Reconquista tinha espaço
+        repetido quando a regra mudou."""
+        assert _norm_texto(pd.Series(["A  B"])).tolist() == ["A B"]
 
     def test_nulo_nao_vira_texto(self):
         """Caracterização: `None` sai como NA, não como string vazia

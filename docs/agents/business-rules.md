@@ -532,6 +532,12 @@ exibição:
   (`src/dashboard/kpis/produtos.py`) deriva `PRODUTO_DETALHADO` de
   `categoria_codigo`, com fallback para `grupo_dashboard` quando a
   categoria não veio (digitação legada, join de produto não resolvido).
+- **No Caderno (Bereshit)** o MIX não compara com meta, então segue a forma
+  desmembrada: FGTS, Antecipação de Benefício e, a partir da migration 145
+  (contrato v1.10), CNC 13º em grupo próprio. Até a 145 o Caderno somava o
+  13º ao CNC; snapshot publicado antes dela continua assim até ser
+  republicado, e o payload declara `contractVersion` para o leitor saber qual
+  composição está lendo.
 
 ## Pipeline "Em Análise"
 
@@ -842,16 +848,42 @@ Commit `292ab90`: contratos de categoria "emissão" (quando aplicável) têm
 
 ## Exclusão de supervisores
 
-Supervisores **não aparecem** em análises consultor-level:
+Supervisores **não aparecem** em análises consultor-level. Helper único em
+[`kpis/gerais.py`](../../src/dashboard/kpis/gerais.py):
 
 ```python
-def _excluir_supervisores(df, df_sup):
+def excluir_supervisores(df, df_sup):
     if df_sup is not None and "SUPERVISOR" in df_sup.columns and "CONSULTOR" in df.columns:
-        return df[~df["CONSULTOR"].isin(df_sup["SUPERVISOR"].unique())].copy()
+        supervisores = set(normalizar_nome(df_sup["SUPERVISOR"].dropna()))
+        return df[~normalizar_nome(df["CONSULTOR"]).isin(supervisores)].copy()
     return df.copy()
 ```
 
 Aplicar **antes** de rankings, contagens de consultores e médias por consultor.
+
+- **Quem é supervisor é point-in-time.** `df_sup` vem de
+  `carregar_supervisores(mes, ano)`, que lê o ledger `supervisor_vigencia`
+  (076), não a tabela `supervisores` (foto do presente). Vale o papel do
+  **último dia** da competência para o mês inteiro — mesma âncora da
+  `obter_caderno_fechamento` (migration 085), para produção e headcount não
+  discordarem sobre quem era supervisor.
+- **Comparação por nome normalizado** (`normalizar_nome`, `src/shared/texto.py`:
+  caixa, espaços nas pontas e acento). O nome do supervisor vem do cadastro e
+  o do consultor vem dos contratos, e as grafias divergem: em 08/2026
+  `Djane Maria Pereira dos Santos` (contratos) escapava de
+  `DJANE MARIA PEREIRA DOS SANTOS` (supervisores) e entrava no ranking de
+  consultores.
+- **Regra única com o Caderno (2026-10-29).** `normalizar_nome` (Python) e
+  `public.fn_normalizar_nome` (SQL, migration 144) fazem a mesma coisa: caixa,
+  pontas, acento dobrado e espaço interno colapsado. Até a 144 cada lado fazia
+  metade — o SQL colapsava espaço sem dobrar acento, e aqui era o contrário.
+  As colunas `nome_normalizado` dos ledgers e todas as funções que comparam
+  nome usam a função. Mudar uma das duas sem a outra volta a separar dashboard
+  e Caderno sobre quem é supervisor. Ver
+  [progress/2026-10-29](progress/2026-10-29-nome-unico-e-cnc13-no-caderno.md).
+- **Média por loja não é análise consultor-level:** nela a venda do
+  supervisor conta como produção da loja (decisão de 2026-10-07,
+  `calcular_medias_du_por_nivel`). Só a média por consultor exclui.
 
 > **Exceção documentada:** os contadores de "Emissão e Seguros — Análise
 > Regional" (ver
@@ -990,7 +1022,10 @@ valerem 100% por construção. A UI avisa nos dois casos.
 
 `Região` aqui é a **região atual** da loja (`REGIAO_ATUAL`, `loaders.py`), não
 a vigente na data do contrato (`loja_regiao_vigencia`) — divergência
-deliberada, porque o benchmark compara os times de hoje.
+deliberada, porque o benchmark compara os times de hoje. O Caderno
+(Bereshit) faz o oposto na comparação individual: agrupa pelo gerente
+histórico da competência, como em todo o resto do fechamento. Divergência
+intencional entre os dois produtos, decidida em 2026-10-29.
 
 Casos de borda com decisão fixa:
 
