@@ -227,22 +227,23 @@ def render_resumo_executivo(
     # ── KPIs de valor MIX (base R$) ──────────────────────────────────────
     total_vendas = kpis.get("total_vendas", 0)
     meta_mix = kpis.get("meta_mix", 0)
-    # Regra do MIX (``avaliar_regra_mix``): "Meta MIX atingida" so com o
-    # total e cada produto na meta; % e falta pela regra (o excedente
-    # de um produto nao compensa a falta de outro) — mesma conta dos
-    # cards "% Meta Atingida" e "Falta para Meta".
+    # % do MIX = total vendido ÷ meta MIX (R$), o mesmo do card "% Mix
+    # Atingido". O veredito ("Meta MIX atingida") e a falta seguem a
+    # regra do MIX (``avaliar_regra_mix``): so com o total e cada
+    # produto na meta, e o excedente de um produto nao compensa a falta
+    # de outro — mesma conta do card "Falta para Meta".
     regra = avaliar_regra_mix(metas_produto, total_vendas, meta_mix)
-    perc_ating = regra["perc"]
+    perc_ating = kpis.get("perc_ating_valor", 0)
     gap = regra["falta"]
     du_restantes = kpis.get("du_restantes", 1)
     ritmo_atual = kpis.get("media_du", 0)
 
-    # Proj. MIX em valor pela regra do MIX — projeção de cada produto
-    # contra a meta dele, sem o excedente de um compensar outro (mesma
-    # conta do card "% Meta Atingida" e do bloco "Para Onde").
+    # Proj. MIX em valor (projecao R$ / meta_mix), mesma base do card
+    # "% Mix Atingido". A projecao pela regra do MIX (``regra_proj``)
+    # segue na pill de ritmo por produto, como no bloco "Para Onde".
     projecao = kpis.get("projecao", 0)
     regra_proj = projetar_regra_mix(metas_produto, projecao, meta_mix)
-    perc_proj_mix = regra_proj["perc"]
+    perc_proj_mix = (projecao / meta_mix * 100) if meta_mix > 0 else 0
 
     # Proj. Prata em pontos — base diferente (meta_prata); mantida para contexto
     perc_proj_prata = kpis.get("perc_proj", 0)
@@ -301,11 +302,11 @@ def render_resumo_executivo(
     elif perc_ating >= 80:
         status_class = "mg-status-warning"
         status_icon = "⚠️"
-        status_text = f"{perc_ating:.1f}% da meta MIX atingida (R$)"
+        status_text = f"{perc_ating:.1f}% do MIX atingido (R$)"
     else:
         status_class = "mg-status-danger"
         status_icon = "🚨"
-        status_text = f"Apenas {perc_ating:.1f}% da meta MIX atingida (R$)"
+        status_text = f"Apenas {perc_ating:.1f}% do MIX atingido (R$)"
 
     if meta_mix <= 0:
         status_sub = (

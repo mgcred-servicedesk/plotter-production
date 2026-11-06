@@ -535,9 +535,10 @@ exibição:
 - **No Caderno (Bereshit)** o MIX não compara com meta, então segue a forma
   desmembrada: FGTS, Antecipação de Benefício e, a partir da migration 145
   (contrato v1.10), CNC 13º em grupo próprio. Até a 145 o Caderno somava o
-  13º ao CNC; snapshot publicado antes dela continua assim até ser
-  republicado, e o payload declara `contractVersion` para o leitor saber qual
-  composição está lendo.
+  13º ao CNC; a 146 separa também os Cadernos já publicados, trocando só o
+  grupo CNC e só onde CNC + CNC 13º batem com o CNC publicado. O payload
+  declara `contractVersion` para o leitor saber qual composição está lendo.
+  Juntar os dois é ruim para o negócio (decisão de 2026-10-29).
 
 ## Pipeline "Em Análise"
 
@@ -786,12 +787,16 @@ do escopo.
 - **Falta** = o maior entre a falta no total e a **soma das faltas por
   produto**. Alimenta "Falta para Meta", "Necessário/dia", "Faltam"/"Gap"
   do Resumo e a Meta Diária do consultor.
-- **% de atingimento** = `(meta_mix − falta) ÷ meta_mix` enquanto a regra
-  não fecha (só chega a 100% com tudo batido). Atingida: o % real do
-  total (pode passar de 100% — não há falta a compensar).
-- **% de projeção** = a mesma conta de `projetar_regra_mix`. Produto
-  projetado abaixo da meta ⇔ ritmo diário abaixo da meta diária restante;
-  esses produtos substituem o "x% acima/abaixo do necessário" do total.
+- **% de atingimento pela regra** (`avaliar_regra_mix(...)["perc"]`) =
+  `(meta_mix − falta) ÷ meta_mix` enquanto a regra não fecha (só chega a
+  100% com tudo batido). Atingida: o % real do total. Desde 11/2026 o
+  dashboard de vendas não exibe esse % — o card e o Resumo mostram o
+  total ÷ meta (ver abaixo); segue exibido na coluna "Atingimento MIX %"
+  da Performance do time (aba Gestão).
+- **% de projeção pela regra** = a mesma conta de `projetar_regra_mix`.
+  Produto projetado abaixo da meta ⇔ ritmo diário abaixo da meta diária
+  restante; esses produtos substituem o "x% acima/abaixo do necessário"
+  do total. Exibido no "Para Onde Estamos Indo".
 - **Estado parcial** (total ou algum produto já batido, outro abaixo):
   nunca "meta atingida"; o quadro lista o que falta por produto
   (`mensagem_regra_mix`, `ui/kpi_cards_reforma.py`).
@@ -800,17 +805,28 @@ do escopo.
 
 | Quadro | O que segue a regra |
 |---|---|
-| 📊 % Meta Atingida | % grande e "Projeção:"; rodapé "Total vendido: X% da meta MIX" enquanto não fecha |
+| 📊 % Mix Atingido | nada — % e "Projeção:" são total ÷ meta MIX (ver abaixo) |
 | 🎯 Falta para Meta | valor, "✓ Meta Atingida" e o que falta por produto |
 | Para Onde Estamos Indo | Necessário/dia, % da Projeção Fim, "Fecharemos…", frase de ritmo e linha do que falta |
-| Resumo Executivo | status (✅ só atingida), %, Faltam, Gap, Proj. MIX e pill 🔥 de ritmo |
+| Resumo Executivo | status (✅ só atingida), Faltam, Gap, o que falta por produto e pill 🔥 de ritmo |
 | Meta Diária (consultor) | "Meta atingida!", necessário por DU e o que falta |
+
+**% Mix Atingido — total ÷ meta (11/2026).** O card hero (antes "%
+Meta Atingida") voltou a mostrar `total_vendas ÷ meta_mix`
+(`kpis["perc_ating_valor"]`) e "Projeção:" `projecao ÷ meta_mix`; o
+Resumo Executivo mostra os mesmos dois números ("X% do MIX atingido",
+"Proj. MIX"). Decisão do usuário em 2026-11-06: o % do total é a leitura
+de volume; passar de 100% **não** é meta atingida — o veredito, a falta
+e o ritmo por produto continuam pela regra nos demais quadros, e por
+isso o card convive com "Falta para Meta" pendente (ex.: 114% ao lado
+de "falta bater: CLT"). A cor do % segue o total.
 
 **Fora da regra, de propósito:** `kpis["perc_ating_valor"]` e
 `kpis["gap_valor"]` seguem sendo o total puro (dado, não veredito); o
-valor em R$ da projeção (card Pagos, Projeção Fim) é a venda total
-prevista; os cards de cada produto já são por produto; a página de
-Pontuação compara pontos com a Meta Prata (outra meta).
+% e a projeção do card "% Mix Atingido" e do Resumo (acima); o valor em
+R$ da projeção (card Pagos, Projeção Fim) é a venda total prevista; os
+cards de cada produto já são por produto; a página de Pontuação compara
+pontos com a Meta Prata (outra meta).
 
 Exemplos 10/2026 (dia 16): 6 consultores com o total batido e produto
 pendente liam "meta atingida". Stella: 100,8% no total → 79,4% pela
@@ -835,8 +851,10 @@ perc_proj = projecao / meta * 100 if meta > 0 else 0
 ```
 
 A fórmula vale por produto (cards por produto) e para pontos × Meta Prata
-(página de Pontuação). O **% de projeção do MIX em R$** não é
-`projecao / meta_mix`: segue a [regra do MIX](#regra-do-mix--meta-atingida-exige-cada-produto-102026)
+(página de Pontuação). O **% de projeção do MIX em R$** depende do
+quadro: no card "% Mix Atingido" e no "Proj. MIX" do Resumo é
+`projecao / meta_mix` (total); no "Para Onde Estamos Indo" segue a
+[regra do MIX](#regra-do-mix--meta-atingida-exige-cada-produto-102026)
 (`projetar_regra_mix`), em que a projeção que sobra num produto não
 compensa a que falta em outro.
 

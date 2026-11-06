@@ -57,12 +57,24 @@ fazia pela metade, e o CNC 13º, que o Caderno somava ao CNC.
 
 ## Pendências / follow-ups
 
-- [ ] Aplicar a 144 (independe de deploy).
-- [ ] Publicar o Bereshit com suporte a `CNC_13` **antes** de aplicar a 145.
-- [ ] Aplicar a 145 antes do fechamento de 10/2026, para ele já sair em v1.10.
+- [x] Aplicar a 144 (independe de deploy). Aplicada em 2026-10-29 pelo SQL
+      Editor; as 13 funções em produção conferem por md5 com o arquivo.
+- [ ] Publicar o Bereshit com suporte a `CNC_13` (commit `5d4ed88`, branch
+      `feat/alinhamento-dashboard`, ainda sem push em 2026-10-29).
+- [x] Aplicar a 145 antes do fechamento de 10/2026. Aplicada em 2026-10-29,
+      **antes** do deploy do Bereshit, por decisão do usuário: 10/2026 não tem
+      CNC 13º, então o parser antigo não perde nada até alguém republicar um
+      mês que tenha. **Não republicar 02–04/2026 nem 05/2025 antes do deploy.**
 - [ ] Republicar 02–04/2026 (e 05/2025, se desejado) para separar o 13º nos
       meses em que houve produção; junto da republicação de 01–07/2026 do
-      relatório anual.
+      relatório anual. Só depois do deploy do Bereshit.
+
+**Verificação pós-aplicação (2026-10-29):** Caderno 08 e 09/2026 sem
+`contractVersion` com md5 idêntico ao de antes; pagamentos sem vínculo
+01–09/2026 iguais (`4 0 10 16 6 0 0 0 0`); produtividade individual 09/2026
+com md5 idêntico; nenhuma chave `nome_normalizado` mudou (0/61, 0/425, 0/2).
+03/2026: CNC + CNC_13 agora = CNC publicado (R$ 5.262.617,24), CNC_13 =
+R$ 1.268.032,87, total do MIX igual ao publicado.
 
 ## Referências
 

@@ -384,11 +384,14 @@ retorna SVG inline. Usa classes `.mg-spark-line/area/dot` que herdam
 
 ### Veredito de meta MIX nos cards — sempre pela regra do MIX
 
-Os quadros que dizem se a meta MIX foi batida (% Meta Atingida, Falta
-para Meta, Para Onde Estamos Indo, Resumo Executivo, Meta Diária do
-consultor) recebem `metas_produto` e passam por `avaliar_regra_mix` /
+Os quadros que dizem se a meta MIX foi batida (Falta para Meta, Para
+Onde Estamos Indo, Resumo Executivo, Meta Diária do consultor) recebem
+`metas_produto` e passam por `avaliar_regra_mix` /
 `projetar_regra_mix` (`kpis/gerais.py`). Nunca derive o veredito de
-`kpis["perc_ating_valor"]` ou `kpis["gap_valor"]` (total puro). Texto do
+`kpis["perc_ating_valor"]` ou `kpis["gap_valor"]` (total puro). Exceção
+deliberada (11/2026): o **número** do card "📊 % Mix Atingido" e o % /
+"Proj. MIX" do Resumo são o total ÷ meta MIX — leitura de volume, não
+veredito; o ✅/"✓ Meta Atingida" continua pela regra. Texto do
 estado parcial: `mensagem_regra_mix` / `nomes_pendentes_mix`
 (`ui/kpi_cards_reforma.py`) — já trocam `$` por `&#36;`, porque duas
 moedas na mesma linha de `st.markdown` viram LaTeX. Regra completa em

@@ -10,6 +10,10 @@ falta de outro: "quanto falta" é a soma das faltas por produto.
 Vale para o card "🎯 Falta para Meta", o bloco "Para Onde Estamos
 Indo" e a Meta Diária do consultor. Os asserts de render ancoram em
 texto visível (mesma convenção de ``test_ui_kpi_cards_pontuacao.py``).
+
+Fora da regra, de propósito (11/2026): o % e a projeção do card
+"📊 % Mix Atingido" e do Resumo Executivo são o total ÷ meta MIX. O
+veredito e o que falta continuam pela regra.
 """
 import pytest
 from streamlit.testing.v1 import AppTest
@@ -219,14 +223,34 @@ class TestRenderFaltaParaMeta:
         assert "falta bater" in html
         assert "CLT" in html
 
-    def test_percentual_segue_a_regra_e_mostra_o_total_no_rodape(self):
+    def test_mix_atingido_e_total_sobre_meta_sem_ponderar(self):
         html = _html(
             _script_kpis_principais,
             _kpis(TOTAL_148K, META_MIX_130K),
             PRODUTOS_TOTAL_BATIDO_CLT_PENDENTE,
         )
-        assert "96.2%" in html  # (130.000 - 5.000) / 130.000
-        assert "Total vendido: 114.2% da meta MIX" in html
+        assert "114.2%" in html  # 148.500 / 130.000
+        assert "96.2%" not in html  # (130.000 - 5.000) / 130.000: ponderado
+        assert "Total vendido" not in html  # rodapé repetiria o número
+        # O total passou da meta, mas o veredito segue a regra do MIX.
+        assert "✓ Meta Atingida" not in html
+
+    def test_rotulo_do_card_e_mix_atingido(self):
+        html = _html(
+            _script_kpis_principais,
+            _kpis(TOTAL_148K, META_MIX_130K),
+            PRODUTOS_TOTAL_BATIDO_CLT_PENDENTE,
+        )
+        assert "% Mix Atingido" in html
+        assert "% Meta Atingida" not in html
+
+    def test_rotulo_mix_atingido_tambem_sem_meta(self):
+        html = _html(
+            _script_kpis_principais, _kpis(TOTAL_148K, 1.0) | {"meta_mix": 0},
+            PRODUTOS_TOTAL_BATIDO_CLT_PENDENTE,
+        )
+        assert "% Mix Atingido" in html
+        assert "Sem meta definida" in html
 
     def test_percentual_atingida_e_o_do_total_sem_rodape(self):
         total = sum(p["valor_atual"] for p in PRODUTOS_TODOS_BATIDOS)
@@ -290,7 +314,9 @@ class TestRenderResumoExecutivo:
             PRODUTOS_TOTAL_BATIDO_CLT_PENDENTE,
         )
         assert "Meta MIX atingida —" not in html
-        assert "96.2% da meta MIX atingida" in html
+        assert "114.2% do MIX atingido" in html  # total ÷ meta, como o card
+        assert "96.2%" not in html
+        assert "⚠️" in html  # total batido com produto pendente: nunca ✅
         assert "falta bater" in html
         assert "Faltam: R$ 5,0K" in html  # falta pela regra, não R$ 0
 
@@ -370,17 +396,37 @@ class TestRenderProjecaoPelaRegra:
         assert "acima do necessário" not in html
         assert "Ritmo abaixo do necessário em: CLT" in html
 
-    def test_card_meta_atingida_projecao_pela_regra(self):
+    def test_card_mix_atingido_projecao_total_sobre_meta(self):
         html = _html(
             _script_kpis_principais, _kpis_bruna(),
             PRODUTOS_PROJ_CONSIG_ESCONDE,
         )
-        assert f"Projeção: {95000 / 115000 * 100:.1f}%" in html
+        assert "Projeção: 229.6%" in html  # 264.000 / 115.000
+        assert f"{95000 / 115000 * 100:.1f}%" not in html  # ponderada
 
-    def test_resumo_proj_mix_e_pill_de_ritmo(self, monkeypatch):
+    def test_card_total_e_para_onde_ponderado_na_mesma_tela(self):
+        def script(kpis, metas_produto):
+            from src.dashboard.ui.kpi_cards_reforma import (
+                render_bloco_media_projecao,
+                render_kpis_principais,
+            )
+
+            render_kpis_principais(kpis, {}, {}, metas_produto=metas_produto)
+            render_bloco_media_projecao(kpis, metas_produto)
+
+        html = _html(script, _kpis_bruna(), PRODUTOS_PROJ_CONSIG_ESCONDE)
+        # Card: total ÷ meta (121.868 / 115.000) e projeção total.
+        assert "106.0%" in html
+        assert "Projeção: 229.6%" in html
+        # Para Onde: segue ponderado, com o ritmo de cada produto.
+        assert f"({95000 / 115000 * 100:.1f}%)" in html
+        assert "Ritmo abaixo do necessário em: CLT" in html
+
+    def test_resumo_proj_mix_total_e_pill_de_ritmo(self, monkeypatch):
         html = _html_resumo(
             monkeypatch, _kpis_bruna(), PRODUTOS_PROJ_CONSIG_ESCONDE,
         )
-        assert f"{95000 / 115000 * 100:.1f}%</div>" in html  # Proj. MIX
-        assert "229.6%" not in html  # projeção total / meta
+        assert "229.6%</div>" in html  # Proj. MIX = projeção total / meta
+        assert f"{95000 / 115000 * 100:.1f}%</div>" not in html
+        # A pill de ritmo segue ponderada por produto.
         assert "Ritmo abaixo do necessário em: CLT" in html

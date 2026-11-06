@@ -134,7 +134,7 @@ def render_kpis_principais(
     Renderiza os 3 KPIs principais em linha dominante.
 
     Layout:
-        | REALIZADO | % META | FALTA |
+        | REALIZADO | % MIX | FALTA |
 
     Args:
         kpis: KPIs gerais (total_vendas, perc_ating, meta, etc)
@@ -145,30 +145,27 @@ def render_kpis_principais(
             — sustentam a regra do MIX no card "Falta para Meta".
     """
     total_vendas = kpis.get("total_vendas", 0)
-    # % e gap aqui são em VALOR (R$) contra a meta MIX, pela regra do
-    # MIX (nao o total puro de kpis["perc_ating_valor"]/["gap_valor"]).
-    # Meta PRATA/OURO = pontos (página à parte).
+    # "% Mix Atingido" = total vendido ÷ meta MIX, em VALOR (R$), sem
+    # ponderar por produto (decisao de 11/2026). O total passar da meta
+    # NAO e meta atingida: o veredito e o que falta seguem a regra do
+    # MIX no card "Falta para Meta" ao lado — so com o total E cada
+    # produto na meta, e o excedente de um produto nao compensa a falta
+    # de outro. Meta PRATA/OURO = pontos (página à parte).
     meta_mix = kpis.get("meta_mix", 0)
-    # Regra do MIX: "Meta Atingida" so com o total E cada produto na
-    # meta; o que falta e a soma do que falta em cada produto, e o %
-    # sai da mesma conta (o excedente de um produto nao compensa a
-    # falta de outro). O % do total vendido segue visivel no rodape
-    # enquanto a regra nao fecha.
     regra = avaliar_regra_mix(metas_produto, total_vendas, meta_mix)
     gap = regra["falta"]
-    perc_ating = regra["perc"]
-    perc_total = kpis.get("perc_ating_valor", 0)
+    perc_ating = kpis.get("perc_ating_valor", 0)
 
     cor_status, bg_status, emoji_status, label_status = get_status_full(perc_ating)
 
     # Linha dos 3 KPIs principais
     du_restantes = kpis.get("du_restantes", 1)
     projecao = kpis.get("projecao", 0)
-    # perc_proj em VALOR pela regra do MIX: projecao de cada produto
-    # contra a meta dele, sem o excedente de um compensar outro
-    # (``projetar_regra_mix``). kpis["perc_proj"] global é
+    # perc_proj em VALOR (projecao R$ / meta_mix), mesma base do % do
+    # card. A projecao pela regra do MIX (ritmo de cada produto) fica no
+    # bloco "Para Onde Estamos Indo". kpis["perc_proj"] global é
     # projecao_pts/meta_prata — base diferente.
-    perc_proj = projetar_regra_mix(metas_produto, projecao, meta_mix)["perc"]
+    perc_proj = (projecao / meta_mix * 100) if meta_mix > 0 else 0
 
     pagos_fmt = _formatar_valor_moeda(total_vendas)
     pagos_total = _formatar_valor_moeda_total(total_vendas)
@@ -188,27 +185,21 @@ def render_kpis_principais(
         </div>"""
 
     if meta_mix > 0:
-        linha_total = (
-            ""
-            if regra["atingida"]
-            else f"<br>Total vendido: {formatar_percentual(perc_total)}"
-            " da meta MIX"
-        )
         card_meta = f"""
             <div class="mg-kpi-hero" style="flex: 1;">
-                <div class="mg-kpi-label">📊 % Meta Atingida</div>
+                <div class="mg-kpi-label">📊 % Mix Atingido</div>
                 <div class="mg-kpi-valor" style="color: {cor_status};">
                     {formatar_percentual(perc_ating)}
                 </div>
                 <div class="mg-kpi-sub" style="font-size: 14px;">
                     Projeção: {formatar_percentual(perc_proj)} |
-                    MIX: {meta_mix_fmt}{linha_total}
+                    MIX: {meta_mix_fmt}
                 </div>
             </div>"""
     else:
         card_meta = """
             <div class="mg-kpi-hero" style="flex: 1;">
-                <div class="mg-kpi-label">📊 % Meta Atingida</div>
+                <div class="mg-kpi-label">📊 % Mix Atingido</div>
                 <div class="mg-kpi-valor" style="color: var(--mg-text-muted);">—</div>
                 <div class="mg-kpi-sub" style="font-size: 14px;">
                     Sem meta definida
