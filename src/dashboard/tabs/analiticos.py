@@ -41,6 +41,7 @@ from src.dashboard.kpis.reconquista import (
     CARTEIRA_ERRO,
     CARTEIRA_FORA,
     CARTEIRA_NAO_IMPORTADA,
+    CONSIGNAVEL_ERRO,
     carteira_elegivel_vigente,
     LIGA_ERRO,
     LIGA_FORA,
@@ -2164,8 +2165,17 @@ def _render_cobranca_consignavel(reconquista: dict | None) -> None:
     (mesmo dado usado para a contagem do card do acelerador combinado —
     ver business-rules.md "Cobrança Consignável — critério"), sem novo
     fetch. Vazio tanto fora da vigência (< 08/2026) quanto quando não há
-    propostas no período — mesmo tratamento das abas irmãs.
+    propostas no período — mesmo tratamento das abas irmãs. Falha de
+    leitura (CONSIGNAVEL_ERRO) avisa em vez de dizer "nenhuma proposta".
     """
+    totais = (reconquista or {}).get("totais") or {}
+    if totais.get("consignavel_status") == CONSIGNAVEL_ERRO:
+        st.error(
+            "Não foi possível carregar as propostas de Cobrança "
+            "Consignável do período."
+        )
+        return
+
     contratos = (reconquista or {}).get(
         "cobranca_consignavel_contratos", pd.DataFrame()
     )

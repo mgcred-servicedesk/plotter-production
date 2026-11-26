@@ -265,20 +265,15 @@ class TestFetchCobrancaConsignavelServerSide:
         assert df.loc[0, "VALOR_BRUTO"] == 1000.0
         assert df.loc[0, "VALOR_BASE"] == 1000.0
 
-    def test_falha_devolve_vazio_com_colunas_esperadas(
-        self, monkeypatch, periodo_stub
-    ):
-        """Contrato que a sub-aba depende quando a 067 não está aplicada."""
+    def test_falha_de_leitura_levanta(self, monkeypatch, periodo_stub):
+        """Falha nao vira frame vazio: o vazio seria cacheado como
+        Cobranca Consignavel = 0 e derrubaria a faixa do acelerador."""
         def _explodir(montar_query, coluna_chave):
-            raise RuntimeError("column is_cobranca_consignavel does not exist")
+            raise RuntimeError("canceling statement due to statement timeout")
 
         monkeypatch.setattr(loaders, "_paginar_keyset", _explodir)
-        df = loaders._fetch_cobranca_consignavel(8, 2026)
-
-        assert df.empty
-        assert list(df.columns) == list(
-            loaders._COLS_COBRANCA_CONSIGNAVEL.values()
-        )
+        with pytest.raises(RuntimeError, match="statement timeout"):
+            loaders._fetch_cobranca_consignavel(8, 2026)
 
     def test_sem_periodo_devolve_vazio(self, monkeypatch):
         monkeypatch.setattr(loaders, "carregar_periodo", lambda m, a: None)
