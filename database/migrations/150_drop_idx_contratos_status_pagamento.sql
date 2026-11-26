@@ -1,0 +1,73 @@
+-- =====================================================
+-- Migracao 150: remove idx_contratos_status_pagamento (nunca usado)
+--
+-- Contexto (diagnostico de performance de 26/11/2026; continuacao da
+-- 055): contratos e a tabela que mais escreve (ETL de contratos) e
+-- cada indice entra no custo de todo INSERT e de todo UPDATE nao-HOT
+-- (WAL + paginas de indice + autovacuum).
+--
+--   indice                           idx_scan  last_idx_scan  tamanho
+--   -------------------------------  --------  -------------  -------
+--   idx_contratos_status_pagamento          0  (nunca)        2,2 MB
+--
+-- Por que ninguem precisa dele: status_pagamento_cliente sozinho tem
+-- baixa seletividade, e todo filtro real por ele ja vem acompanhado da
+-- coluna lider de um composto:
+--   * idx_contratos_cadastro_status   (data_cadastro, status_pagamento_
+--                                      cliente, status_banco)
+--   * idx_contratos_periodo_status_pag (periodo_id, status_pagamento_
+--                                      cliente)
+-- v_contratos_em_analise filtra por `<>`, que nao usa btree.
+-- Nao sustenta constraint (conindid vazio).
+--
+-- Fora de escopo (decisao do usuario de 26/11/2026: so o indice com 0
+-- uso): idx_contratos_sub_status (1 scan) e idx_contratos_loja_id
+-- (4 scans) continuam.
+--
+-- Risco baixo: contratos cabe em shared_buffers (cache hit 100%) — um
+-- plano que eventualmente usasse o indice cai para scan em memoria.
+-- Reversivel (comando ao final).
+--
+-- ⚠️  LOCK: DROP INDEX adquire ACCESS EXCLUSIVE em contratos por
+-- instantes. Preferir fora do horario do ETL. Sem CONCURRENTLY pelo
+-- mesmo motivo da 040/055: o SQL Editor roda em bloco transacional
+-- (ERRO 25001).
+--
+-- Schema-qualificado de proposito (clone vazio de contratos em outro
+-- schema com indices homonimos — ver 055).
+--
+-- database/schema.sql (este repo e o do angry-man) ainda declara o
+-- indice, como ficou com os da 055: o schema e foto historica, a
+-- migration e a verdade.
+--
+-- Executar no Supabase SQL Editor.
+-- =====================================================
+
+
+DROP INDEX IF EXISTS public.idx_contratos_status_pagamento;
+
+
+-- ===========================================
+-- Verificacao
+--
+--   SELECT count(*) FROM pg_indexes
+--   WHERE schemaname = 'public' AND tablename = 'contratos'
+--     AND indexname = 'idx_contratos_status_pagamento';
+--   -- Esperado: 0
+--
+-- Acompanhar por alguns dias (nenhuma query do dashboard deve
+-- regredir):
+--
+--   SELECT LEFT(query, 100), calls,
+--          ROUND(mean_exec_time::numeric, 1) AS media_ms
+--   FROM extensions.pg_stat_statements
+--   ORDER BY mean_exec_time DESC LIMIT 10;
+-- ===========================================
+
+
+-- ===========================================
+-- Reversao:
+--
+--   CREATE INDEX idx_contratos_status_pagamento
+--       ON public.contratos (status_pagamento_cliente);
+-- ===========================================
