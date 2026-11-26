@@ -24,6 +24,7 @@ from src.dashboard.formatters import (
 from src.config.settings import PACK_LABEL_AGREGADO
 from src.dashboard.kpis.gerais import avaliar_regra_mix, projetar_regra_mix
 from src.dashboard.kpis.reconquista import (
+    CONSIGNAVEL_ERRO,
     LIGA_ERRO,
     LIGA_FORA,
     LIGA_NAO_IMPORTADA,
@@ -1044,6 +1045,18 @@ def render_cards_reconquista(
             f"{apur_mm_aaaa} — Promessas indisponíveis."
         )
 
+    # Cobranca Consignavel com erro: contagem None, sem faixa do
+    # acelerador (o loader nao a calcula). Chave ausente => sem erro.
+    consignavel_erro = (
+        totais.get("consignavel_status") == CONSIGNAVEL_ERRO
+    )
+    if consignavel_erro:
+        st.error(
+            f"Não foi possível carregar a Cobrança Consignável de "
+            f"{apur_mm_aaaa} — contagem e faixa do acelerador "
+            f"indisponíveis."
+        )
+
     # Na liga / Promessa V3 o export vazio nao encerra o bloco:
     # Efetivadas e Promessas nao dependem dele.
     if total == 0 and not em_liga and not em_promessa_v3:
@@ -1062,6 +1075,8 @@ def render_cards_reconquista(
     prom = int(totais.get("promessas") or 0)
     # Acelerador novo (vigente a partir de 08/2026). Chave ausente no
     # dict => 0, mesmo tratamento dado aos demais totais opcionais.
+    # Com erro de leitura a contagem e None: o card mostra "—", e o 0
+    # aqui so alimenta contas que a UI nao exibe nesse caso.
     consignavel = int(totais.get("cobranca_consignavel", 0) or 0)
     acelerador = efet + consignavel
     acelerador_perfil = totais.get("acelerador_perfil")
@@ -1168,16 +1183,29 @@ def render_cards_reconquista(
     # do consultor (a legenda mostra a soma; a faixa vem por consultor
     # logo abaixo). Sem vírgula literal no texto — `_card_contexto`
     # troca "," por "." no card inteiro (separador de milhar BR).
-    acelerador_txt = "—" if liga_sem_dado else f"{acelerador:,}"
-    card_consignavel = _card_contexto(
-        "💰 Cobrança Consignável",
-        f"{consignavel:,}",
-        (
-            'Contrato Novo · BMG · propostas pagas'
-            f'<br><span style="opacity: 0.8;">Acelerador combinado: '
-            f'<strong>{acelerador_txt}</strong> com Efetivadas</span>'
-        ),
+    acelerador_txt = (
+        "—" if liga_sem_dado or consignavel_erro else f"{acelerador:,}"
     )
+    if consignavel_erro:
+        card_consignavel = _card_contexto(
+            "💰 Cobrança Consignável",
+            "—",
+            (
+                "Falha ao carregar a Cobrança Consignável"
+                '<br><span style="opacity: 0.8;">Acelerador combinado: '
+                '<strong>—</strong> com Efetivadas</span>'
+            ),
+        )
+    else:
+        card_consignavel = _card_contexto(
+            "💰 Cobrança Consignável",
+            f"{consignavel:,}",
+            (
+                'Contrato Novo · BMG · propostas pagas'
+                f'<br><span style="opacity: 0.8;">Acelerador combinado: '
+                f'<strong>{acelerador_txt}</strong> com Efetivadas</span>'
+            ),
+        )
 
     # Barra-resumo acima dos cards — só para perfil consultor (decisão do
     # usuário: supervisor/gerente_comercial/gestor/admin não veem nenhuma
@@ -1219,9 +1247,14 @@ def render_cards_reconquista(
                 'Elegível</div>'
             )
         _render_barra_reconquista(barra_esq, barra_dir, cor_barra)
-    elif acelerador_perfil == "consultor" and not em_liga:
-        # Na liga sem dado `faixa_agregada` tambem e None, mas o sistema
-        # antigo (conversao do export) nao vale mais — sem barra.
+    elif (
+        acelerador_perfil == "consultor"
+        and not em_liga
+        and not consignavel_erro
+    ):
+        # Na liga sem dado (ou com erro na Cobranca Consignavel)
+        # `faixa_agregada` tambem e None, mas o sistema antigo
+        # (conversao do export) nao vale mais — sem barra.
         cor_barra = cor_faixa
         barra_esq = (
             '<div style="font-size:12px; color:var(--mg-text-muted);">'

@@ -11,6 +11,9 @@ import pytest
 
 from src.dashboard import loaders
 from src.dashboard.kpis.reconquista import (
+    CONSIGNAVEL_ERRO,
+    CONSIGNAVEL_FORA,
+    CONSIGNAVEL_OK,
     LIGA_ERRO,
     LIGA_FORA,
     LIGA_NAO_IMPORTADA,
@@ -185,3 +188,45 @@ class TestCarregarReconquistaLiga:
         out = loaders.carregar_reconquista(9, 2026)
         assert out["totais"]["liga_status"] == LIGA_OK
         assert out["totais"]["efetivadas"] == 0
+
+
+@pytest.mark.unit
+class TestCarregarReconquistaCobrancaConsignavel:
+    """Falha ao ler a Cobranca Consignavel vira estado, nunca zero."""
+
+    def _explodir(self, monkeypatch):
+        def _falha(mes, ano):
+            raise RuntimeError("canceling statement due to statement timeout")
+
+        monkeypatch.setattr(loaders, "carregar_cobranca_consignavel", _falha)
+
+    def test_leitura_ok_conta_e_marca_status(self, ambiente):
+        t = loaders.carregar_reconquista(9, 2026)["totais"]
+        assert t["consignavel_status"] == CONSIGNAVEL_OK
+        assert t["cobranca_consignavel"] == 1
+
+    def test_falha_vira_erro_sem_contagem_nem_faixa(
+        self, ambiente, monkeypatch
+    ):
+        self._explodir(monkeypatch)
+        out = loaders.carregar_reconquista(9, 2026)
+        t = out["totais"]
+        assert t["consignavel_status"] == CONSIGNAVEL_ERRO
+        # None, nao 0: a faixa sairia calculada sem a parcela.
+        assert t["cobranca_consignavel"] is None
+        assert t["faixa_agregada"] is None
+        assert out["por_consultor"].empty
+        assert out["cobranca_consignavel_contratos"].empty
+
+    def test_falha_nao_derruba_a_liga(self, ambiente, monkeypatch):
+        self._explodir(monkeypatch)
+        t = loaders.carregar_reconquista(9, 2026)["totais"]
+        assert t["liga_status"] == LIGA_OK
+        assert t["efetivadas"] == 4
+
+    def test_antes_da_vigencia_nao_le(self, ambiente, monkeypatch):
+        # Ler antes de 08/2026 viraria CONSIGNAVEL_ERRO e o teste acusaria.
+        self._explodir(monkeypatch)
+        t = loaders.carregar_reconquista(7, 2026)["totais"]
+        assert t["consignavel_status"] == CONSIGNAVEL_FORA
+        assert t["cobranca_consignavel"] == 0

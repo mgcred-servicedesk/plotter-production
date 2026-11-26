@@ -112,6 +112,14 @@ PROMESSA_OK = "ok"                        # periodo importado
 PROMESSA_NAO_IMPORTADA = "nao_importada"  # periodo sem linhas (pre-RLS)
 PROMESSA_ERRO = "erro"                    # falha ao ler a promessa
 
+# Estados da Cobranca Consignavel (`consignavel_status`). Sem
+# "nao importada": o frame sai de `v_contratos_dashboard`, e mes sem
+# proposta e zero legitimo. ERRO => card "—" + aviso e nenhuma faixa
+# do acelerador; nunca 0.
+CONSIGNAVEL_FORA = "fora"   # apuracao < 08/2026: acelerador nao vigente
+CONSIGNAVEL_OK = "ok"       # contratos lidos (vazio = zero legitimo)
+CONSIGNAVEL_ERRO = "erro"   # falha ao ler os contratos
+
 
 def _faixa_premio_conversao(pct: float) -> Dict:
     """Mapeia % de conversao -> faixa de premio/deflator sobre premio CNC.

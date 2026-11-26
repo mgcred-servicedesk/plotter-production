@@ -55,6 +55,9 @@ from src.dashboard.kpis.reconquista import (  # noqa: F401
     CARTEIRA_NAO_IMPORTADA,
     CARTEIRA_OK,
     COLS_ACELERADOR,
+    CONSIGNAVEL_ERRO,
+    CONSIGNAVEL_FORA,
+    CONSIGNAVEL_OK,
     LIGA_ERRO,
     LIGA_FORA,
     LIGA_NAO_IMPORTADA,
@@ -3084,12 +3087,18 @@ def carregar_cobranca_consignavel(mes: int, ano: int) -> pd.DataFrame:
 def _fetch_cobranca_consignavel(mes: int, ano: int) -> pd.DataFrame:
     """Executa a query da Cobranca Consignavel sem cache.
 
-    O criterio de negocio vive em `fn_eh_cobranca_consignavel`
-    (migration 067), exposto como `is_cobranca_consignavel` em
-    `v_contratos_dashboard`: TIPO OPER. = CONTRATO NOVO, SUBTIPO =
-    NOVO (MARGEM COMPLEMENTAR fora), categoria_codigo = CONSIG_BMG,
-    banco BMG e |VLR BRUTO - VLR BASE| > 0,005. Ver
-    docs/agents/business-rules.md — **nao reimplementar a mascara
+    O criterio de negocio vive no SQL, exposto como
+    `is_cobranca_consignavel` em `v_contratos_dashboard` (migration
+    130): sinal de valor OU tabela dedicada do banco.
+      - Sinal de valor (`fn_eh_cobranca_consignavel_por_valor`):
+        TIPO OPER. = CONTRATO NOVO, SUBTIPO = NOVO, categoria_codigo =
+        CONSIG_BMG, banco BMG, |VLR BRUTO - VLR BASE| > 0,005 e
+        pagamento >= 01/08/2026. Unico criterio que leva VALOR ao
+        VLR BRUTO.
+      - Tabela (`fn_eh_tabela_cobranca_consignavel`): tabelas
+        "COBRANCA CONSIGNAVEL - NOVO/REFIN - ..." do banco. NOVO e
+        REFIN contam; o REFIN produz no VLR BASE.
+    Ver docs/agents/business-rules.md — **nao reimplementar a mascara
     aqui**: duas fontes do mesmo criterio, em duas linguagens, e
     exatamente o drift que a 067 existe para eliminar.
 
@@ -3101,6 +3110,13 @@ def _fetch_cobranca_consignavel(mes: int, ano: int) -> pd.DataFrame:
     por `periodo_id`, que e DERIVADO de `data_status_pagamento` (ver
     schema.sql); linha com DATA fora do mes indicaria `periodo_id`
     inconsistente.
+
+    Falha de I/O LEVANTA (`_paginar_keyset` ja retentou o 57014):
+    `st.cache_data` nao guarda excecao, entao a falha nao vira um zero
+    cacheado por 30min/24h. `carregar_reconquista` a transforma em
+    CONSIGNAVEL_ERRO — card "—", sem faixa do acelerador. Ate 11/2026
+    a falha devolvia vazio, e um timeout fazia o consultor cair de
+    faixa sem aviso.
     """
     vazio = pd.DataFrame(columns=list(_COLS_COBRANCA_CONSIGNAVEL.values()))
     periodo = carregar_periodo(mes, ano)
@@ -3108,32 +3124,19 @@ def _fetch_cobranca_consignavel(mes: int, ano: int) -> pd.DataFrame:
         return vazio
 
     colunas = "id," + ",".join(_COLS_COBRANCA_CONSIGNAVEL)
-    try:
-        all_data = _paginar_keyset(
-            lambda limite: (
-                _sb()
-                .from_("v_contratos_dashboard")
-                .select(colunas)
-                .eq("periodo_id", periodo["id"])
-                .eq("status_pagamento_cliente", "PAGO AO CLIENTE")
-                .eq("is_cobranca_consignavel", True)
-                .order("id")
-                .limit(limite)
-            ),
-            "id",
-        )
-    except Exception:
-        # `is_cobranca_consignavel`/`valor_consolidado` dependem da
-        # migration 067 estar aplicada. Enquanto nao estiver, loga o erro
-        # e devolve vazio (Cobranca Consignavel = 0) em vez de derrubar a
-        # aba inteira de Reconquista. Degradar aqui e aceitavel porque o
-        # zero e o caso NEUTRO documentado de um contador de acelerador
-        # (business-rules.md) — diferente do frame principal de pagos,
-        # que falha alto de proposito (nao ha "producao neutra").
-        logger.exception(
-            "Falha ao carregar Cobranca Consignavel (%02d/%d)", mes, ano
-        )
-        return vazio
+    all_data = _paginar_keyset(
+        lambda limite: (
+            _sb()
+            .from_("v_contratos_dashboard")
+            .select(colunas)
+            .eq("periodo_id", periodo["id"])
+            .eq("status_pagamento_cliente", "PAGO AO CLIENTE")
+            .eq("is_cobranca_consignavel", True)
+            .order("id")
+            .limit(limite)
+        ),
+        "id",
+    )
 
     if not all_data:
         return vazio
@@ -3319,7 +3322,10 @@ def carregar_reconquista(mes: int, ano: int) -> Dict:
     diferentes:
       - `totais["cobranca_consignavel"]` (contagem/card): vale para
         QUALQUER perfil a partir de 08/2026 (`_acelerador_vigente`) —
-        RLS normal escopa o numero por perfil.
+        RLS normal escopa o numero por perfil. `totais
+        ["consignavel_status"]` e CONSIGNAVEL_FORA / CONSIGNAVEL_OK /
+        CONSIGNAVEL_ERRO; no erro a contagem e None (nunca 0) e, como
+        na liga sem dado, nao ha `por_consultor` nem `faixa_agregada`.
       - `por_consultor` (quebra detalhada + faixa) e
         `totais["faixa_agregada"]`: exclusivos de consultor/supervisor
         (`_acelerador_no_escopo`) — decisao de produto, premio/faixa e
@@ -3503,25 +3509,41 @@ def carregar_reconquista(mes: int, ano: int) -> Dict:
     # duas vezes por render. `_acelerador_no_escopo` implica
     # `_acelerador_vigente`, entao sempre que a quebra e montada o frame
     # ja existe aqui.
+    # Falha de leitura vira CONSIGNAVEL_ERRO com contagem None — nunca 0.
+    # O RLS fica fora do try: falha dele nao e "erro de leitura".
+    contratos_consignavel = pd.DataFrame()
+    totais["cobranca_consignavel"] = 0
+    consignavel_status = CONSIGNAVEL_FORA
     if _acelerador_vigente(mes, ano):
-        contratos_consignavel = aplicar_rls(
-            carregar_cobranca_consignavel(mes, ano)
-        )
-        totais["cobranca_consignavel"] = (
-            len(contratos_consignavel)
-            if contratos_consignavel is not None
-            else 0
-        )
-    else:
-        contratos_consignavel = pd.DataFrame()
-        totais["cobranca_consignavel"] = 0
+        try:
+            consignavel_global = carregar_cobranca_consignavel(mes, ano)
+        except Exception:
+            logger.exception(
+                "Falha ao carregar Cobranca Consignavel (%02d/%d)",
+                mes, ano,
+            )
+            consignavel_status = CONSIGNAVEL_ERRO
+            totais["cobranca_consignavel"] = None
+        else:
+            consignavel_status = CONSIGNAVEL_OK
+            contratos_consignavel = aplicar_rls(consignavel_global)
+            totais["cobranca_consignavel"] = (
+                len(contratos_consignavel)
+                if contratos_consignavel is not None
+                else 0
+            )
+    totais["consignavel_status"] = consignavel_status
 
     # Fora do gate a quebra nao e montada — e o recurso desligado para o
     # perfil/periodo, nao erro. O gate mora aqui porque depende do
     # usuario logado; a regra, em kpis/reconquista.py, so recebe frames.
-    # Na liga sem dado (nao importada/erro) tambem nao: a faixa sairia
-    # calculada com efetivadas = 0 — numero com cara de certo.
+    # Sem uma das parcelas (liga nao importada/erro, Cobranca
+    # Consignavel com erro) tambem nao: a faixa sairia calculada com a
+    # parcela = 0 — numero com cara de certo.
     liga_sem_dado = liga_status in (LIGA_NAO_IMPORTADA, LIGA_ERRO)
+    acelerador_sem_dado = (
+        liga_sem_dado or consignavel_status == CONSIGNAVEL_ERRO
+    )
     por_consultor = (
         montar_acelerador_por_consultor(
             clientes,
@@ -3537,7 +3559,7 @@ def carregar_reconquista(mes: int, ano: int) -> Dict:
                 else None
             ),
         )
-        if no_escopo and not liga_sem_dado
+        if no_escopo and not acelerador_sem_dado
         else pd.DataFrame(columns=COLS_ACELERADOR)
     )
 
@@ -3545,7 +3567,7 @@ def carregar_reconquista(mes: int, ano: int) -> Dict:
     # acima, entao vem depois delas.
     totais["faixa_agregada"] = (
         None
-        if liga_sem_dado
+        if acelerador_sem_dado
         else faixa_agregada_acelerador(
             totais, mes, ano, carregar_faixa_acelerador
         )

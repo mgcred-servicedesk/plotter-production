@@ -77,3 +77,32 @@ class TestCardsReconquistaLiga:
         dados["totais"]["total_geral"] = 0
         _, html = _html(dados)
         assert "Contabilizadas pela liga" in html
+
+
+@pytest.mark.unit
+class TestCardsReconquistaCobrancaConsignavel:
+    def _dados_erro(self, perfil="gestor"):
+        dados = _dados("ok", perfil=perfil)
+        dados["totais"]["cobranca_consignavel"] = None
+        dados["totais"]["consignavel_status"] = "erro"
+        return dados
+
+    def test_erro_mostra_traco_e_avisa(self):
+        at, html = _html(self._dados_erro())
+        assert "Falha ao carregar a Cobrança Consignável" in html
+        assert "<strong>—</strong> com Efetivadas" in html
+        assert "Cobrança Consignável" in " ".join(e.value for e in at.error)
+
+    def test_erro_antes_da_liga_nao_mostra_barra_antiga(self):
+        dados = self._dados_erro(perfil="consultor")
+        dados["totais"]["liga_status"] = "fora"
+        _, html = _html(dados, mes=8, ano=2026)
+        assert "Conversão (elegíveis)" not in html
+
+    def test_leitura_ok_mostra_a_contagem(self):
+        dados = _dados("ok")
+        dados["totais"]["consignavel_status"] = "ok"
+        at, html = _html(dados)
+        assert "Falha ao carregar a Cobrança Consignável" not in html
+        assert "<strong>9</strong> com Efetivadas" in html
+        assert not at.error

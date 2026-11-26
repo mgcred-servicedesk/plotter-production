@@ -1784,6 +1784,21 @@ houve propostas da modalidade em tabelas normais (INSS…). Critérios por
 > A suíte de testes do critério é o **bloco de validação da própria
 > migration** (seção 4) — o pytest não alcança SQL.
 
+**Erro de leitura não vira zero.** `totais["consignavel_status"]` é
+`CONSIGNAVEL_FORA` (apuração anterior a 08/2026), `CONSIGNAVEL_OK`
+(contratos lidos; mês sem proposta é zero legítimo) ou
+`CONSIGNAVEL_ERRO` (falha ao ler a view). No erro, o comportamento é o
+mesmo da liga sem dado:
+- `totais["cobranca_consignavel"]` fica `None`, e o card mostra "—" com
+  um aviso;
+- a quebra por consultor e a `faixa_agregada` **não são calculadas**,
+  porque sairiam com a parcela da Cobrança Consignável = 0;
+- a liga, as Promessas e as Efetivadas continuam sendo exibidas.
+
+O loader levanta a exceção em vez de devolver vazio porque
+`st.cache_data` guardaria o vazio. Até 11/2026 um timeout virava
+"Cobrança Consignável = 0" por 30min (mês corrente) ou 24h (histórico).
+
 - Normalização em SQL = `upper(btrim(coalesce(x, '')))`, equivalente ao
   `.astype(str).str.strip().str.upper()` usado no resto do projeto (`_norm` /
   `_mask_banco`, [`src/dashboard/tabs/produtos.py`](../../src/dashboard/tabs/produtos.py)),
